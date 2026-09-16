@@ -253,6 +253,39 @@
 </section>
 
 <section>
+  <h2>Reaching Voodoo 2 fill rate <span class="tag">90 Mpixel/s, one pixel per clock at 90 MHz</span></h2>
+  <p>SpinalVoodoo is already a one-pixel-per-clock pipeline. Its own table shows it: on 1000-pixel triangles it does 51 Mpixel/s textured at 50 MHz, and 41 with alpha and Z, where memory read-modify-write costs the rest. The Voodoo 2 target is the same pipeline at 90 MHz with two texture units in a chain. The gap is not architecture; it is three separate problems.</p>
+
+  <h3>1. Clock: 50 MHz to 90 MHz</h3>
+  <p>The DE10 build never tried; Quartus ran at minimum router effort. Artix-7 -2 is faster than the Cyclone V -7, and the closed-source ECP5 Voodoo 1 closed at 100 MHz on a slower fabric. A register-balanced fixed-point datapath with DSP48 multipliers runs at 150 MHz on Artix-7, and SpinalHDL makes adding stages cheap. Nobody has measured this core's Fmax on Artix-7, and measuring costs one afternoon: generate the Verilog, synthesise for the 200T with a 90 MHz constraint, read the worst path. Do this first in phase 1. Expect a stage each in triangle setup and the LOD math.</p>
+
+  <h3>2. Memory: where the original's design was, and where ours differs</h3>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Traffic at 90 Mpix/s</th><th class="num">Bytes / pixel</th><th class="num">MB/s</th><th>Where it lives on this card</th></tr>
+    <tr><td>Depth read + write</td><td class="num">4</td><td class="num">360</td><td>BRAM, dual-port, one read and one write every clock; solved outright</td></tr>
+    <tr><td>Colour write</td><td class="num">2</td><td class="num">180</td><td>write buffer into HyperRAM as 64-byte bursts</td></tr>
+    <tr><td>Colour read for blending</td><td class="num">2 when enabled</td><td class="num">up to 180</td><td>read cache in front of HyperRAM</td></tr>
+    <tr><td>Texel fetches, two TMUs, bilinear</td><td class="num">16</td><td class="num">1,440</td><td>banked BRAM texture cache, already in the design; hits never leave the chip</td></tr>
+    <tr><td>Texture cache fills</td><td class="num">varies</td><td class="num">100 to 300</td><td>DDR3 via MIG, 4.2 GB/s peak</td></tr>
+    <tr><td>Scanout</td><td class="num">2 per displayed pixel</td><td class="num">36</td><td>HyperRAM, sequential</td></tr>
+  </table>
+  </div>
+  <p>The original used three independent 64-bit EDO buses at 90 MHz, one per chip. This card puts the two read-modify-write streams, depth and texels, on chip where BRAM gives each a full port, and leaves only streaming traffic for external memory. Depth in BRAM alone removes the reason the DE10 numbers fall off with Z enabled. Colour worst case is about 400 MB/s against four HyperRAM channels at about 560 MB/s effective, the tightest number on the card. Fallback if it proves tight: render the back buffer in BRAM as well (600 KB fits beside depth) and copy it to HyperRAM at swap, about one millisecond per frame.</p>
+
+  <h3>3. Triangle rate</h3>
+  <p>The Voodoo 2 sets up three million triangles per second, about 30 clocks each. SpinalVoodoo spends about 80 clocks of overhead per triangle because setup does not overlap rasterisation, which is why its 10-pixel rows sit at 20 to 30% of the original. Overlapping setup of the next triangle with the walk of the current one, and replacing the bounding-box scan with span walking for small triangles, is the one real RTL change. It is contained in <code>TriangleSetup</code> and <code>Rasterizer</code> and is validated by the existing pixel-exact traces.</p>
+
+  <h3>What the Artix-7 200T brings</h3>
+  <ul>
+    <li>740 DSP48 slices against a need of roughly 100 for two TMUs, fog, colour combine and LOD.</li>
+    <li>13.1 Mbit of BRAM, which is the constraint: 600 KB depth plus texture cache plus FIFOs, or 1.2 MB if the back buffer goes on chip too. <code>tools/TmuTextureCacheBenchmark.scala</code> sizes that split.</li>
+    <li>Enough fabric that 90 MHz is a timing exercise, not a fight. 50% utilisation leaves room for the extra pipeline stages.</li>
+  </ul>
+  <div class="callout"><b>Sequence.</b> Measure Fmax on the 200T; put depth in BRAM and watch the alpha-plus-Z rows recover; pipeline triangle setup and watch the small-triangle rows recover; add the second TMU as a chained copy. Each step is measurable against the README table. At 90 MHz with the two fixes the numbers land at or above a real Voodoo 2 across the table.</div>
+</section>
+
+<section>
   <h2>Effort and risk <span class="tag">one experienced FPGA engineer</span></h2>
   <div class="table-wrap">
   <table>
