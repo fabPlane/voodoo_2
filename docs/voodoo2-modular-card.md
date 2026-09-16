@@ -230,3 +230,36 @@ Do the Gowin synthesis trial first, as the other documents say. Then:
 - If Gowin does not fit, the choice is the monolithic 200T card at $245 or the
   Artix module at $310 with the reuse benefits. That is a product decision:
   one card, or a family.
+
+## 9. Solder-down module option (2026-09-17)
+
+Variant of the module idea: castellated or LGA module, soldered to the carrier
+as one large component, no connectors, in two populations (100T, 200T).
+
+| Per card, qty 100 | Monolithic | DF40 module + carrier | Solder-down module + carrier |
+|---|---:|---:|---:|
+| 100T | $190 | $252 | about $247 |
+| 200T | $245 | $302 | about $297 |
+
+Removing the connectors saves about $5 to $8. The premium is the second board,
+its 8-layer premium and duplicated support parts, none of which the connector
+choice touches.
+
+What changes:
+
+- Castellated modules can be hand-soldered and reworked with hot air, which
+  helps prototypes. LGA cannot, and needs X-ray.
+- No stack height or retention. Not important on a PCI card.
+- No swapping; the population is fixed at assembly.
+- Second reflow: the module's BGA balls remelt when it is soldered down. Needs
+  no bottom-side parts and a balanced module layout. Confirm JLCPCB's maximum
+  placeable component size before assuming they will place a 35 x 70 mm module;
+  otherwise consign to another assembler or hand-place.
+- Pin budget: castellations at 1.0 mm pitch around 40 x 70 mm give about 210
+  pads. A hybrid with a centre LGA field is the way to more.
+
+The Gowin population does not pay as our own module: the bare GW5AST-138 is
+$152 at LCSC against $110 for a 200T, with half the block RAM. The Gowin path
+is cheap only through Sipeed's $69 DF40 module. Therefore: solder-down gives
+two populations (100T, 200T); DF40 gives three (100T, 200T, Sipeed Gowin) for
+$9 of connectors and a 3 mm stack. Choose DF40 if the Gowin option matters.
