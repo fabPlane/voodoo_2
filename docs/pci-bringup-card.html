@@ -52,6 +52,8 @@
   .blk-host { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
   .blk-pix { fill: var(--green-soft); stroke: var(--green); stroke-width: 1.4; }
   .blk-soft { fill: var(--bg-2); stroke: var(--line-2); stroke-width: 1; }
+  .blk-dnp { fill: none; stroke: var(--dnp); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .w-dnp { fill: none; stroke: var(--dnp); stroke-width: 1.6; stroke-dasharray: 5 4; }
   .jmp { fill: var(--card); stroke: var(--accent); stroke-width: 2; }
   .fingers { fill: var(--accent); stroke: none; }
   .t { fill: var(--ink); font-size: 12.5px; }
@@ -90,11 +92,11 @@
   <div>
     <p class="eyebrow">Prototype spec · rev 0 · no FPGA</p>
     <h1>PCI bring-up card</h1>
-    <p class="sub">A cheap 5V PCI card with an RP2350B and a T113-S3 and nothing else. It proves the bus interface, the power design, the T113 bring-up and a VGA output before any FPGA board is ordered. A jumper decides who owns the VGA connector.</p>
+    <p class="sub">A cheap 5V PCI card with two RP2350 microcontrollers and an optional T113-S3. One RP2350 is the PCI target, the other drives VGA and HDMI, so the card works as a PCI framebuffer device with nothing else populated. It proves the bus interface, the power design and the video path before any FPGA board is ordered; the T113 side proves the Linux subsystem when it is placed.</p>
   </div>
   <div class="revbox">
-    <b>rev 0</b> · 2026-09-16<br>
-    cost: about $70 a card at qty 5<br>
+    <b>rev 0.1</b> · 2026-09-16<br>
+    cost: about $73 a card at qty 5, $100 with the T113<br>
     PCB: 4-layer, full-height PCI, gold fingers<br>
     scope: bring-up only, not a product
   </div>
@@ -127,9 +129,9 @@
 </section>
 
 <section>
-  <h2>Block diagram <span class="tag">rev 0</span></h2>
+  <h2>Block diagram <span class="tag">rev 0.1</span></h2>
   <div class="diagram-wrap">
-  <svg viewBox="0 0 1000 470" role="img" aria-label="Block diagram of the PCI bring-up card">
+  <svg viewBox="0 0 1000 520" role="img" aria-label="Block diagram of the PCI bring-up card with a PCI RP2350B, a video RP2350A and an optional T113-S3">
     <rect x="22" y="60" width="26" height="230" class="fingers"/>
     <text x="56" y="306" class="t-m">PCI EDGE</text>
     <text x="56" y="320" class="t-s">32-bit · 33 MHz · 5V</text>
@@ -138,78 +140,89 @@
     <text x="156" y="142" class="t-b" text-anchor="middle">Bus switches</text>
     <text x="156" y="159" class="t-s" text-anchor="middle">3× SN74CBTD16211</text>
     <text x="156" y="174" class="t-s" text-anchor="middle">46 lines, 5V ↔ 3.3V</text>
-    <text x="156" y="196" class="t-s" text-anchor="middle">OE# from MODE jumper</text>
-    <text x="156" y="211" class="t-s" text-anchor="middle">isolates the bus in VGA mode</text>
+    <text x="156" y="196" class="t-s" text-anchor="middle">OE# from J-MODE</text>
+    <text x="156" y="211" class="t-s" text-anchor="middle">isolates the card on the bench</text>
     <path d="M48 175 H86" class="w-host"/>
     <path d="M226 175 H290" class="w-host"/>
 
-    <rect x="290" y="60" width="250" height="230" class="blk"/>
-    <text x="415" y="84" class="t-h" text-anchor="middle">RP2350B</text>
-    <text x="415" y="102" class="t-m" text-anchor="middle">48 GPIO · 3 PIO · 520 KB SRAM · 16 MB QSPI</text>
-    <rect x="304" y="118" width="222" height="52" class="blk-host"/>
-    <text x="415" y="138" class="t" text-anchor="middle">PIO: PCI target</text>
-    <text x="415" y="154" class="t-s" text-anchor="middle">config space · 1 mem BAR · 1 I/O BAR · INTA#</text>
-    <rect x="304" y="180" width="222" height="44" class="blk-soft"/>
-    <text x="415" y="199" class="t" text-anchor="middle">SRAM: 256 KB register window</text>
-    <text x="415" y="214" class="t-s" text-anchor="middle">DMA from PIO FIFOs</text>
-    <rect x="304" y="234" width="106" height="44" class="blk-pix"/>
-    <text x="357" y="253" class="t" text-anchor="middle">PIO: VGA</text>
-    <text x="357" y="268" class="t-s" text-anchor="middle">RGB332 on AD[9:0]</text>
-    <rect x="420" y="234" width="106" height="44" class="blk-soft"/>
-    <text x="473" y="253" class="t" text-anchor="middle">USB device</text>
-    <text x="473" y="268" class="t-s" text-anchor="middle">to T113 host</text>
+    <rect x="290" y="60" width="230" height="230" class="blk"/>
+    <text x="405" y="84" class="t-h" text-anchor="middle">RP2350B · PCI</text>
+    <text x="405" y="102" class="t-m" text-anchor="middle">48 GPIO · 3 PIO · 520 KB SRAM · 16 MB QSPI</text>
+    <rect x="304" y="118" width="202" height="52" class="blk-host"/>
+    <text x="405" y="138" class="t" text-anchor="middle">PIO: PCI target</text>
+    <text x="405" y="154" class="t-s" text-anchor="middle">config space · mem BAR · I/O BAR · INTA#</text>
+    <rect x="304" y="180" width="202" height="44" class="blk-soft"/>
+    <text x="405" y="199" class="t" text-anchor="middle">SRAM: 256 KB BAR window</text>
+    <text x="405" y="214" class="t-s" text-anchor="middle">framebuffer + registers, DMA from PIO</text>
+    <rect x="304" y="234" width="202" height="44" class="blk-pix"/>
+    <text x="405" y="253" class="t" text-anchor="middle">PIO: link TX on GPIO 46/47</text>
+    <text x="405" y="268" class="t-s" text-anchor="middle">2-wire serial, ~18 MB/s</text>
 
-    <rect x="600" y="60" width="250" height="230" class="blk"/>
-    <text x="725" y="84" class="t-h" text-anchor="middle">T113-S3</text>
-    <text x="725" y="102" class="t-m" text-anchor="middle">2× A7 · 128 MB DDR3 in package · Linux</text>
-    <rect x="614" y="118" width="222" height="44" class="blk-soft"/>
-    <text x="725" y="137" class="t" text-anchor="middle">SPI NAND boot · UART console</text>
-    <text x="725" y="152" class="t-s" text-anchor="middle">Buildroot, mainline kernel</text>
-    <rect x="614" y="172" width="222" height="44" class="blk-soft"/>
-    <text x="725" y="191" class="t" text-anchor="middle">USB host · 100M Ethernet + PHY</text>
-    <text x="725" y="206" class="t-s" text-anchor="middle">RJ45 and USB-A on the bracket</text>
-    <rect x="614" y="226" width="222" height="52" class="blk-pix"/>
-    <text x="725" y="246" class="t" text-anchor="middle">LCD port: RGB666 + HS/VS/DE</text>
-    <text x="725" y="262" class="t-s" text-anchor="middle">640×480 at 25.175 MHz pixel clock</text>
-    <path d="M526 256 H540 V300 H580 V256 H600" class="w"/>
-    <text x="560" y="316" class="lbl" text-anchor="middle">USB</text>
+    <rect x="560" y="60" width="200" height="230" class="blk"/>
+    <text x="660" y="84" class="t-h" text-anchor="middle">RP2350A · VIDEO</text>
+    <text x="660" y="102" class="t-m" text-anchor="middle">$0.80 · 30 GPIO · 4 MB QSPI</text>
+    <rect x="574" y="118" width="172" height="40" class="blk-pix"/>
+    <text x="660" y="137" class="t" text-anchor="middle">PIO: link RX</text>
+    <text x="660" y="152" class="t-s" text-anchor="middle">into a 300 KB framebuffer</text>
+    <rect x="574" y="168" width="172" height="40" class="blk-pix"/>
+    <text x="660" y="187" class="t" text-anchor="middle">HSTX: DVI 640×480</text>
+    <text x="660" y="202" class="t-s" text-anchor="middle">GPIO 12–19, 252 Mbit TMDS</text>
+    <rect x="574" y="218" width="172" height="40" class="blk-pix"/>
+    <text x="660" y="237" class="t" text-anchor="middle">PIO: VGA RGB332</text>
+    <text x="660" y="252" class="t-s" text-anchor="middle">10 GPIO to a resistor ladder</text>
+    <text x="660" y="278" class="t-s" text-anchor="middle">USB-C on the bracket · SWD to the PCI chip</text>
+    <path d="M520 256 H560" class="w-pix"/>
 
-    <!-- DACs and jumper -->
-    <rect x="304" y="340" width="106" height="44" class="blk-pix"/>
-    <text x="357" y="359" class="t" text-anchor="middle">R-2R DAC</text>
-    <text x="357" y="374" class="t-s" text-anchor="middle">3-3-2 bit</text>
-    <path d="M357 278 V340" class="w-pix"/>
-    <rect x="672" y="340" width="106" height="44" class="blk-pix"/>
-    <text x="725" y="359" class="t" text-anchor="middle">R-2R DAC</text>
-    <text x="725" y="374" class="t-s" text-anchor="middle">6-6-6 bit</text>
-    <path d="M725 278 V340" class="w-pix"/>
+    <rect x="790" y="60" width="190" height="230" class="blk-dnp"/>
+    <text x="885" y="84" class="t-h" text-anchor="middle">T113-S3 · OPTIONAL</text>
+    <text x="885" y="102" class="t-m" text-anchor="middle">DNP BY DEFAULT</text>
+    <rect x="804" y="118" width="162" height="44" class="blk-soft"/>
+    <text x="885" y="137" class="t" text-anchor="middle">Linux · SPI NAND</text>
+    <text x="885" y="152" class="t-s" text-anchor="middle">Ethernet + PHY · USB host</text>
+    <rect x="804" y="172" width="162" height="44" class="blk-soft"/>
+    <text x="885" y="191" class="t" text-anchor="middle">USB host → video chip</text>
+    <text x="885" y="206" class="t-s" text-anchor="middle">reads the transaction log</text>
+    <rect x="804" y="226" width="162" height="52" class="blk-pix"/>
+    <text x="885" y="246" class="t" text-anchor="middle">LCD port: RGB666</text>
+    <text x="885" y="262" class="t-s" text-anchor="middle">640×480, 25.175 MHz</text>
+    <path d="M790 194 H760" class="w"/>
 
-    <rect x="490" y="330" width="100" height="64" class="jmp"/>
-    <text x="540" y="352" class="t-b" text-anchor="middle">J-VGA</text>
-    <text x="540" y="368" class="t-s" text-anchor="middle">source select</text>
-    <text x="540" y="383" class="t-s" text-anchor="middle">T113 / RP2350</text>
-    <path d="M410 362 H490" class="w-pix"/>
-    <path d="M672 362 H590" class="w-pix"/>
+    <rect x="607" y="340" width="106" height="44" class="blk-pix"/>
+    <text x="660" y="359" class="t" text-anchor="middle">R-2R DAC</text>
+    <text x="660" y="374" class="t-s" text-anchor="middle">3-3-2 bit</text>
+    <path d="M660 290 V340" class="w-pix"/>
+    <rect x="832" y="340" width="106" height="44" class="blk-dnp"/>
+    <text x="885" y="359" class="t" text-anchor="middle">R-2R DAC</text>
+    <text x="885" y="374" class="t-s" text-anchor="middle">6-6-6 bit</text>
+    <path d="M885 290 V340" class="w-dnp"/>
 
-    <rect x="470" y="420" width="140" height="40" class="blk-pix"/>
-    <text x="540" y="438" class="t-b" text-anchor="middle">VGA OUT · DB15</text>
-    <text x="540" y="453" class="t-s" text-anchor="middle">75 Ω, HS/VS via 74LVC</text>
-    <path d="M540 394 V420" class="w-pix"/>
+    <rect x="740" y="330" width="80" height="64" class="jmp"/>
+    <text x="780" y="352" class="t-b" text-anchor="middle">J-VGA</text>
+    <text x="780" y="368" class="t-s" text-anchor="middle">RP2350 /</text>
+    <text x="780" y="383" class="t-s" text-anchor="middle">T113</text>
+    <path d="M713 362 H740" class="w-pix"/>
+    <path d="M832 362 H820" class="w-dnp"/>
+
+    <rect x="710" y="440" width="140" height="40" class="blk-pix"/>
+    <text x="780" y="458" class="t-b" text-anchor="middle">VGA OUT · DB15</text>
+    <text x="780" y="473" class="t-s" text-anchor="middle">75 Ω, HS/VS via 74LVC</text>
+    <path d="M780 394 V440" class="w-pix"/>
+
+    <rect x="540" y="440" width="140" height="40" class="blk-pix"/>
+    <text x="610" y="458" class="t-b" text-anchor="middle">HDMI OUT</text>
+    <text x="610" y="473" class="t-s" text-anchor="middle">DVI from HSTX</text>
+    <path d="M600 290 V440" class="w-pix" transform="translate(10 0)"/>
 
     <rect x="86" y="340" width="140" height="64" class="jmp"/>
     <text x="156" y="362" class="t-b" text-anchor="middle">J-MODE</text>
-    <text x="156" y="378" class="t-s" text-anchor="middle">PCI / VGA-test</text>
-    <text x="156" y="393" class="t-s" text-anchor="middle">drives OE# + GPIO47</text>
+    <text x="156" y="378" class="t-s" text-anchor="middle">PCI / isolated</text>
+    <text x="156" y="393" class="t-s" text-anchor="middle">drives OE#, sensed by video chip</text>
     <path d="M156 340 V230" class="w"/>
 
-    <rect x="870" y="120" width="110" height="110" class="blk"/>
-    <text x="925" y="142" class="t-b" text-anchor="middle">Power</text>
-    <text x="925" y="159" class="t-s" text-anchor="middle">slot +5V only</text>
-    <text x="925" y="174" class="t-s" text-anchor="middle">3.3V 2 A buck</text>
-    <text x="925" y="189" class="t-s" text-anchor="middle">T113: 0.9V, 1.8V,</text>
-    <text x="925" y="204" class="t-s" text-anchor="middle">1.5V DDR, sequenced</text>
-    <text x="925" y="219" class="t-s" text-anchor="middle">about 3 W</text>
-    <path d="M850 175 H870" class="w"/>
+    <rect x="290" y="340" width="230" height="64" class="blk"/>
+    <text x="405" y="362" class="t-b" text-anchor="middle">Power</text>
+    <text x="405" y="378" class="t-s" text-anchor="middle">slot +5V → 3.3V 2 A buck, ~1 W with two RP2350s</text>
+    <text x="405" y="393" class="t-s" text-anchor="middle">T113 rails (0.9V, 1.8V, 1.5V, sequenced) only if placed</text>
   </svg>
   </div>
 </section>
@@ -219,13 +232,13 @@
   <div class="table-wrap">
   <table>
     <tr><th>Jumper</th><th>Position</th><th>Effect</th></tr>
-    <tr><td class="name" rowspan="2">J-MODE</td><td><code>PCI</code></td><td>Bus switches enabled. RP2350B GPIO 0 to 45 are the PCI target. The RP2350 VGA DAC is left floating and unused.</td></tr>
-    <tr><td><code>VGA-test</code></td><td>Bus switches disabled (OE# high), so the slot sees an empty card. GPIO47 reads the mode and the firmware runs the PIO VGA generator on AD[9:0] instead. Lets the RP2350 be tested on the bench with no PC.</td></tr>
-    <tr><td class="name" rowspan="2">J-VGA</td><td><code>T113</code></td><td>The DB15 is driven by the T113's RGB666 resistor DAC. Normal position.</td></tr>
-    <tr><td><code>RP2350</code></td><td>The DB15 is driven by the RP2350's RGB332 resistor DAC. Only meaningful with J-MODE in <code>VGA-test</code>.</td></tr>
+    <tr><td class="name" rowspan="2">J-MODE</td><td><code>PCI</code></td><td>Bus switches enabled. The PCI RP2350B answers the slot. Normal position.</td></tr>
+    <tr><td><code>isolated</code></td><td>Bus switches disabled (OE# high), so the slot sees an empty card and the board can be powered from the video chip's USB-C on the bench. The video chip senses the position and shows a test pattern instead of the framebuffer.</td></tr>
+    <tr><td class="name" rowspan="2">J-VGA</td><td><code>RP2350</code></td><td>The DB15 is driven by the video chip's RGB332 resistor DAC. Normal position; HDMI is always driven by the video chip.</td></tr>
+    <tr><td><code>T113</code></td><td>The DB15 is driven by the T113's RGB666 resistor DAC. Only meaningful when the T113 is populated.</td></tr>
   </table>
   </div>
-  <p>Both DACs are plain resistor ladders into the 75 Ω monitor load, so the unselected one simply drives an open node. HS and VS from either source go through a 74LVC2G157-class mux selected by the same jumper so sync levels stay clean.</p>
+  <p>Both DACs are plain resistor ladders into the 75 Ω monitor load, so the unselected one drives an open node. HS and VS from either source go through a 74LVC2G157-class mux selected by the same jumper so sync levels stay clean.</p>
 </section>
 
 <section>
@@ -245,8 +258,8 @@
     <tr><td>43</td><td><code>CLK</code></td><td>in</td><td>33 MHz; polled by PIO, input synchroniser bypassed</td></tr>
     <tr><td>44</td><td><code>RST#</code></td><td>in</td><td>resets the PIO state machines</td></tr>
     <tr><td>45</td><td><code>INTA#</code></td><td>out, open drain</td><td></td></tr>
-    <tr><td>46</td><td>spare</td><td></td><td>debug strobe for the logic analyser</td></tr>
-    <tr><td>47</td><td>MODE</td><td>in</td><td>from J-MODE</td></tr>
+    <tr><td>46</td><td>LINK_CLK</td><td>out</td><td>2-wire framebuffer link to the video chip; doubles as the logic-analyser strobe</td></tr>
+    <tr><td>47</td><td>LINK_DATA</td><td>out</td><td>2-wire link data, 1 bit per PIO cycle</td></tr>
     <tr><td>USB, QSPI, SWD</td><td></td><td></td><td>dedicated pins, not GPIO</td></tr>
   </table>
   </div>
@@ -271,12 +284,29 @@
 </section>
 
 <section>
+  <h2>Video coprocessor <span class="tag">RP2350A, so the T113 is optional</span></h2>
+  <p>The PCI chip has two GPIO left after the bus, which is not enough for any VGA. Rather than trim PCI, the card carries a second, smaller RP2350 whose only job is video. It costs $0.80 and turns the bring-up card into a working PCI framebuffer device with VGA and HDMI, with nothing else populated.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Piece</th><th>Detail</th></tr>
+    <tr><td class="name">Link in</td><td>Two wires from the PCI chip's GPIO 46 and 47: a clock and a data line, one bit per PIO cycle. At the PCI chip's 300 MHz that is about 18 MB/s, enough for 640×480 RGB332 at 60 Hz, or dirty rectangles at any rate. Drop PAR and INTA# from the PCI side and it becomes four wires and twice the rate, if ever needed.</td></tr>
+    <tr><td class="name">Framebuffer</td><td>300 KB in the video chip's SRAM, RGB332. The PCI chip mirrors its BAR window into it as the PC writes.</td></tr>
+    <tr><td class="name">HDMI</td><td>The RP2350's HSTX peripheral emits DVI at 640×480 on GPIO 12 to 19, the way PicoDVI does but with dedicated hardware instead of PIO. An HDMI connector, four TMDS pairs with series resistors, ESD. No encoder chip.</td></tr>
+    <tr><td class="name">VGA</td><td>Ten GPIO into a 3-3-2 resistor ladder plus HS and VS, driven by a PIO scanline program. Selected onto the DB15 by J-VGA.</td></tr>
+    <tr><td class="name">USB-C on the bracket</td><td>The video chip's USB port. It exposes a CDC console and a mass-storage bootloader for itself, and it drives the PCI chip's SWD pins so both chips are flashed from one cable. When the T113 is populated, its USB host plugs into the same port internally.</td></tr>
+    <tr><td class="name">Bench mode</td><td>With J-MODE at <code>isolated</code> the whole card runs from the USB-C and shows a test pattern on both outputs. No PC needed to check video.</td></tr>
+  </table>
+  </div>
+  <div class="callout"><b>Fallback with one chip.</b> If the second RP2350 is left off, the PCI chip can still drive 8-colour VGA on its own by not driving PAR, dropping INTA#, and taking RST# through the RUN pin instead of a GPIO. That frees five pins for R, G, B, HS and VS. It works on chipsets that do not check parity and has no interrupt. The board keeps a five-resistor ladder footprint on those pins so the option exists, but the two-chip layout is the default.</div>
+</section>
+
+<section>
   <h2>T113-S3 subsystem <span class="tag">identical to the Voodoo card</span></h2>
-  <p>This is the part of the bring-up card that transfers unchanged to the FPGA card, so it is built exactly as it will be there: same part numbers, same rails, same boot path.</p>
+  <p>Unpopulated by default. This is the part of the bring-up card that transfers unchanged to the FPGA card, so when it is placed it is built exactly as it will be there: same part numbers, same rails, same boot path.</p>
   <ul>
     <li><strong>Power.</strong> Slot +5V feeds a 3.3V 2 A buck for the card, and the T113's 0.9V core, 1.8V and 1.5V rails with the sequencing from the MangoPi MQ-Dual reference design.</li>
     <li><strong>Boot and storage.</strong> 256 MB SPI NAND, UART0 console on a header, USB OTG for FEL recovery.</li>
-    <li><strong>Network and USB.</strong> 100M PHY with a magjack on the bracket, one USB-A host port on the bracket, and the RP2350B as an internal USB device so the T113 can reprogram it and read the transaction log.</li>
+    <li><strong>Network and USB.</strong> 100M PHY with a magjack on the bracket, one USB-A host port on the bracket, and the video chip as an internal USB device so the T113 can flash both RP2350s and read the transaction log.</li>
     <li><strong>VGA.</strong> The LCD controller drives RGB666 at 640×480 with a 25.175 MHz pixel clock, into an 18-resistor ladder and the 75 Ω load. Good enough to read a console on a CRT. HS and VS through a 74LVC buffer.</li>
     <li><strong>Software.</strong> Buildroot with the mainline kernel, a console on VGA, SSH over Ethernet, and a small daemon that talks to the RP2350B over USB CDC.</li>
   </ul>
@@ -285,11 +315,13 @@
 <section>
   <h2>Software and test plan <span class="tag">each step has a pass condition</span></h2>
   <ol class="steps">
-    <li><div><div class="t">Bench: VGA-test mode</div><div class="d">No PC. J-MODE to VGA-test, J-VGA to RP2350. The RP2350 draws a test pattern. Then J-VGA to T113: the Linux console appears. Pass: both sources produce a stable 640×480 image.</div></div></li>
+    <li><div><div class="t">Bench: video from USB</div><div class="d">No PC. J-MODE to isolated, power from the USB-C. The video chip shows a test pattern on HDMI and, with J-VGA at RP2350, on the DB15. Pass: stable 640×480 on both outputs.</div></div></li>
     <li><div><div class="t">In a slot: enumeration</div><div class="d">J-MODE to PCI. A Socket 7 board's BIOS lists vendor 0x1234 device 0x0001 with a memory BAR and an I/O BAR. Pass: <code>lspci</code> on a Linux boot floppy, or a DOS tool using INT 1Ah, shows the device with sensible BARs.</div></div></li>
-    <li><div><div class="t">Writes</div><div class="d">The DOS tool writes a 64 KB pattern to the BAR; the T113 reads the RP2350's SRAM over USB and compares. Pass: bit-exact across 1,000 iterations, on at least two chipsets (an Intel 430TX and a VIA MVP3 cover most of the era).</div></div></li>
+    <li><div><div class="t">Writes</div><div class="d">The DOS tool writes a 64 KB pattern to the BAR; a host reads the PCI chip's SRAM back over the USB-C and compares. Pass: bit-exact across 1,000 iterations, on at least two chipsets (an Intel 430TX and a VIA MVP3 cover most of the era).</div></div></li>
+    <li><div><div class="t">Framebuffer demo</div><div class="d">The BAR is the framebuffer. The DOS tool draws into it; the video chip shows it on VGA and HDMI. Pass: a moving image at a steady frame rate, which also measures real write throughput through the PIO target.</div></div></li>
     <li><div><div class="t">Reads and interrupts</div><div class="d">The DOS tool reads back and verifies. A mailbox write raises INTA#; the DOS ISR acknowledges it. Pass: no hangs, PERR# and SERR# status bits stay clear in config space.</div></div></li>
     <li><div><div class="t">Windows 98</div><div class="d">A stub INF binds the device and a small app maps the BAR. Pass: the device shows in Device Manager without a yellow mark and the app moves data.</div></div></li>
+    <li><div><div class="t">T113, when placed</div><div class="d">Linux boots from SPI NAND, the console appears on the DB15 with J-VGA at T113, SSH works over Ethernet, and the T113 reads the transaction log from the video chip over USB. Pass: all four.</div></div></li>
   </ol>
 </section>
 
@@ -298,18 +330,19 @@
   <div class="table-wrap">
   <table>
     <tr><th>Item</th><th>Part</th><th class="num">Qty 5</th></tr>
-    <tr><td>MCU</td><td>RP2350B, 16 MB QSPI flash, 12 MHz crystal</td><td class="num">$3</td></tr>
-    <tr><td>Linux SoC</td><td>T113-S3, SPI NAND, rails, crystal, Ethernet PHY, magjack, USB-A</td><td class="num">$28</td></tr>
+    <tr><td>PCI MCU</td><td>RP2350B, 16 MB QSPI flash, 12 MHz crystal</td><td class="num">$3</td></tr>
+    <tr><td>Video MCU</td><td>RP2350A, 4 MB QSPI flash, crystal, USB-C, HDMI connector, ESD</td><td class="num">$3</td></tr>
+    <tr><td>Linux SoC (optional)</td><td>T113-S3, SPI NAND, rails, crystal, Ethernet PHY, magjack, USB-A</td><td class="num">$28</td></tr>
     <tr><td>PCI front end</td><td>3× SN74CBTD16211 bus switches</td><td class="num">$6</td></tr>
     <tr><td>Video</td><td>two resistor ladders, 74LVC2G157 sync mux, 74LVC buffer, DB15, ESD</td><td class="num">$3</td></tr>
     <tr><td>Power</td><td>3.3V buck, T113 regulators, sequencing</td><td class="num">$6</td></tr>
     <tr><td>Jumpers, headers, passives, bracket</td><td>two 3-pin jumpers, UART and SWD headers, decoupling, full-height bracket</td><td class="num">$8</td></tr>
     <tr><td>PCB</td><td>4-layer, 175 × 107 mm, hard gold fingers, 30° bevel</td><td class="num">$18</td></tr>
     <tr><td>Assembly</td><td>JLCPCB standard, fees amortised over five</td><td class="num">$25</td></tr>
-    <tr class="total"><td colspan="2">Per card</td><td class="num">≈ $97 (≈ $70 with the T113 subsystem left unpopulated)</td></tr>
+    <tr class="total"><td colspan="2">Per card</td><td class="num">≈ $73 without the T113, ≈ $100 with it</td></tr>
   </table>
   </div>
-  <p>Populating the T113 side is optional per board. Two cards with only the RP2350B are enough to develop the PCI target; the T113 can be placed on the other three once its reference design is ready.</p>
+  <p>The T113 side is optional per board. Cards with only the two RP2350s are complete PCI framebuffer devices and are enough to develop the PCI target; place the T113 on two of the five once its reference design is ready.</p>
 </section>
 
 <section>
@@ -317,7 +350,7 @@
   <ul>
     <li><strong>The polled-clock timing margin.</strong> If 300 MHz is not enough on some chipset, fall back to answering everything with Retry and completing on the second attempt. Slower, still enumerates.</li>
     <li><strong>Parity.</strong> Some chipsets flag PERR# and halt. The CPU precomputes parity for read data; if that proves unreliable, set the config-space parity-error-response bit to zero and confirm the BIOS tolerates it.</li>
-    <li><strong>Sharing AD[9:0] with the VGA DAC.</strong> The resistor ladder adds about 10 pF and a light DC load to those ten bus lines in PCI mode. Keep the ladder physically next to the jumper, not the switches.</li>
+    <li><strong>Link bandwidth.</strong> Two wires at one bit per cycle is about 18 MB/s, right at 640×480 RGB332 at 60 Hz. Send dirty rectangles, or accept a lower refresh of the framebuffer copy; the monitor timing is unaffected because the video chip scans out from its own SRAM.</li>
     <li><strong>T113 first spin.</strong> Copy the reference design exactly. This is the one part of the card that carries forward, so mistakes here cost twice.</li>
   </ul>
 </section>

@@ -1,0 +1,3 @@
+[submodule "ext/SpinalVoodoo"]
+	path = ext/SpinalVoodoo
+	url = https://github.com/fayalalebrun/SpinalVoodoo.git
