@@ -1,0 +1,275 @@
+<title>SpinalVoodoo Artix Port</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F3F4F1; --bg-2: #E9EBE6; --ink: #1B1F1D; --ink-2: #4E5551; --muted: #737A75;
+    --line: #C8CDC6; --line-2: #A9B0AA; --accent: #D9560F; --accent-soft: #FBE3D4;
+    --green: #2E6E4E; --green-soft: #DCEBE1; --dnp: #8A918C; --card: #FFFFFF; --code-bg: #E9EBE6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131715; --bg-2: #1B211D; --ink: #E8EAE4; --ink-2: #C0C6BF; --muted: #8E958F;
+      --line: #2E3531; --line-2: #465049; --accent: #F0782F; --accent-soft: #3A2416;
+      --green: #63B88E; --green-soft: #1B3328; --dnp: #7C847E; --card: #1B211D; --code-bg: #232A26;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131715; --bg-2: #1B211D; --ink: #E8EAE4; --ink-2: #C0C6BF; --muted: #8E958F;
+    --line: #2E3531; --line-2: #465049; --accent: #F0782F; --accent-soft: #3A2416;
+    --green: #63B88E; --green-soft: #1B3328; --dnp: #7C847E; --card: #1B211D; --code-bg: #232A26;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; font-size: 15.5px; line-height: 1.55; padding-inline: 20px; padding-block: 0 72px; }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  header { padding-block: 36px 20px; border-bottom: 2px solid var(--ink); display: grid; grid-template-columns: 1fr auto; gap: 16px 32px; align-items: end; }
+  .eyebrow { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h1 { font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 700; font-size: clamp(38px, 6vw, 56px); line-height: 0.98; margin: 0; text-wrap: balance; }
+  .sub { color: var(--ink-2); margin: 10px 0 0; max-width: 62ch; }
+  .revbox { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); border: 1px solid var(--line-2); padding: 10px 14px; white-space: nowrap; }
+  .revbox b { color: var(--ink); font-weight: 500; }
+  section { padding-block: 34px 6px; }
+  h2 { font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 600; font-size: 28px; line-height: 1.05; margin: 0 0 14px; display: flex; align-items: baseline; gap: 12px; }
+  h2 .tag { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+  h3 { font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 600; font-size: 20px; margin: 20px 0 6px; }
+  p { margin: 0 0 12px; max-width: 68ch; }
+  ul { margin: 0 0 12px; padding-left: 20px; max-width: 70ch; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--accent); }
+  code { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  a { color: var(--ink-2); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin: 4px 0 8px; }
+  .verdict > div { background: var(--card); padding: 14px 16px; }
+  .verdict .k { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .verdict .v { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 28px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .verdict .n { color: var(--ink-2); font-size: 13.5px; margin-top: 4px; }
+
+  .diagram-wrap { border: 1px solid var(--line); background: var(--card); overflow-x: auto; padding: 12px 8px 4px; }
+  .diagram-wrap svg { display: block; width: 100%; min-width: 820px; max-width: 100%; height: auto; font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  .blk { fill: var(--card); stroke: var(--ink); stroke-width: 1.4; }
+  .blk-keep { fill: var(--green-soft); stroke: var(--green); stroke-width: 1.4; }
+  .blk-old { fill: var(--bg-2); stroke: var(--line-2); stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .blk-new { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+  .t { fill: var(--ink); font-size: 12.5px; }
+  .t-b { fill: var(--ink); font-size: 13px; font-weight: 500; }
+  .t-s { fill: var(--ink-2); font-size: 11px; }
+  .t-m { fill: var(--muted); font-size: 11px; letter-spacing: 0.06em; }
+  .t-h { fill: var(--ink); font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 17px; font-weight: 600; letter-spacing: 0.02em; }
+  .w { fill: none; stroke: var(--line-2); stroke-width: 1.6; }
+  .w-old { fill: none; stroke: var(--line-2); stroke-width: 1.6; stroke-dasharray: 4 3; }
+  .w-new { fill: none; stroke: var(--accent); stroke-width: 2.2; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink-2); padding: 10px 4px 0; }
+  .legend i { display: inline-block; width: 14px; height: 10px; vertical-align: middle; margin-right: 7px; border: 1px solid; }
+  .legend .keep i { background: var(--green-soft); border-color: var(--green); }
+  .legend .old i { background: var(--bg-2); border-color: var(--line-2); border-style: dashed; }
+  .legend .new i { background: var(--accent-soft); border-color: var(--accent); }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 6px 0 10px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; border-bottom: 1.5px solid var(--line-2); white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.name { font-weight: 500; }
+  tr.total td { font-weight: 600; border-top: 1.5px solid var(--ink); border-bottom: none; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 36px; }
+  ol.steps { list-style: none; padding: 0; margin: 6px 0 0; counter-reset: st; border-top: 1px solid var(--line); }
+  ol.steps li { counter-increment: st; display: grid; grid-template-columns: 56px 1fr; gap: 0 14px; padding: 12px 0; border-bottom: 1px solid var(--line); margin: 0; }
+  ol.steps li::before { content: counter(st); font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 30px; font-weight: 700; line-height: 1; color: var(--accent); }
+  ol.steps .t { font-weight: 600; margin-bottom: 2px; }
+  ol.steps .d { color: var(--ink-2); max-width: 66ch; }
+  ol.steps .x { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  ol.steps .x b { color: var(--green); font-weight: 500; }
+  .callout { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; margin: 0 0 14px; max-width: 68ch; }
+  .callout b { font-weight: 600; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  @media (max-width: 680px) { .cols { grid-template-columns: 1fr; } header { grid-template-columns: 1fr; } .revbox { white-space: normal; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div>
+    <p class="eyebrow">Porting assessment · SpinalVoodoo → Artix-7 200T</p>
+    <h1>Porting SpinalVoodoo to the Artix-7 card</h1>
+    <p class="sub">What in the DE10-Nano implementation is Altera-specific, what is not, what has to be written for the Artix-7 200T plus T113 card, and in what order.</p>
+  </div>
+  <div class="revbox">
+    <b>rev A</b> · 2026-09-16<br>
+    source read: SpinalVoodoo master, 2026-05-10<br>
+    SpinalHDL 1.13 · scala-cli · Scala 2.12
+  </div>
+</header>
+
+<section>
+  <h2>Verdict <span class="tag">read this if nothing else</span></h2>
+  <div class="verdict">
+    <div><div class="k">Code touched</div><div class="v">≈ 13%</div><div class="n">About 2,200 of 16,960 lines are DE10-specific. The Voodoo pipeline is not among them.</div></div>
+    <div><div class="k">Altera primitives in the core</div><div class="v">0</div><div class="n">No BlackBox, no altsyncram, no attributes. One comment about a Quartus inference quirk.</div></div>
+    <div><div class="k">First bitstream</div><div class="v">2 wks</div><div class="n">Reproduce the DE10 memory architecture on a dedicated DDR3 through MIG.</div></div>
+    <div><div class="k">Full port</div><div class="v">6–12 wks</div><div class="n">Including the BRAM and PSRAM memory split and the PCIe dev-board host path. One FPGA engineer.</div></div>
+  </div>
+  <p>The port is a wrapper job. The core exposes generic SpinalHDL BMB buses on every side, the video output is parallel RGB, and the whole regression suite runs under Verilator against the generic core, so every replacement backend can be proven in simulation before it touches hardware.</p>
+</section>
+
+<section>
+  <h2>What moves and what stays <span class="tag">by port on the core</span></h2>
+  <div class="diagram-wrap">
+  <svg viewBox="0 0 1000 560" role="img" aria-label="SpinalVoodoo core with its DE10 backends on the left and the Artix-7 replacements on the right">
+    <!-- core -->
+    <rect x="360" y="60" width="280" height="440" class="blk-keep"/>
+    <text x="500" y="88" class="t-h" text-anchor="middle">CORE (unchanged)</text>
+    <text x="500" y="106" class="t-m" text-anchor="middle">Core.scala · 14,700 lines · pure SpinalHDL</text>
+    <rect x="378" y="124" width="244" height="34" class="blk"/>
+    <text x="500" y="146" class="t" text-anchor="middle">cpuBus · BMB slave, 32-bit, 24-bit addr</text>
+    <rect x="378" y="172" width="244" height="34" class="blk"/>
+    <text x="500" y="194" class="t" text-anchor="middle">fbMemWrite · BMB master</text>
+    <rect x="378" y="214" width="244" height="34" class="blk"/>
+    <text x="500" y="236" class="t" text-anchor="middle">fbColorWrite / fbColorRead · BMB</text>
+    <rect x="378" y="256" width="244" height="34" class="blk"/>
+    <text x="500" y="278" class="t" text-anchor="middle">fbAuxWrite / fbAuxRead · BMB</text>
+    <rect x="378" y="298" width="244" height="34" class="blk"/>
+    <text x="500" y="320" class="t" text-anchor="middle">texMem · BMB master, bursts</text>
+    <rect x="378" y="346" width="244" height="34" class="blk"/>
+    <text x="500" y="368" class="t" text-anchor="middle">hdmi · 24-bit RGB + HS/VS/DE</text>
+    <rect x="378" y="396" width="244" height="86" class="blk"/>
+    <text x="500" y="418" class="t-b" text-anchor="middle">inside</text>
+    <text x="500" y="435" class="t-s" text-anchor="middle">15 inferred Mem: tables, palette, tex cache</text>
+    <text x="500" y="450" class="t-s" text-anchor="middle">fixed-point up to 48 bits, reciprocal LUT</text>
+    <text x="500" y="465" class="t-s" text-anchor="middle">1 comment: palette RAM ×4 for Quartus</text>
+
+    <!-- left: DE10 -->
+    <text x="180" y="88" class="t-h" text-anchor="middle">DE10-NANO (drop)</text>
+    <text x="180" y="106" class="t-m" text-anchor="middle">src/voodoo/de10 · hw/de10 · 2,229 lines</text>
+    <rect x="60" y="124" width="240" height="34" class="blk-old"/>
+    <text x="180" y="146" class="t" text-anchor="middle">H2fLwToBmbBridge ← ARM HPS</text>
+    <rect x="60" y="172" width="240" height="160" class="blk-old"/>
+    <text x="180" y="196" class="t-b" text-anchor="middle">De10MemBackend · 704 lines</text>
+    <text x="180" y="214" class="t-s" text-anchor="middle">6× BMB → Avalon-MM bridges</text>
+    <text x="180" y="229" class="t-s" text-anchor="middle">into HPS DDR3, shared with Linux</text>
+    <text x="180" y="244" class="t-s" text-anchor="middle">16 MiB carve-out at top of DDR</text>
+    <text x="180" y="262" class="t-s" text-anchor="middle">Qsys: 5 Avalon bridges, F2SDRAM 256-bit</text>
+    <text x="180" y="277" class="t-s" text-anchor="middle">1024-word bursts, 2 outstanding reads</text>
+    <rect x="60" y="346" width="240" height="34" class="blk-old"/>
+    <text x="180" y="368" class="t" text-anchor="middle">ADV7513 HDMI chip via I2C</text>
+    <rect x="60" y="396" width="240" height="86" class="blk-old"/>
+    <text x="180" y="418" class="t-b" text-anchor="middle">De10PlatformTop.v · Quartus</text>
+    <text x="180" y="435" class="t-s" text-anchor="middle">2 PLLs · altddio_out · HPS I2C</text>
+    <text x="180" y="450" class="t-s" text-anchor="middle">.qsf .sdc, 50 MHz core clock</text>
+    <text x="180" y="465" class="t-s" text-anchor="middle">router effort: minimum</text>
+    <path d="M300 141 H378" class="w-old"/>
+    <path d="M300 252 H340 V189 H378" class="w-old"/>
+    <path d="M300 252 H340 V231 H378" class="w-old"/>
+    <path d="M300 252 H340 V273 H378" class="w-old"/>
+    <path d="M300 252 H340 V315 H378" class="w-old"/>
+    <path d="M300 363 H378" class="w-old"/>
+
+    <!-- right: Artix -->
+    <text x="820" y="88" class="t-h" text-anchor="middle">ARTIX-7 CARD (write)</text>
+    <text x="820" y="106" class="t-m" text-anchor="middle">new package voodoo.artix</text>
+    <rect x="700" y="124" width="240" height="34" class="blk-new"/>
+    <text x="820" y="146" class="t" text-anchor="middle">PCI target → BMB · T113 SPI → BMB</text>
+    <rect x="700" y="172" width="240" height="34" class="blk-new"/>
+    <text x="820" y="194" class="t" text-anchor="middle">BMB → AXI4 → MIG DDR3 (lib bridge)</text>
+    <rect x="700" y="214" width="240" height="34" class="blk-new"/>
+    <text x="820" y="236" class="t" text-anchor="middle">BMB → PSRAM / HyperRAM controller</text>
+    <rect x="700" y="256" width="240" height="34" class="blk-new"/>
+    <text x="820" y="278" class="t" text-anchor="middle">BmbOnChipRam · depth in BRAM (lib)</text>
+    <rect x="700" y="298" width="240" height="34" class="blk-new"/>
+    <text x="820" y="320" class="t" text-anchor="middle">→ same MIG path, texture cache in BRAM</text>
+    <rect x="700" y="346" width="240" height="34" class="blk-new"/>
+    <text x="820" y="368" class="t" text-anchor="middle">ADV7123 DAC direct · TMDS encoder + OSERDES</text>
+    <rect x="700" y="396" width="240" height="86" class="blk-new"/>
+    <text x="820" y="418" class="t-b" text-anchor="middle">ArtixTop.v · Vivado</text>
+    <text x="820" y="435" class="t-s" text-anchor="middle">MMCM · MIG instance · XDC</text>
+    <text x="820" y="450" class="t-s" text-anchor="middle">50 MHz first, 90 MHz for Voodoo 2</text>
+    <text x="820" y="465" class="t-s" text-anchor="middle">bitstream 77 Mbit → 128 Mbit QSPI</text>
+    <path d="M622 141 H700" class="w-new"/>
+    <path d="M622 189 H700" class="w-new"/>
+    <path d="M622 231 H700" class="w-new"/>
+    <path d="M622 273 H700" class="w-new"/>
+    <path d="M622 315 H700" class="w-new"/>
+    <path d="M622 363 H700" class="w-new"/>
+
+    <!-- bottom: verification -->
+    <rect x="60" y="516" width="880" height="34" class="blk-keep"/>
+    <text x="500" y="538" class="t" text-anchor="middle">Verification stays: Verilator harness, Glide2x tests, DOSBox-X path, pixel-exact trace compare · SIM_INTERFACE swaps the top-level, so an artix top slots in the same way de10 did</text>
+  </svg>
+  </div>
+  <div class="legend"><span class="keep"><i></i>unchanged</span><span class="old"><i></i>DE10-only, dropped</span><span class="new"><i></i>new for the Artix card</span></div>
+</section>
+
+<section>
+  <h2>What is vendor-neutral <span class="tag">found in the source</span></h2>
+  <ul>
+    <li><strong>The core's interfaces.</strong> One BMB slave for the host (register, LFB and texture-write windows selected by address bits 23:22 in <code>CoreCpuFrontdoor</code>) and six BMB masters for memory, all 32-bit. BMB is SpinalHDL's generic bus, with library bridges to AXI4, Avalon, Wishbone and on-chip RAM.</li>
+    <li><strong>Memories.</strong> Fifteen <code>Mem</code> instances, all plain inference: the 257-entry reciprocal table and log table in the TMU, three dither ROMs, four palette RAMs, and the texture cache's meta and bank memories. No vendor macros, no synthesis attributes anywhere in <code>src/voodoo</code>.</li>
+    <li><strong>Arithmetic.</strong> Custom fixed-point formats (<code>SQ(48,18)</code> texture accumulators, <code>SQ(48,30)</code> for W) and a reciprocal lookup instead of dividers. Vivado maps these to DSP48E1 slices; a 27-bit Cyclone V multiply becomes two or three cascaded DSP48s, and the 200T has 740.</li>
+    <li><strong>Video.</strong> <code>HdmiScanout</code> emits 24-bit RGB with syncs and DE at 640×480 or 720×480, with a CLUT and its own clock domain. That is exactly what the ADV7123 VGA DAC takes, so VGA out needs no new logic.</li>
+    <li><strong>Verification.</strong> The Verilator harness, the Glide2x screenshot tests, the DOSBox-X 32-bit Glide path and the trace replay with pixel-by-pixel comparison all target the generic <code>CoreSim</code>. <code>SIM_INTERFACE=de10</code> already demonstrates swapping the top-level under the same harness.</li>
+    <li><strong>Build.</strong> scala-cli, SpinalHDL 1.13, Scala 2.12, no vendor tool in the generate step. Quartus is only invoked by <code>scripts/build-bitstream-de10</code>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>What has to be replaced <span class="tag">2,229 lines, by piece</span></h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>DE10 piece</th><th class="num">Lines</th><th>Artix replacement</th><th>Effort</th></tr>
+    <tr><td class="name"><code>De10MemBackend</code>: six BMB→Avalon-MM bridges into the HPS DDR3, with burst splitting, range checks and a two-deep read queue</td><td class="num">704</td><td>Textures: BMB→AXI4 via the library's <code>BmbToAxi4SharedBridge</code> into MIG. Depth: <code>BmbOnChipRam</code>. Colour: a new BMB→PSRAM controller.</td><td>1 week for AXI and BRAM; 1 to 3 weeks for the PSRAM controller</td></tr>
+    <tr><td class="name"><code>CoreDe10</code>: <code>H2fLwMmio</code> and <code>H2fLwToBmbBridge</code>, the ARM lightweight-bridge to host-BMB adapter, plus address map and status plumbing</td><td class="num">425</td><td>PCI target→BMB on the card (its own project, planned). SPI→BMB for the T113. AXI-lite BAR→BMB on the PCIe dev board for phase 1.</td><td>SPI path 2 days; PCIe BAR 1 to 2 weeks; PCI target separate</td></tr>
+    <tr><td class="name"><code>De10PlatformTop.v</code>: Quartus top with two PLLs, <code>altddio_out</code> for the HDMI clock, HPS I2C for the ADV7513, Qsys SoC instance</td><td class="num">350</td><td><code>ArtixTop.v</code>: MMCM, MIG instance, TMDS encoder plus OSERDES for HDMI (open cores exist), DAC pins straight out.</td><td>3 to 4 days</td></tr>
+    <tr><td class="name"><code>De10DdrBenchTop</code>: DDR stress and visibility bench</td><td class="num">551</td><td>Keep the idea, retarget to MIG. Optional.</td><td>2 days if wanted</td></tr>
+    <tr><td class="name">Qsys Tcl, <code>.qsf</code>, <code>.sdc</code>, device-tree overlay, deploy and program scripts</td><td class="num">≈ 200</td><td>Vivado project Tcl, XDC constraints, JTAG program script, T113 deploy script.</td><td>2 days</td></tr>
+    <tr><td class="name"><code>fxde10.c</code>: Glide runtime mapping the core through <code>/dev/mem</code></td><td class="num">small</td><td>Same shim over a UIO-mapped PCIe BAR, later over the T113 link.</td><td>2 to 3 days</td></tr>
+    <tr><td class="name">Palette RAM replicated ×4 in <code>TmuTexelDecoder</code> to dodge a Quartus inference failure</td><td class="num">4</td><td>Optional revert to one 1-write 4-read RAM; Vivado infers it. Saves a little BRAM.</td><td>hours</td></tr>
+  </table>
+  </div>
+  <div class="callout"><b>Clocks are not a risk.</b> The DE10 build runs the core at 50 MHz with Quartus router effort set to minimum, which says timing was never tight. Artix-7 -2 is at least as fast as Cyclone V -7. Reaching 90 MHz for Voodoo 2 is a later question about the pipeline, not about the port.</div>
+</section>
+
+<section>
+  <h2>Recommended order <span class="tag">least new code first</span></h2>
+  <ol class="steps">
+    <li><div><div class="t">Reproduce the DE10 memory architecture on the Artix</div><div class="d">All six BMB ports through one arbiter into MIG DDR3. Generate an <code>ArtixTop</code> the way <code>De10TopGen</code> does, add it as a <code>SIM_INTERFACE=artix</code> variant so the Verilator suite runs against it, then build in Vivado. This already beats the DE10, because the DDR3 is no longer shared with the ARM.</div><div class="x"><b>exit:</b> Glide tests pass on the dev board through the PCIe BAR; first bitstream in about two weeks</div></div></li>
+    <li><div><div class="t">Move the depth buffer into BRAM</div><div class="d"><code>BmbOnChipRam</code> behind the two aux ports. Verify against the traces in simulation first. Measure the Gouraud+fog+alpha+Z small-triangle row from the README table again.</div><div class="x"><b>exit:</b> the 20% row moves toward the flat-shaded 32% row or better</div></div></li>
+    <li><div><div class="t">Move colour buffers to PSRAM</div><div class="d">Write or adopt the controller, size the write buffer (<code>fbWriteBufferLineWords</code>, <code>useFbWriteBuffer</code> are already config knobs), and run the DDR bench idea against it.</div><div class="x"><b>exit:</b> every row of the performance table at or above the original Voodoo 1</div></div></li>
+    <li><div><div class="t">Run the texture cache sizing</div><div class="d"><code>tools/TmuTextureCacheBenchmark.scala</code> exists for this. Fix the BRAM split between depth buffer, texture caches and FIFOs with numbers, before the card layout is frozen.</div><div class="x"><b>exit:</b> BRAM budget on the 200T documented</div></div></li>
+  </ol>
+</section>
+
+<section>
+  <h2>Decisions to make now <span class="tag">they change the board</span></h2>
+  <div class="cols">
+    <div>
+      <h3>HyperRAM instead of OPI PSRAM</h3>
+      <p>Open HyperBus controllers exist and are proven on ULX3S-class boards. Open controllers for the APS12808L's octal DDR interface are scarce, and writing that PHY on Artix-7 is real work. Infineon's 64 Mbit HyperRAM is about $5 a chip. Paying $2 more per chip to skip a DDR PHY is the right trade.</p>
+    </div>
+    <div>
+      <h3>Phase 1 host path</h3>
+      <p>Use the Artix's hard PCIe block on the dev board with an AXI-lite BAR bridged to BMB. The Glide runtime shim already abstracts memory-mapped access, so the software change is a few lines and the register model is identical to the DE10's. A UART or SPI path would work but is too slow to run games during bring-up.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Effort and risk <span class="tag">one experienced FPGA engineer</span></h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Stage</th><th class="num">Weeks</th><th>Main risk</th></tr>
+    <tr><td>Artix top, MIG path, Vivado project, first bitstream on a dev board</td><td class="num">2 to 3</td><td>MIG configuration and AXI burst behaviour; verified in simulation first</td></tr>
+    <tr><td>PCIe BAR host path and runtime shim</td><td class="num">1 to 2</td><td>Xilinx PCIe IP setup; well documented</td></tr>
+    <tr><td>Depth buffer in BRAM</td><td class="num">1</td><td>BRAM budget against the texture cache</td></tr>
+    <tr><td>Colour buffers in PSRAM or HyperRAM</td><td class="num">1 to 3</td><td>Controller availability; the reason to pick HyperRAM</td></tr>
+    <tr><td>TMDS HDMI output</td><td class="num">0.5 to 1</td><td>none of note; open encoders exist</td></tr>
+    <tr><td>T113 SPI link and deploy scripts</td><td class="num">1</td><td>none of note</td></tr>
+    <tr class="total"><td>Total, no changes to the Voodoo pipeline</td><td class="num">6 to 12</td><td></td></tr>
+  </table>
+  </div>
+  <div class="callout"><b>Non-technical blocker.</b> The SpinalVoodoo repository carries no license file. Ask the author before any of this becomes a product.</div>
+</section>
+
+<footer>
+  Source read: <a href="https://github.com/fayalalebrun/SpinalVoodoo">fayalalebrun/SpinalVoodoo</a>, master as of 2026-05-10. Companion pages: <a href="https://claude.ai/artifact/M8pEgp9RvTDcufgRuQDy2t">card plan rev B</a>, <a href="https://claude.ai/artifact/Lf62KtUa85aEHGBhXYxpqE">FPGA options</a>.
+</footer>
+</div>
