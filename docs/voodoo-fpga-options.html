@@ -159,12 +159,12 @@
     <tr><td>PCI front end</td><td>3× SN74CBTD16211 5V bus switches</td><td class="num">$5</td></tr>
     <tr><td>Power</td><td>bucks for core, aux, DDR, 3.3V; VTT; all from the slot's 5V</td><td class="num">$8</td></tr>
     <tr><td>Config flash + clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$2.30</td></tr>
-    <tr><td>Companion CPU</td><td>RP2040 subsystem (T113-S3 adds about $21, see below)</td><td class="num">$3</td></tr>
+    <tr><td>Companion CPU</td><td>T113-S3, SPI NAND, PHY, magjack, crystal (see below)</td><td class="num">$28</td></tr>
     <tr><td>Video</td><td>ADV7123 DAC, relay, 2× DB15, HDMI connector, ESD</td><td class="num">$10</td></tr>
     <tr><td>Passives, bracket</td><td>decoupling, ferrites, headers, full-height bracket</td><td class="num">$10</td></tr>
     <tr><td>PCB</td><td>6-layer, 175 × 107 mm, hard gold fingers, bevel</td><td class="num">$12</td></tr>
     <tr><td>Assembly</td><td>JLCPCB standard, BGA, fees amortised</td><td class="num">$14</td></tr>
-    <tr class="total"><td colspan="2">Board without the FPGA</td><td class="num">≈ $95</td></tr>
+    <tr class="total"><td colspan="2">Board without the FPGA</td><td class="num">≈ $120</td></tr>
   </table>
   </div>
 </section>
@@ -241,7 +241,7 @@
     <tr><td class="name">Can do</td><td>hold and load the bitstream, USB console and DFU updates, relay, fan, LEDs, I2C to DAC and HDMI</td><td>all of that, plus SSH and network updates, settings menu, USB keyboards and gamepads, a file system for traces, and the SpinalVoodoo Glide regression suite on the card with no host PC</td></tr>
   </table>
   </div>
-  <div class="callout"><b>Recommendation: T113-S3.</b> The $21 premium buys the host-less self-test path, which is what makes bring-up of a register-level Voodoo tractable. If cost wins, the RP2350 is the better microcontroller than the RP2040 for the same job.</div>
+  <div class="callout"><b>Recommendation: T113-S3.</b> The $21 premium buys the host-less self-test path, which is what makes bring-up of a register-level Voodoo tractable. The microcontroller option was dropped on 2026-09-16: the FPGA boots from its own QSPI flash, JTAG programs it, updates arrive over PCI or from the T113, and the FPGA drives the relays, so a basic card without the T113 carries no companion CPU at all. The comparison above is kept for the record.</div>
 </section>
 
 <section>
@@ -262,7 +262,7 @@
   <h2>Decision procedure <span class="tag">let the KV260 port pick the chip</span></h2>
   <ol class="steps">
     <li><div><div class="t">Port SpinalVoodoo to the KV260 kit</div><div class="d">$249, kept as a dev board whatever the outcome. Port Avalon to AXI and the DE10 runtime to the A53. This yields the real Voodoo 2 LUT count and real memory latency numbers.</div></div></li>
-    <li><div><div class="t">In parallel, synthesise the core through Gowin EDA</div><div class="d">A day's work, no hardware. Read the utilisation, Fmax and BRAM it reports for the GW5AST-138. The bare chip is $152 to $189 at LCSC, so the Gowin route only pays through Sipeed's $69 Tang Mega 138K module, which also removes the T113 and RP2350 because the chip's hard RISC-V runs Linux. If the core fits at 90 MHz with depth in HyperRAM, a $130 module-based card is real.</div></div></li>
+    <li><div><div class="t">In parallel, synthesise the core through Gowin EDA</div><div class="d">A day's work, no hardware. Read the utilisation, Fmax and BRAM it reports for the GW5AST-138. The bare chip is $152 to $189 at LCSC, so the Gowin route only pays through Sipeed's $69 Tang Mega 138K module, which also removes the T113 because the chip's hard RISC-V runs Linux. If the core fits at 90 MHz with depth in HyperRAM, a $130 module-based card is real.</div></div></li>
     <li><div><div class="t">Choose</div><div class="d">Core under 70K LUT6 and one-chip simplicity wanted: Zynq 7Z030. Otherwise Artix-7 200T or Kintex-7 160T with a T113-S3, at $175 to $195 a board. Gowin on the Sipeed module only if step 2 came back clean and single-source supply is acceptable.</div></div></li>
   </ol>
 </section>

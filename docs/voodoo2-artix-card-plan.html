@@ -402,7 +402,7 @@
     <tr class="total"><td colspan="2">Per card, before shipping, VAT and duty</td><td class="num">≈ $280</td><td class="num">≈ $200</td></tr>
   </table>
   </div>
-  <p>Placing the ADC later adds about $18. Dropping the T113 for an RP2350 saves about $22 and loses the host-less self-test path.</p>
+  <p>Placing the ADC later adds about $18. There is no microcontroller on the card: the FPGA boots from its own QSPI flash, JTAG programs it during development, and updates arrive over PCI or from the T113.</p>
 </section>
 
 <section>
@@ -414,7 +414,7 @@
     <tr><td>FPGA</td><td>XC7A200T-2FBG484</td><td>XC7A100T-2FGG484, 63K LUT6, about 70% full</td><td class="num">$50</td></tr>
     <tr><td>DDR3</td><td>2× 4 Gbit x16, 1 GB</td><td>unpopulated; MIG omitted from the bitstream</td><td class="num">$0</td></tr>
     <tr><td>HyperRAM</td><td>4× ISSI, colour buffers</td><td>4× ISSI, 32 MB, holds frame buffer, depth and textures; a Voodoo 1 addresses 4 MB of each at most</td><td class="num">$7</td></tr>
-    <tr><td>Companion CPU</td><td>T113-S3, Linux</td><td>RP2350B: bitstream load, USB updates, relay. T113 site unpopulated</td><td class="num">$2</td></tr>
+    <tr><td>Companion CPU</td><td>T113-S3, Linux</td><td>none. T113 site unpopulated; the FPGA boots from QSPI, JTAG programs it, updates come over PCI, the FPGA drives the relays</td><td class="num">$0</td></tr>
     <tr><td>PCI front end</td><td>3× bus switches</td><td>same</td><td class="num">$5</td></tr>
     <tr><td>Power</td><td>1.0V, 1.8V, 1.5V, 3.3V, VTT</td><td>1.0V, 1.8V, 3.3V; DDR rails unpopulated</td><td class="num">$6</td></tr>
     <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz</td><td>same; the 100T bitstream is 30 Mbit</td><td class="num">$2.50</td></tr>
@@ -431,7 +431,7 @@
   <h2>Phases <span class="tag">each ends with something that runs</span></h2>
   <ol class="phases">
     <li><div><div class="ph-t">Port SpinalVoodoo to an Artix-7 200T PCIe dev board</div><div class="ph-d">An Alinx or QMTech 200T board with DDR3 and PCIe, about $200 to $300, in a Linux PC. Avalon ports become AXI and MIG; the DE10 MMIO runtime maps the PCIe BARs through UIO, which is the same memory-mapped model. Move the framebuffer into BRAM and HyperRAM and measure the small-triangle numbers again.</div><div class="ph-exit"><b>exit:</b> Quake and Screamer 2 run at or above real Voodoo 1 rates; real LUT and BRAM usage known</div></div></li>
-    <li><div><div class="ph-t">Card rev B</div><div class="ph-d">PCI target with config space, T113, relay, DAC, HDMI, HyperRAM, ADC footprint. Bring up on a Socket 7 board with DOS Glide and the Win9x reference drivers.</div><div class="ph-exit"><b>exit:</b> unmodified 3dfx Voodoo 1 drivers enumerate and run the card</div></div></li>
+    <li><div><div class="ph-t">Card rev B</div><div class="ph-d">PCI target in the FPGA with config space, T113, relays, DAC, HDMI, HyperRAM, DDR3, ADC footprint. First boards carry the XC7A100T. Configure over JTAG; the first bitstream enumerates in a Socket 7 BIOS with a block-RAM-backed BAR, then the DE10 register model goes behind it, then DOS Glide and the Win9x reference drivers. No microcontroller: JTAG-to-AXI and the T113 link are the fallback host paths while PCI is debugged with an ILA on the bus.</div><div class="ph-exit"><b>exit:</b> unmodified 3dfx Voodoo 1 drivers enumerate and run the card</div></div></li>
     <li><div><div class="ph-t">Voodoo 2 extensions</div><div class="ph-d">Second TMU with multi-texture chaining, cmdFifo triangle packets, memory FIFO, 128-entry PCI FIFO, 90 MHz timing closure. Validate against MAME and 86Box traces.</div><div class="ph-exit"><b>exit:</b> Voodoo 2 drivers run; core under 75K LUT6</div></div></li>
     <li><div><div class="ph-t">v2 firmware</div><div class="ph-d">Place the ADC. Capture, scaler and menu in fabric, controlled from the T113. HDMI now shows the whole session.</div><div class="ph-exit"><b>exit:</b> one HDMI cable from a 1998 PC</div></div></li>
     <li><div><div class="ph-t">Combo card: 2D + 3D in one slot</div><div class="ph-d">A firmware and BOM variant on the same board, no relayout. The card becomes a two-function PCI device: function 0 is an SVGA adapter built on the ao486 VGA core with the Bochs VBE extension, function 1 is the Voodoo 2. The VGA frame buffer lives in DDR3 behind a scanline FIFO; the passthrough relay is replaced by a video mux in the fabric, switched by the same register bit the 3dfx driver already flips, so VGA IN and the relay go unpopulated. Software is all existing and open: the Bochs VGABIOS as the option ROM served from config space and held by the T113, vmdisp9x as the Windows 9x display driver with its DirectDraw HAL, VESA 2.0 for DOS, and 3dfx's own Voodoo 2 drivers for Glide, Direct3D and the MiniGL and OpenGL ICD, exactly as on a 1998 PC with two cards. About 5K LUT6 extra, no 2D acceleration in this step. Later upgrade for the 2D function: GPLGPU's Imagine 128 core (in-box Windows 98 driver, BitBLT, needs a memory-controller port and a video BIOS) or a Cirrus CL-GD5446 core written against QEMU (in-box driver, SeaVGABIOS).</div><div class="ph-exit"><b>exit:</b> Windows 98 desktop and Glide games from one card, one VGA cable, one HDMI, no drivers written</div></div></li>
@@ -439,8 +439,71 @@
 </section>
 
 <section>
+  <h2>PCI bring-up on the card <span class="tag">no microcontroller, no separate bring-up board</span></h2>
+  <p>Earlier drafts had a separate bring-up card with two RP2350 microcontrollers, one answering PCI from PIO and one driving video, and an RP2350B on the basic card for bitstream load and updates. Both were dropped on 2026-09-16. A PIO PCI target cannot meet the 11 ns clock-to-output rule and nobody has published one; an FPGA PCI target is routine. With the XC7A100T at $64 on the same footprint as the 200T, the card itself is the cheapest PCI development platform available, and the PCI core written for bring-up is the one that ships.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Job</th><th>Done by</th></tr>
+    <tr><td>PCI target</td><td>The Artix: target-only, 33 MHz, PCI33_3 I/O standard on one HR bank, the bus clock on that bank's clock-capable pin through an MMCM in zero-delay mode, so clock-to-out is a few nanoseconds against the 11 ns limit. About 1,000 to 2,000 LUT6, one block RAM for the 128-entry write FIFO, 47 pins.</td></tr>
+    <tr><td>Bitstream at power-up</td><td>The Artix boots itself from the 128 Mbit QSPI in master SPI mode. MultiBoot keeps a golden image so a bad update falls back instead of bricking.</td></tr>
+    <tr><td>Programming during development</td><td>The JTAG header and Vivado. Once the T113 runs Linux it can drive the same pins through OpenOCD as an on-board programmer.</td></tr>
+    <tr><td>Field updates</td><td>Full card: the T113 over USB or the network. Basic card: a flash-write register block in the FPGA driven over PCI from a DOS or Windows tool, the way 3dfx shipped BIOS updates.</td></tr>
+    <tr><td>VGA relays</td><td>The FPGA drives the three MOSFETs. Unpowered or unconfigured means passthrough.</td></tr>
+    <tr><td>Bus switches before configuration</td><td>Enables pulled inactive and released by the FPGA DONE pin, so the slot sees an empty card until the target is alive.</td></tr>
+    <tr><td>Power sequencing</td><td>Regulator power-good pins and an RC, or a supervisor if the rail order needs enforcing.</td></tr>
+  </table>
+  </div>
+
+  <h3>Three host paths into the same port</h3>
+  <p>The SpinalVoodoo host port is one BMB slave. An arbiter in front of it takes three masters, and whichever works first is the host while the others are debugged.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Path</th><th>What it is</th><th>Bandwidth</th><th>When</th></tr>
+    <tr><td>PCI</td><td>The target core, driven by a Socket 7 host or by a PCIe-to-PCI adapter in a modern PC</td><td>up to 132 MB/s</td><td>the product</td></tr>
+    <tr><td>JTAG</td><td>Vivado's JTAG-to-AXI master on the existing header, driven from a Tcl console: registers, framebuffer fills and read-backs with no host at all. The card can sit in a slot for power while PCI is not yet working, since a slot powers a card whether or not it enumerates.</td><td>tens of kB/s to about 1 MB/s</td><td>day one</td></tr>
+    <tr><td>T113 link</td><td>The DE10 MMIO runtime on the T113 through the FPGA link, the host-less self-test path</td><td>12 MB/s over SPI, above 100 MB/s over the LCD pipe</td><td>once Linux boots on the T113</td></tr>
+  </table>
+  </div>
+  <div class="callout"><b>Bench power.</b> Outside a PC the card needs 5 V in: a 4-pin Molex or a barrel jack on the input, diode-ORed or switched against the slot rail through the load switch already in the BOM. It also makes T113 Linux development possible on the desk.</div>
+
+  <h3>First bitstreams</h3>
+  <ol>
+    <li>Enumerate: the 3dfx vendor and device IDs, one 16 MB memory BAR backed by block RAM, medium decode. A DOS test program writes it and reads it back. An ILA over JTAG captures the bus if it does not.</li>
+    <li>The DE10 register model behind the BAR, which is where the existing SpinalVoodoo host path already sits.</li>
+    <li>Fill-rate work on the memory the card actually has.</li>
+  </ol>
+  <p>Design the PCI target and the bus switches so the card is happy at 3.3 V signalling, which costs nothing. That makes a commercial PCIe-to-PCI adapter work immediately and keeps the bridge-chip variant below open.</p>
+</section>
+
+<section>
+  <h2>Path to PCIe <span class="tag">how different it is, and how to get there</span></h2>
+  <p>PCI and PCIe share their software model and almost nothing else. A PCIe device shows up to the BIOS, the OS and the driver as a PCI device: same 256-byte config header, same BARs, same memory-mapped registers, plus a 4 KB extended config space. Everything below that is different.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>PCI (this card)</th><th>PCIe x1</th></tr>
+    <tr><td>Topology</td><td>shared parallel bus, several cards on one set of wires</td><td>point-to-point serial link per slot</td></tr>
+    <tr><td>Signals</td><td>46 single-ended lines at 33 MHz, 5V or 3.3V</td><td>one differential pair each way at 2.5 or 5 GT/s, plus a 100 MHz reference clock and PERST#</td></tr>
+    <tr><td>Protocol</td><td>address phase, data phases, wait states, retry</td><td>packets (TLPs) with link training, flow control, 8b/10b or 128b/130b coding</td></tr>
+    <tr><td>Bandwidth</td><td>132 MB/s shared</td><td>250 MB/s Gen1, 500 MB/s Gen2, each direction</td></tr>
+    <tr><td>Silicon needed</td><td>any 3.3V I/O plus bus switches for 5V slots</td><td>a SerDes: the Artix-7's hard PCIe block and GTP transceivers, or a bridge chip</td></tr>
+  </table>
+  </div>
+
+  <h3>Three ways to run the card in a PCIe machine</h3>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Route</th><th>What changes</th><th>Cost</th><th>When</th></tr>
+    <tr><td>Commercial PCIe-to-PCI adapter</td><td>Nothing. The finished PCI card plugs into a StarTech PEX1PCI1-class adapter, which carries a Pericom PI7C9X111SL bridge. The card must tolerate 3.3V signalling, which the bus switches already do.</td><td>$52 for the adapter</td><td>Day one, for testing in a modern PC</td></tr>
+    <tr><td>Bridge chip on a PCIe variant of the card</td><td>A PCIe x1 edge, the bridge chip, and the FPGA still speaks 33 MHz PCI. No RTL change. PI7C9X111SL is hard to source; ASMedia ASM1083 and ITE IT8892 are the cheap ones in AliExpress adapters and have a mixed reputation with some cards.</td><td>$10 to $25 for the bridge</td><td>When a modern-PC product is wanted and bandwidth does not matter, which is true for a Voodoo</td></tr>
+    <tr><td>Native PCIe endpoint on the Artix-7</td><td>Both the 100T and the 200T in the 484-ball package have four GTP transceivers and the hard PCIe Gen2 block. Replace the PCI target with the PCIe endpoint IP exposing an AXI-lite BAR, bridged to the same BMB host port. New card outline, 100 MHz refclk, no bus switches.</td><td>$0 in parts, 2 to 4 weeks of work</td><td>Only if bandwidth beyond 132 MB/s matters, which the Voodoo never needs</td></tr>
+  </table>
+  </div>
+  <p>Keep native PCIe as the option for a later, faster GPU, since the phase 1 dev board work already exercises the Artix PCIe block.</p>
+</section>
+
+<section>
   <h2>Module variant: Sipeed Tang Mega 138K carrier <span class="tag">everything on the module, read from the SoM schematic</span></h2>
-  <p>An alternative build that replaces the Artix-7, the DDR3, the T113 and the RP2350 with one $69 module: Sipeed's Tang Mega 138K SoM, carrying the Gowin GW5AST-LV138PG484 with a hard 400 to 800 MHz RISC-V A25 that runs Linux, 1 GB of DDR3 on the module's hard controller, a 128 Mbit MSPI flash, and all of its own regulators. The card becomes a 4-layer carrier with no BGA. Facts below are from Sipeed's published SoM schematic (tang_mega_138k_30354), not estimates.</p>
+  <p>An alternative build that replaces the Artix-7, the DDR3 and the T113 with one $69 module: Sipeed's Tang Mega 138K SoM, carrying the Gowin GW5AST-LV138PG484 with a hard 400 to 800 MHz RISC-V A25 that runs Linux, 1 GB of DDR3 on the module's hard controller, a 128 Mbit MSPI flash, and all of its own regulators. The card becomes a 4-layer carrier with no BGA. Facts below are from Sipeed's published SoM schematic (tang_mega_138k_30354), not estimates.</p>
   <div class="table-wrap">
   <table>
     <tr><th>Item</th><th>What the schematic shows</th><th>What it means for the carrier</th></tr>
@@ -485,7 +548,7 @@
     <tr class="total"><td>Per card</td><td class="num">≈ $185</td><td class="num">≈ $140</td></tr>
   </table>
   </div>
-  <p>Against rev B at about $280 and $200. The saving is the T113 and RP2350 gone, the FPGA subsidised by Sipeed, and a board a third the complexity. The cost is single-source supply, half the block RAM, and a LUT4 fabric that the core has never been synthesised for.</p>
+  <p>Against rev B at about $285 and $245. The saving is the T113 gone, the FPGA subsidised by Sipeed, and a board a third the complexity. The cost is single-source supply, half the block RAM, and a LUT4 fabric that the core has never been synthesised for.</p>
   <div class="callout"><b>Decision gate.</b> Synthesise SpinalVoodoo through Gowin EDA for the GW5AST-138 and read utilisation, Fmax and BRAM. One afternoon, no hardware. If it fits at 90 MHz with depth in HyperRAM, this variant is the cheapest complete card and the cheapest prototype, and the Pro Dock at $175 is its dev board. If it does not, rev B stands.</div>
 </section>
 
@@ -508,7 +571,8 @@
 <section>
   <h2>Open risks <span class="tag">check before ordering boards</span></h2>
   <div class="risk"><b>Grey-channel FPGAs.</b> DigiKey lists the 200T near $250; LCSC stock at $80 is pulls or relabels. Buy samples first, check date codes, test them, then buy the whole run and consign it to assembly.</div>
-  <div class="risk"><b>Block RAM budget.</b> Depth buffer, texture caches and FIFOs all want the same 13 Mbit. Phase 1 must report the real split before the memory subsystem is frozen.</div>
+  <div class="risk"><b>Block RAM budget.</b> Depth buffer, texture caches and FIFOs all want the same 13 Mbit on the 200T, and the 100T has 4.9 Mbit, so there depth goes to HyperRAM behind a span cache. Phase 1 must report the real split before the memory subsystem is frozen.</div>
+  <div class="risk"><b>PCI on the first spin.</b> There is no separate bring-up board, so the first card carries the PCI risk. The 5 V bus-switch audit (clamp current, thresholds, power-off isolation, 33 MHz timing) is a gate before ordering; the JTAG and T113 host paths keep the 3D work moving if PCI needs a second bitstream.</div>
   <div class="risk"><b>T113 power sequencing.</b> Three or four rails in order, plus a 128-ball BGA. Copy a known-good reference design (MangoPi MQ-Dual) rather than deriving it.</div>
   <div class="risk"><b>Tools.</b> AMD's free Vivado tier for 2026.1 is reported as Windows-only. Plan the build machine, or pin an earlier release.</div>
   <div class="risk"><b>License.</b> SpinalVoodoo's repository shows no license file. Ask the author before building a product on it.</div>

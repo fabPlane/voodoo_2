@@ -396,3 +396,28 @@ Next-pass actions:
 Current spot pricing is roughly $6.27–$6.65 per device at quantity one, so the
 old $1.92 estimate is retired. Recheck LCSC/JLC stock and assembly-library status
 when the exact schematic BOM is uploaded.
+
+## No microcontroller — 2026-09-16
+
+The two-RP2350 bring-up card and the RP2350B on the basic card are dropped.
+The Artix is the PCI target (PCI33_3 on one HR bank, bus clock on a
+clock-capable pin through an MMCM, about 1-2K LUT6, one BRAM, 47 pins), boots
+itself from the QSPI (MultiBoot with a golden image), is programmed over JTAG,
+takes field updates over PCI or from the T113, and drives the relay MOSFETs.
+Consequences for the next pass:
+
+- JTAG J8 is a first-class connector, not a debug afterthought: pick the
+  connector (2 mm 2x7 Xilinx header or 6-pin 0.1 in) and route TCK/TMS/TDI/TDO
+  short. The T113 should reach the same pins so it can be the on-board
+  programmer under OpenOCD later.
+- Add a bench 5 V input (4-pin Molex or barrel jack) diode-ORed or switched
+  against the slot rail through the load switch Q10, so the card runs outside
+  a PC for JTAG-to-AXI and T113 Linux work.
+- Bus-switch enables pulled inactive and released by DONE, so an unconfigured
+  card looks empty to the slot.
+- The 5 V PCI audit in item 4 becomes an ordering gate: the first card carries
+  the PCI risk that the bring-up card was meant to absorb. Host fallbacks while
+  PCI is debugged: Vivado JTAG-to-AXI on J8, then the T113 link.
+- Pin budget: PCI, 32-bit DDR3, four HyperRAM channels, DAC, HDMI, T113 link,
+  relays and configuration take roughly 240 of 285 I/O before any expansion
+  header, on either FPGA.
