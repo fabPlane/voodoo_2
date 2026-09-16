@@ -86,9 +86,20 @@ Two connectors were added or firmed up on 2026-09-16 after the microcontroller
 and bring-up card were dropped: J8 is now the JXTCONN `IDC2.0-2*7PZ` 2 mm 2x7
 shrouded JTAG header (`C53207571`, $0.25, Xilinx cable pinout) and J10 is a new
 bench 5 V input, Korean Hroparts `DC-005C-20A` 2.0 mm barrel jack rated 3 A
-(`C84007`, $0.23) on the top edge next to the power block. The BOM is now 46
-groups and 327 placements. J10 must be diode-ORed or switched against the slot
+(`C84007`, $0.23) on the top edge next to the power block. J10 must be diode-ORed or switched against the slot
 rail through the load switch Q10 in the power-tree pass.
+
+An RP2350B block was added the same day as a peripheral, not a boot or PCI
+dependency: U40 `RP2350B` (`C42415655`, $1.28) with a 24-pin registered link
+to a 3.3 V FPGA bank plus JTAG and configuration lines, Y3 12 MHz crystal
+(`C9002`), U41 `W25Q128JVSIQ` flash (`C97521`, the same reel as the FPGA
+configuration flash; the 32 Mbit part has 3 in stock at JLC), L25 3.3 uH core-regulator
+inductor (`C354572`), J11 USB-C `TYPE-C-31-M-12` (`C165948`) on the right
+edge with U35 ESD, CC and series resistors R145-R148, SW1 BOOTSEL
+(`C318884`), and ten decoupling capacitors. It is the on-board USB JTAG
+programmer and console, and the host for PIO experiments behind the FPGA's
+registered crossbar. About $3 in parts. The BOM is now 57 groups and 348
+placements.
 
 Estimated complete card at quantity 5 from live JLC prices, with the quoted
 fabrication and assembly charges unchanged: about $220 with the 100T, about

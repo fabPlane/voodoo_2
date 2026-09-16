@@ -52,6 +52,17 @@ const parts = [
   ["Input load switch", "Q10", 1, "TBD", "", "Provisional", "QFN", "Inrush and reverse-block allowance"],
   ["FPGA JTAG header (Xilinx 2 mm 2x7 cable pinout)", "J8", 1, "IDC2.0-2*7PZ", "C53207571", "Candidate", "IDC-2x7-2.0mm", "JXTCONN 2 mm 2x7 shrouded box header"],
   ["Bench 5 V input (diode-OR or load switch against the slot rail)", "J10", 1, "DC-005C-20A", "C84007", "Candidate", "DC-Jack-RA", "Korean Hroparts 2.0 mm barrel jack, 3 A"],
+  ["Bitbang and USB-JTAG MCU (24-pin registered link to the FPGA plus JTAG and config lines; not in the boot or PCI path)", "U40", 1, "RP2350B", "C42415655", "Candidate", "QFN-80", "Raspberry Pi RP2350B, 48 GPIO"],
+  ["MCU crystal", "Y3", 1, "X322512MSB4SI", "C9002", "Candidate", "Crystal-3225", "YXC 12 MHz"],
+  ["MCU flash (same reel as U10)", "U41", 1, "W25Q128JVSIQ", "C97521", "Candidate", "SOIC-8", "Winbond 128 Mbit QSPI NOR"],
+  ["MCU core-regulator inductor", "L25", 1, "CKCS4018-3.3uH/M", "C354572", "Candidate", "L-4018", "CENKER 3.3 uH 1.2 A"],
+  ["MCU USB-C", "J11", 1, "TYPE-C-31-M-12", "C165948", "Candidate", "USB-C-16P", "Korean Hroparts USB 2.0 receptacle"],
+  ["MCU USB ESD", "U35", 1, "USBLC6-2SC6", "C7519", "Candidate", "SOT-23-6", "ST two-line ESD array"],
+  ["USB CC pull-downs", "R145,R146", 2, "0402WGF5101TCE", "C25905", "Candidate", "R_0402", "5.1 kohm 1%"],
+  ["USB series resistors", "R147,R148", 2, "0402WGF270JTCE", "C25100", "Candidate", "R_0402", "27 ohm 1%"],
+  ["MCU BOOTSEL", "SW1", 1, "TS-1187A-B-A-B", "C318884", "Candidate", "SW-SMD-3.9x3.9", "XKB tactile switch"],
+  ["MCU decoupling", expand("C", 163, 8).join(","), 8, "CL05B104KO5NNNC", "C1525", "Candidate", "C_0402", "Samsung 100 nF 16 V X7R"],
+  ["MCU bulk capacitors", "C171,C172", 2, "CL21A106KAYNNNE", "C15850", "Candidate", "C_0805", "Samsung 10 uF 25 V X5R"],
   ["Manufacturing header", "J9", 1, "TBD", "", "Provisional", "Header-SMD", "Connector selection pending"],
   ["Status LEDs", expand("D", 20, 5).join(","), 5, "TBD", "", "Provisional", "LED_0603", "Color and current pending"],
 ];
@@ -102,11 +113,17 @@ cpl.push(
   ["L22", 158, 57.5, "Top", 0], ["L23", 176, 57.5, "Top", 0], ["L24", 158, 73, "Top", 0],
   ["F1", 184, 72, "Top", 0], ["D10", 188, 72, "Top", 0], ["Q10", 184, 77, "Top", 0],
   ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0], ["J10", 190, 27, "Top", 0],
+  ["U40", 172, 100, "Top", 0], ["Y3", 165, 108, "Top", 0], ["U41", 184, 92, "Top", 0], ["L25", 172, 110, "Top", 0],
+  ["J11", 192, 100, "Top", 0], ["U35", 186, 108, "Top", 0], ["SW1", 180, 110, "Top", 0],
+  ["C171", 178, 86, "Top", 0], ["C172", 181, 86, "Top", 0],
   ["D20", 188, 83, "Top", 0], ["D21", 188, 85, "Top", 0], ["D22", 188, 87, "Top", 0],
   ["D23", 188, 89, "Top", 0], ["D24", 188, 91, "Top", 0],
 );
 
-if (cpl.length !== 327) throw new Error(`Expected 327 placements, found ${cpl.length}`);
+addGrid(cpl, expand("R", 145, 4), 166, 114, 4, 2, 1.7);
+addGrid(cpl, expand("C", 163, 8), 168, 92, 4, 1.75, 1.65);
+
+if (cpl.length !== 348) throw new Error(`Expected 348 placements, found ${cpl.length}`);
 
 const bomRows = [["Comment", "Designator", "Footprint", "LCSC Part #"]];
 for (const [func, designators, qty, mpn, lcsc, state, footprint, description] of parts) {
@@ -123,6 +140,8 @@ function styleHeader(range) {
     wrapText: true,
   };
 }
+
+const last = 10 + parts.length;
 
 async function buildBom() {
   const wb = Workbook.create();
@@ -145,9 +164,9 @@ async function buildBom() {
   status.getRange("A2").values = [["Quantity 5; top-side-only assembly; support values remain provisional until schematic and power-tree review."]];
   status.getRange("A2").format.font = { name: font, size: 10, italic: true, color: "#555555" };
   status.getRange("A4:A7").values = [["BOM line groups"], ["Placements per board"], ["Placements with LCSC match"], ["Placement coverage"]];
-  status.getRange("B4").formulas = [["=COUNTA(A11:A56)"]];
-  status.getRange("B5").formulas = [["=SUM(C11:C56)"]];
-  status.getRange("B6").formulas = [["=SUMIF(F11:F56,\"<>\",C11:C56)"]];
+  status.getRange("B4").formulas = [[`=COUNTA(A11:A${last})`]];
+  status.getRange("B5").formulas = [[`=SUM(C11:C${last})`]];
+  status.getRange("B6").formulas = [[`=SUMIF(F11:F${last},"<>",C11:C${last})`]];
   status.getRange("B7").formulas = [["=B6/B5"]];
   status.getRange("B4:B6").format.numberFormat = "#,##0";
   status.getRange("B7").format.numberFormat = "0.0%";
@@ -160,15 +179,15 @@ async function buildBom() {
   }
   status.getRangeByIndexes(9, 0, statusRows.length, 8).values = statusRows;
   status.getRange("D11").formulas = [["=C11*5"]];
-  status.getRange("D11:D56").fillDown();
+  status.getRange(`D11:D${last}`).fillDown();
   styleHeader(status.getRange("A10:H10"));
   status.freezePanes.freezeRows(10);
-  status.getRange("A10:H56").format.font = { name: font, size: 9 };
-  status.getRange("A10:H56").format.verticalAlignment = "top";
-  status.getRange("A10:H56").format.wrapText = true;
-  status.getRange("C11:D56").format.numberFormat = "#,##0";
-  [24, 22, 11, 11, 31, 14, 14, 48].forEach((width, i) => status.getRangeByIndexes(0, i, 56, 1).format.columnWidth = width);
-  status.getRange("G11:G56").conditionalFormats.add("containsText", { text: "Provisional", format: { fill: "#FFF2CC", font: { color: "#7F6000" } } });
+  status.getRange(`A10:H${last}`).format.font = { name: font, size: 9 };
+  status.getRange(`A10:H${last}`).format.verticalAlignment = "top";
+  status.getRange(`A10:H${last}`).format.wrapText = true;
+  status.getRange(`C11:D${last}`).format.numberFormat = "#,##0";
+  [24, 22, 11, 11, 31, 14, 14, 48].forEach((width, i) => status.getRangeByIndexes(0, i, last, 1).format.columnWidth = width);
+  status.getRange(`G11:G${last}`).conditionalFormats.add("containsText", { text: "Provisional", format: { fill: "#FFF2CC", font: { color: "#7F6000" } } });
 
   console.log((await wb.inspect({ kind: "table", sheetId: "Parts status", range: "A1:H16", include: "values,formulas", tableMaxRows: 16, tableMaxCols: 8 })).ndjson);
   console.log((await wb.inspect({ kind: "match", searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!|#SPILL!|#CALC!", options: { useRegex: true, maxResults: 100 }, summary: "final formula error scan" })).ndjson);
@@ -185,8 +204,8 @@ async function buildCpl() {
   sheet.freezePanes.freezeRows(1);
   styleHeader(sheet.getRange("A1:E1"));
   sheet.getRangeByIndexes(0, 0, rows.length, 5).format.font = { name: font, size: 10 };
-  sheet.getRange("B2:C328").format.numberFormat = "0.000";
-  sheet.getRange("E2:E328").format.numberFormat = "0";
+  sheet.getRange(`B2:C${cpl.length + 1}`).format.numberFormat = "0.000";
+  sheet.getRange(`E2:E${cpl.length + 1}`).format.numberFormat = "0";
   [18, 14, 14, 12, 12].forEach((width, i) => sheet.getRangeByIndexes(0, i, rows.length, 1).format.columnWidth = width);
   console.log((await wb.inspect({ kind: "table", sheetId: "CPL", range: "A1:E12", include: "values,formulas", tableMaxRows: 12, tableMaxCols: 5 })).ndjson);
   console.log((await wb.inspect({ kind: "match", searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!|#SPILL!|#CALC!", options: { useRegex: true, maxResults: 100 }, summary: "final formula error scan" })).ndjson);

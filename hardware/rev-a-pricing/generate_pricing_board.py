@@ -124,6 +124,8 @@ def build() -> str:
     additions += grid(numbered("R", 31, 32), "10k", "R_0402", 49.5, 64.0, 8, 2.0, 1.7, 1.0, 0.5)
     additions += grid(numbered("R", 71, 40), "33R", "R_0402", 91.5, 100.0, 10, 2.2, 1.8, 1.0, 0.5)
     additions += grid(numbered("R", 121, 24), "VALUE_TBD", "R_0402", 148.0, 100.0, 8, 2.1, 1.8, 1.0, 0.5)
+    additions += grid(numbered("R", 145, 4), "USB", "R_0402", 166.0, 114.0, 4, 2.0, 1.7, 1.0, 0.5)
+    additions += grid(numbered("C", 163, 8), "100nF", "C_0402", 168.0, 92.0, 4, 1.75, 1.65, 1.0, 0.5)
 
     # Explicit support-device allowances.  Exact protection-array choices and
     # the auxiliary-buck magnetics are still engineering candidates.
@@ -148,6 +150,15 @@ def build() -> str:
         rough.placeholder("J8", "JTAG 2x7 2.0mm", 86.0, 92.0, 16.0, 7.0),
         rough.placeholder("J9", "MFG TEST", 73.0, 96.0, 16.0, 4.0),
         rough.placeholder("J10", "BENCH 5V DC JACK", 190.0, 27.0, 9.0, 14.0),
+        rough.placeholder("U40", "RP2350B", 172.0, 100.0, 10.0, 10.0),
+        smd2("Y3", "12MHz", 165.0, 108.0, "Crystal-3225", 3.2, 2.5),
+        rough.placeholder("U41", "W25Q128 MCU FLASH", 184.0, 92.0, 5.0, 6.0),
+        rough.placeholder("L25", "3.3uH MCU", 172.0, 110.0, 4.0, 4.0),
+        rough.placeholder("J11", "USB-C MCU", 192.0, 100.0, 9.0, 7.5),
+        rough.placeholder("U35", "USB ESD", 186.0, 108.0, 3.0, 3.0),
+        rough.placeholder("SW1", "BOOTSEL", 180.0, 110.0, 3.9, 3.9),
+        smd2("C171", "10uF", 178.0, 86.0, "C_0805", 2.0, 1.25),
+        smd2("C172", "10uF", 181.0, 86.0, "C_0805", 2.0, 1.25),
         smd2("D20", "POWER LED", 188.0, 83.0, "LED_0603", 1.6, 0.8),
         smd2("D21", "FPGA DONE", 188.0, 85.0, "LED_0603", 1.6, 0.8),
         smd2("D22", "CPU STATUS", 188.0, 87.0, "LED_0603", 1.6, 0.8),

@@ -426,4 +426,37 @@ Consequences for the next pass:
   PCI is debugged: Vivado JTAG-to-AXI on J8, then the T113 link.
 - Pin budget: PCI, 32-bit DDR3, four HyperRAM channels, DAC, HDMI, T113 link,
   relays and configuration take roughly 240 of 285 I/O before any expansion
-  header, on either FPGA.
+  header, on either FPGA. The RP2350B link below takes 24 of the remainder.
+
+## RP2350B as a peripheral — 2026-09-16
+
+One RP2350B (`C42415655`, $1.28, QFN-80, 48 GPIO) is back on the card, but
+not in the boot, update or PCI path. The FPGA still boots itself from QSPI and
+is the PCI target; the table above stands. The RP2350B is there for:
+
+- **USB JTAG programmer and serial console.** Four RP2350B pins to the FPGA
+  JTAG chain (in parallel with J8) and dirtyJtag firmware make it the
+  programmer openFPGALoader already supports, with a UART console on the
+  same USB-C. Also a backup slave-serial configuration path from its own
+  flash or from USB.
+- **PIO experiments behind a registered crossbar.** A 24-pin link to a 3.3 V
+  FPGA bank. A bitstream that is nothing but registers and a crossbar can hand
+  the RP2350B any card signal below about 50 MHz: PCI (packed as two 16-bit
+  transfers per bus clock, captured and driven on the bus edge by the FPGA so
+  the 11 ns clock-to-out rule is met by the FPGA, not the PIO), relays, DAC
+  control, HDMI DDC, the bracket port headers. TMDS, DDR3 and HyperRAM stay in
+  the FPGA.
+- **PicoGUS-style legacy emulation.** The FPGA already positively decodes
+  legacy I/O ports for the bracket headers; forward those accesses over the
+  link and PicoGUS firmware provides Adlib, Sound Blaster and MPU-401 on the
+  combo card.
+
+Parts: Y3 `X322512MSB4SI` 12 MHz (`C9002`), U41 `W25Q128JVSIQ` (`C97521`, same reel as U10; W25Q32JVSSIQ has 3 in stock),
+L25 `CKCS4018-3.3uH/M` (`C354572`) for the on-chip core regulator, J11
+`TYPE-C-31-M-12` (`C165948`) on the right edge, U35 `USBLC6-2SC6`, R145/R146
+5.1 k CC pull-downs, R147/R148 27 ohm series, SW1 `TS-1187A-B-A-B` BOOTSEL,
+C163-C170 100 nF, C171/C172 10 uF. RP2350B pin plan: 24 link, 4 JTAG, 4
+configuration (PROGRAM_B, INIT_B, DONE, slave-serial data or CCLK), 2 UART,
+the rest for LEDs, relay override and I2C. USB, QSPI and SWD are dedicated
+pins. Route the 3.3 uH inductor and its capacitors per the RP2350 hardware
+design guide; the chip's 1.1 V core is generated on-chip.
