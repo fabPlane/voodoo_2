@@ -406,6 +406,28 @@
 </section>
 
 <section>
+  <h2>Basic BOM variant <span class="tag">same board, Voodoo 1 only</span></h2>
+  <p>The core sets the floor: SpinalVoodoo's Voodoo 1 needs about 45K LUT6 with PCI, HyperRAM controllers and video, so nothing smaller than an Artix-7 100T holds it. A dedicated smaller board saves only $10 to $15 against populating this layout differently, so the basic card is a BOM, not a second design. It relies on the 484-ball footprint compatibility between the 100T and 200T, which is on the verify list.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Item</th><th>Full rev B</th><th>Basic BOM</th><th class="num">Basic, qty 100</th></tr>
+    <tr><td>FPGA</td><td>XC7A200T-2FBG484</td><td>XC7A100T-2FGG484, 63K LUT6, about 70% full</td><td class="num">$50</td></tr>
+    <tr><td>DDR3</td><td>2× 4 Gbit x16, 1 GB</td><td>unpopulated; MIG omitted from the bitstream</td><td class="num">$0</td></tr>
+    <tr><td>HyperRAM</td><td>4× ISSI, colour buffers</td><td>4× ISSI, 32 MB, holds frame buffer, depth and textures; a Voodoo 1 addresses 4 MB of each at most</td><td class="num">$7</td></tr>
+    <tr><td>Companion CPU</td><td>T113-S3, Linux</td><td>RP2350B: bitstream load, USB updates, relay. T113 site unpopulated</td><td class="num">$2</td></tr>
+    <tr><td>PCI front end</td><td>3× bus switches</td><td>same</td><td class="num">$5</td></tr>
+    <tr><td>Power</td><td>1.0V, 1.8V, 1.5V, 3.3V, VTT</td><td>1.0V, 1.8V, 3.3V; DDR rails unpopulated</td><td class="num">$6</td></tr>
+    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz</td><td>same; the 100T bitstream is 30 Mbit</td><td class="num">$2.50</td></tr>
+    <tr><td>Video</td><td>ADV7123, relay, 2× DB15, HDMI</td><td>resistor DAC in place of the ADV7123, otherwise same</td><td class="num">$6</td></tr>
+    <tr><td>Passives, bracket</td><td></td><td>same</td><td class="num">$10</td></tr>
+    <tr><td>PCB, assembly</td><td>6-layer</td><td>same board, fewer placements</td><td class="num">$24</td></tr>
+    <tr class="total"><td colspan="3">Per card, qty 100 (full rev B: about $200)</td><td class="num">≈ $115</td></tr>
+  </table>
+  </div>
+  <p>What the basic card is: a register-level Voodoo 1 that runs the original drivers, 640×480 with Z, VGA passthrough and HDMI. What it gives up: Voodoo 2, Linux and networking, and some speed. The 100T's 4.9 Mbit of BRAM cannot hold the depth buffer, so depth goes to HyperRAM behind the read cache. Expect 60% to 100% of a real Voodoo 1, which a Pentium host cannot tell apart from the original. A dedicated 4-layer board on an ECP5-85, about $75 a card at 200 units, is the only way to go cheaper, and it needs its own toolchain and controller port.</p>
+</section>
+
+<section>
   <h2>Phases <span class="tag">each ends with something that runs</span></h2>
   <ol class="phases">
     <li><div><div class="ph-t">Port SpinalVoodoo to an Artix-7 200T PCIe dev board</div><div class="ph-d">An Alinx or QMTech 200T board with DDR3 and PCIe, about $200 to $300, in a Linux PC. Avalon ports become AXI and MIG; the DE10 MMIO runtime maps the PCIe BARs through UIO, which is the same memory-mapped model. Move the framebuffer into BRAM and HyperRAM and measure the small-triangle numbers again.</div><div class="ph-exit"><b>exit:</b> Quake and Screamer 2 run at or above real Voodoo 1 rates; real LUT and BRAM usage known</div></div></li>
