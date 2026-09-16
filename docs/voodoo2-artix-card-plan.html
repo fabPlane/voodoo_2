@@ -1,4 +1,3 @@
-<meta charset="utf-8">
 <title>Voodoo 2 Artix Card</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -133,15 +132,14 @@
   <div>
     <p class="eyebrow">Project plan · 3dfx Voodoo recreation · 5V PCI</p>
     <h1>Voodoo 2 on an Artix-7 200T card</h1>
-    <p class="sub">A new-production PCI card for Socket 7 and Slot 1 machines. FPGA RTL built on SpinalVoodoo, a $18 Linux SoC for everything the original never had, two VGA ports and one HDMI. About $190 a board at a hundred units with the XC7A100T, about $245 with the XC7A200T.</p>
+    <p class="sub">A new-production PCI card for Socket 7 and Slot 1 machines. FPGA RTL built on SpinalVoodoo, a $18 Linux SoC for everything the original never had, two VGA ports and one HDMI. Under $200 a board at a hundred units.</p>
   </div>
   <div class="revbox">
     <b>rev B</b> · 2026-09-16<br>
     replaces the Kria K26 plan (rev A)<br>
     target: Voodoo 1 first, Voodoo 2 second<br>
     v1 hardware: ADC footprint <b>unpopulated</b><br>
-    memory: ISSI HyperRAM decided 2026-09-16<br>
-    rev A build: XC7A100T on the 200T footprint, pin-identical, verified 2026-09-16
+    memory: ISSI HyperRAM decided 2026-09-16
   </div>
 </header>
 
@@ -388,43 +386,42 @@
   <h2>Bill of materials <span class="tag">per card</span></h2>
   <div class="table-wrap">
   <table>
-    <tr><th>Item</th><th>Part</th><th class="num">Rev A, 100T, qty 5</th><th class="num">200T, qty 5</th><th class="num">200T, qty 100</th></tr>
-    <tr><td>FPGA</td><td>XC7A100T-2FGG484I (JLC C410276) for rev A; XC7A200T-2FBG484I (C494680) is pin-identical on the same footprint</td><td class="num">$64</td><td class="num">$119</td><td class="num">$113</td></tr>
-    <tr><td>DDR3, 512 MB</td><td>2× Winbond W632GU6NB-11, 2 Gbit x16 DDR3L, 32-bit bus (C3034991); footprint also takes 4 Gbit for 1 GB</td><td class="num">$22</td><td class="num">$22</td><td class="num">$18</td></tr>
-    <tr><td>HyperRAM, 32 MB</td><td>4× ISSI IS66WVH8M8BLL-100B1LI, C1349096</td><td class="num">$26</td><td class="num">$26</td><td class="num">$20</td></tr>
-    <tr><td>Companion CPU</td><td>T113-S3, SPI NAND, crystal, USB-A, Ethernet PHY and magjack</td><td class="num">$33</td><td class="num">$33</td><td class="num">$28</td></tr>
-    <tr><td>PCI front end</td><td>3× SN74CBTD16211 bus switches (C2674790)</td><td class="num">$9</td><td class="num">$9</td><td class="num">$9</td></tr>
-    <tr><td>Power</td><td>bucks for 1.0V, 1.8V, 1.35V, 3.3V; VTT regulator</td><td class="num">$5</td><td class="num">$5</td><td class="num">$4</td></tr>
-    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$4</td><td class="num">$4</td><td class="num">$3.50</td></tr>
-    <tr><td>Video</td><td>ADV7123, 3 relays, 2× Kinghelm HD15 (C3038673), HDMI connector, ESD</td><td class="num">$18</td><td class="num">$18</td><td class="num">$15</td></tr>
-    <tr><td>Capture ADC</td><td>TVP7002 + front end <span class="dnp-tag">DNP v1</span></td><td class="num">$0</td><td class="num">$0</td><td class="num">$0</td></tr>
-    <tr><td>Passives, bracket, heatsink</td><td>~150 decoupling caps, ferrites, full-height bracket</td><td class="num">$15</td><td class="num">$15</td><td class="num">$10</td></tr>
-    <tr><td>PCB</td><td>6-layer, 175 × 107 mm, ENIG, gold fingers, 30° bevel (JLC quote, qty 5)</td><td class="num">$13</td><td class="num">$13</td><td class="num">$12</td></tr>
-    <tr><td>Assembly</td><td>JLCPCB standard, 484-ball BGA, X-ray, setup and feeders amortised (JLC quote, qty 5)</td><td class="num">$22</td><td class="num">$22</td><td class="num">$14</td></tr>
-    <tr class="total"><td colspan="2">Per card, before shipping, VAT and duty</td><td class="num">≈ $230</td><td class="num">≈ $285</td><td class="num">≈ $245</td></tr>
+    <tr><th>Item</th><th>Part</th><th class="num">Qty 5</th><th class="num">Qty 100</th></tr>
+    <tr><td>FPGA</td><td>XC7A200T-2FBG484 (LCSC, grey channel)</td><td class="num">$95</td><td class="num">$80</td></tr>
+    <tr><td>DDR3, 1 GB</td><td>2× 4 Gbit x16 DDR3L, 32-bit bus</td><td class="num">$30</td><td class="num">$22</td></tr>
+    <tr><td>HyperRAM, 32 MB</td><td>4× ISSI IS66WVH8M8BLL-100B1LI, LCSC C1349096</td><td class="num">$8</td><td class="num">$7</td></tr>
+    <tr><td>Companion CPU</td><td>T113-S3, SPI NAND, rails, crystal, USB-A, Ethernet PHY</td><td class="num">$28</td><td class="num">$25</td></tr>
+    <tr><td>PCI front end</td><td>3× SN74CBTD16211 bus switches</td><td class="num">$6</td><td class="num">$5</td></tr>
+    <tr><td>Power</td><td>bucks for 1.0V, 1.8V, 1.5V, 3.3V; VTT regulator</td><td class="num">$10</td><td class="num">$8</td></tr>
+    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$3</td><td class="num">$2.30</td></tr>
+    <tr><td>Video</td><td>ADV7123, relay, 2× DB15, HDMI connector, ESD</td><td class="num">$15</td><td class="num">$12</td></tr>
+    <tr><td>Capture ADC</td><td>TVP7002 + front end <span class="dnp-tag">DNP v1</span></td><td class="num">$0</td><td class="num">$0</td></tr>
+    <tr><td>Passives, bracket, heatsink</td><td>~150 decoupling caps, ferrites, full-height bracket</td><td class="num">$15</td><td class="num">$10</td></tr>
+    <tr><td>PCB</td><td>6-layer, 175 × 107 mm, impedance controlled, hard gold fingers, 30° bevel</td><td class="num">$25</td><td class="num">$12</td></tr>
+    <tr><td>Assembly</td><td>JLCPCB standard, 484-ball BGA, fees amortised</td><td class="num">$42</td><td class="num">$14</td></tr>
+    <tr class="total"><td colspan="2">Per card, before shipping, VAT and duty</td><td class="num">≈ $280</td><td class="num">≈ $200</td></tr>
   </table>
   </div>
-  <p>Component prices are live JLCPCB catalogue prices on 2026-09-16 at the 1+ tier for quantity 5 and the nearest published break for quantity 100. Fab and assembly at quantity 5 are from the JLC quote of the rev A pricing board. The 100T card at a hundred units is about $190. The earlier $280 estimate used a stale $1.92 HyperRAM price, a $10 EDAC VGA connector and a $95 FPGA.</p>
   <p>Placing the ADC later adds about $18. Dropping the T113 for an RP2350 saves about $22 and loses the host-less self-test path.</p>
 </section>
 
 <section>
   <h2>Basic BOM variant <span class="tag">same board, Voodoo 1 only</span></h2>
-  <p>The core sets the floor: SpinalVoodoo's Voodoo 1 needs about 45K LUT6 with PCI, HyperRAM controllers and video, so nothing smaller than an Artix-7 100T holds it. A dedicated smaller board saves only $10 to $15 against populating this layout differently, so the basic card is a BOM, not a second design. The 484-ball footprint compatibility between the 100T and 200T is verified: AMD DS180 lists FGG484 and FBG484 as footprint compatible, and a ball-by-ball diff of AMD's xc7a100tfgg484 and xc7a200tfbg484 pin files on 2026-09-16 shows all 484 balls identical in name, bank, byte group and I/O type. Rev A boards are built with the 100T on this footprint.</p>
+  <p>The core sets the floor: SpinalVoodoo's Voodoo 1 needs about 45K LUT6 with PCI, HyperRAM controllers and video, so nothing smaller than an Artix-7 100T holds it. A dedicated smaller board saves only $10 to $15 against populating this layout differently, so the basic card is a BOM, not a second design. It relies on the 484-ball footprint compatibility between the 100T and 200T, which is on the verify list.</p>
   <div class="table-wrap">
   <table>
     <tr><th>Item</th><th>Full rev B</th><th>Basic BOM</th><th class="num">Basic, qty 100</th></tr>
-    <tr><td>FPGA</td><td>XC7A200T-2FBG484</td><td>XC7A100T-2FGG484I, 63K LUT6, about 70% full</td><td class="num">$57</td></tr>
+    <tr><td>FPGA</td><td>XC7A200T-2FBG484</td><td>XC7A100T-2FGG484, 63K LUT6, about 70% full</td><td class="num">$50</td></tr>
     <tr><td>DDR3</td><td>2× 4 Gbit x16, 1 GB</td><td>unpopulated; MIG omitted from the bitstream</td><td class="num">$0</td></tr>
-    <tr><td>HyperRAM</td><td>4× ISSI, colour buffers</td><td>4× ISSI, 32 MB, holds frame buffer, depth and textures; a Voodoo 1 addresses 4 MB of each at most</td><td class="num">$20</td></tr>
+    <tr><td>HyperRAM</td><td>4× ISSI, colour buffers</td><td>4× ISSI, 32 MB, holds frame buffer, depth and textures; a Voodoo 1 addresses 4 MB of each at most</td><td class="num">$7</td></tr>
     <tr><td>Companion CPU</td><td>T113-S3, Linux</td><td>RP2350B: bitstream load, USB updates, relay. T113 site unpopulated</td><td class="num">$2</td></tr>
-    <tr><td>PCI front end</td><td>3× bus switches</td><td>same</td><td class="num">$9</td></tr>
+    <tr><td>PCI front end</td><td>3× bus switches</td><td>same</td><td class="num">$5</td></tr>
     <tr><td>Power</td><td>1.0V, 1.8V, 1.5V, 3.3V, VTT</td><td>1.0V, 1.8V, 3.3V; DDR rails unpopulated</td><td class="num">$6</td></tr>
-    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz</td><td>same; the 100T bitstream is 30 Mbit</td><td class="num">$3.50</td></tr>
+    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz</td><td>same; the 100T bitstream is 30 Mbit</td><td class="num">$2.50</td></tr>
     <tr><td>Video</td><td>ADV7123, relay, 2× DB15, HDMI</td><td>resistor DAC in place of the ADV7123, otherwise same</td><td class="num">$6</td></tr>
     <tr><td>Passives, bracket</td><td></td><td>same</td><td class="num">$10</td></tr>
-    <tr><td>PCB, assembly</td><td>6-layer</td><td>same board, fewer placements</td><td class="num">$26</td></tr>
-    <tr class="total"><td colspan="3">Per card, qty 100 (full rev B with the 200T: about $245)</td><td class="num">≈ $140</td></tr>
+    <tr><td>PCB, assembly</td><td>6-layer</td><td>same board, fewer placements</td><td class="num">$24</td></tr>
+    <tr class="total"><td colspan="3">Per card, qty 100 (full rev B: about $200)</td><td class="num">≈ $115</td></tr>
   </table>
   </div>
   <p>What the basic card is: a register-level Voodoo 1 that runs the original drivers, 640×480 with Z, VGA passthrough and HDMI. What it gives up: Voodoo 2, Linux and networking, and some speed. The 100T's 4.9 Mbit of BRAM cannot hold the depth buffer, so depth goes to HyperRAM behind the read cache. Expect 60% to 100% of a real Voodoo 1, which a Pentium host cannot tell apart from the original. A dedicated 4-layer board on an ECP5-85, about $75 a card at 200 units, is the only way to go cheaper, and it needs its own toolchain and controller port.</p>
@@ -439,6 +436,57 @@
     <li><div><div class="ph-t">v2 firmware</div><div class="ph-d">Place the ADC. Capture, scaler and menu in fabric, controlled from the T113. HDMI now shows the whole session.</div><div class="ph-exit"><b>exit:</b> one HDMI cable from a 1998 PC</div></div></li>
     <li><div><div class="ph-t">Combo card: 2D + 3D in one slot</div><div class="ph-d">A firmware and BOM variant on the same board, no relayout. The card becomes a two-function PCI device: function 0 is an SVGA adapter built on the ao486 VGA core with the Bochs VBE extension, function 1 is the Voodoo 2. The VGA frame buffer lives in DDR3 behind a scanline FIFO; the passthrough relay is replaced by a video mux in the fabric, switched by the same register bit the 3dfx driver already flips, so VGA IN and the relay go unpopulated. Software is all existing and open: the Bochs VGABIOS as the option ROM served from config space and held by the T113, vmdisp9x as the Windows 9x display driver with its DirectDraw HAL, VESA 2.0 for DOS, and 3dfx's own Voodoo 2 drivers for Glide, Direct3D and the MiniGL and OpenGL ICD, exactly as on a 1998 PC with two cards. About 5K LUT6 extra, no 2D acceleration in this step. Later upgrade for the 2D function: GPLGPU's Imagine 128 core (in-box Windows 98 driver, BitBLT, needs a memory-controller port and a video BIOS) or a Cirrus CL-GD5446 core written against QEMU (in-box driver, SeaVGABIOS).</div><div class="ph-exit"><b>exit:</b> Windows 98 desktop and Glide games from one card, one VGA cable, one HDMI, no drivers written</div></div></li>
   </ol>
+</section>
+
+<section>
+  <h2>Module variant: Sipeed Tang Mega 138K carrier <span class="tag">everything on the module, read from the SoM schematic</span></h2>
+  <p>An alternative build that replaces the Artix-7, the DDR3, the T113 and the RP2350 with one $69 module: Sipeed's Tang Mega 138K SoM, carrying the Gowin GW5AST-LV138PG484 with a hard 400 to 800 MHz RISC-V A25 that runs Linux, 1 GB of DDR3 on the module's hard controller, a 128 Mbit MSPI flash, and all of its own regulators. The card becomes a 4-layer carrier with no BGA. Facts below are from Sipeed's published SoM schematic (tang_mega_138k_30354), not estimates.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Item</th><th>What the schematic shows</th><th>What it means for the carrier</th></tr>
+    <tr><td>Connectors</td><td>Two Hirose DF40C-100DP and one DF40C-80DP, 0.4 mm pitch, 280 pins total</td><td>Three mating DF40HC(3.0) receptacles, about $8; standard SMT parts</td></tr>
+    <tr><td>Exposed I/O</td><td>Banks 2, 3, 4 and 5 on the connectors, roughly 170 user I/O, plus JTAG, MODE, DONE, READY, RECONFIG and two ADC inputs</td><td>The card needs about 145: 50 PCI, 49 HyperRAM, 27 DAC, 8 HDMI, a dozen misc. Fits with margin</td></tr>
+    <tr><td>Bank voltages</td><td>VCCIO2 and VCCIO67 are supplied from the carrier through the connector; the other banks are fixed on the module</td><td>Put PCI and the 3.0V HyperRAM on 3.3V banks; a 1.8V option exists for a faster HyperRAM later</td></tr>
+    <tr><td>SerDes</td><td>Quad Q0, four lanes plus reference clock, on the 100-pin connector</td><td>The PCIe x1 to x4 variant needs no other hardware</td></tr>
+    <tr><td>Power in</td><td>The module takes 5V and makes its own 0.9V, 1.2V, 1.8V, 1.5V, VTT and 3.3V</td><td>The PCI slot's 5V feeds it directly; the carrier adds one 3.3V buck for switches and DAC</td></tr>
+    <tr><td>DDR3</td><td>Two x16 chips, 32-bit, 800 Mbps, captive on the module with its VTT regulator</td><td>Textures and the Linux root live there; no DDR routing on the carrier</td></tr>
+    <tr><td>Boot</td><td>MSPI flash on the module; JTAG and a 50 MHz oscillator on the module</td><td>Bitstream on the module; Linux from an SD slot on the carrier</td></tr>
+  </table>
+  </div>
+
+  <h3>What changes against rev B</h3>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>Rev B, Artix-7 200T</th><th>Module variant, GW5AST-138</th></tr>
+    <tr><td>Logic</td><td>134.6K LUT6, about 50% full</td><td>138K LUT4, about 90K LUT6 equivalent, 72% to 83% full</td></tr>
+    <tr><td>Block RAM</td><td>13.1 Mbit; depth buffer and texture cache on chip</td><td>6.1 Mbit; depth buffer cannot stay on chip beside the texture cache, so depth goes to HyperRAM. Small-triangle rates land between the DE10 and the Artix plan</td></tr>
+    <tr><td>Companion CPU</td><td>T113-S3 over SPI and the LCD pipe</td><td>hard RISC-V on the internal AXI bus; the DE10 architecture SpinalVoodoo was written for</td></tr>
+    <tr><td>USB and Ethernet</td><td>native on the T113</td><td>soft MAC in fabric plus a PHY; USB host via a MAX3421E SPI chip or none</td></tr>
+    <tr><td>Tools</td><td>Vivado, MIG, free tier Windows-only in 2026.1</td><td>Gowin EDA Pro, free since 2024, Synplify inside so the VHDL HyperRAM controller compiles; hard DDR3 and PCIe IP included</td></tr>
+    <tr><td>Board</td><td>6-layer, 484-ball BGA, DDR3 routing</td><td>4-layer, no BGA, three DF40 footprints</td></tr>
+    <tr><td>Supply</td><td>grey-channel Xilinx, three sources</td><td>Sipeed only; the bare chip is $152 at LCSC, so there is no cheap fallback on the same board</td></tr>
+  </table>
+  </div>
+
+  <h3>Cost</h3>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Item</th><th class="num">Qty 5</th><th class="num">Qty 100</th></tr>
+    <tr><td>Tang Mega 138K SoM</td><td class="num">$69</td><td class="num">$69</td></tr>
+    <tr><td>3× DF40 receptacles</td><td class="num">$9</td><td class="num">$8</td></tr>
+    <tr><td>HyperRAM, 4× ISSI</td><td class="num">$8</td><td class="num">$7</td></tr>
+    <tr><td>PCI bus switches</td><td class="num">$6</td><td class="num">$5</td></tr>
+    <tr><td>Power: 5V filter, 3.3V buck</td><td class="num">$5</td><td class="num">$4</td></tr>
+    <tr><td>Video: DAC, relay, 2× DB15, HDMI, ESD</td><td class="num">$15</td><td class="num">$12</td></tr>
+    <tr><td>Ethernet PHY and magjack, MAX3421E USB host, SD slot</td><td class="num">$9</td><td class="num">$8</td></tr>
+    <tr><td>Passives, bracket</td><td class="num">$12</td><td class="num">$10</td></tr>
+    <tr><td>PCB, 4-layer, gold fingers</td><td class="num">$20</td><td class="num">$9</td></tr>
+    <tr><td>Assembly</td><td class="num">$30</td><td class="num">$10</td></tr>
+    <tr class="total"><td>Per card</td><td class="num">≈ $185</td><td class="num">≈ $140</td></tr>
+  </table>
+  </div>
+  <p>Against rev B at about $280 and $200. The saving is the T113 and RP2350 gone, the FPGA subsidised by Sipeed, and a board a third the complexity. The cost is single-source supply, half the block RAM, and a LUT4 fabric that the core has never been synthesised for.</p>
+  <div class="callout"><b>Decision gate.</b> Synthesise SpinalVoodoo through Gowin EDA for the GW5AST-138 and read utilisation, Fmax and BRAM. One afternoon, no hardware. If it fits at 90 MHz with depth in HyperRAM, this variant is the cheapest complete card and the cheapest prototype, and the Pro Dock at $175 is its dev board. If it does not, rev B stands.</div>
 </section>
 
 <section>
