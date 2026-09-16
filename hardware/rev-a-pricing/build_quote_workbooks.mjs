@@ -11,7 +11,6 @@ const parts = [
   ["FPGA (rev A; XC7A200T-2FBG484I C494680 is the pin-identical Voodoo 2 alternate)", "U1", 1, "XC7A100T-2FGG484I", "C410276", "Selected", "BGA-484", "AMD Artix-7 100T FPGA"],
   ["Companion CPU", "U2", 1, "T113-S3", "C5197687", "Selected", "LQFP-128", "Allwinner application processor"],
   ["SPI NAND", "U3", 1, "GD5F1GQ5UEYIGR", "C2829047", "Selected", "WSON-8", "GigaDevice 1 Gbit SPI NAND"],
-  ["Ethernet PHY", "U4", 1, "RTL8201F-VB-CG", "C45044", "Selected", "QFN-32", "Realtek 10/100 PHY"],
   ["Video DAC", "U6", 1, "ADV7123KSTZ50", "C514372", "Selected", "LQFP-48", "Analog Devices video DAC"],
   ["DDR3L, 32-bit bus (K4B4G1646E-BYMA C500275 is the 1 GB alternate)", "U8,U9", 2, "W632GU6NB-11", "C3034991", "Candidate", "VFBGA-96", "Winbond 2 Gbit x16 DDR3L"],
   ["QSPI flash", "U10", 1, "W25Q128JVSIQ", "C97521", "Selected", "SOIC-8", "Winbond 128 Mbit QSPI NOR"],
@@ -30,7 +29,6 @@ const parts = [
   ["Bidirectional VGA", "J2", 1, "KH-HDR15P-F3.08", "C3038673", "Candidate", "DSub-15-RA", "Kinghelm right-angle HD15 female; FPGA-selected ADC input or DAC output"],
   ["HDMI output", "J4", 1, "HDMI-019S", "C111617", "Selected", "HDMI-A-RA", "SOFNG right-angle HDMI-A"],
   ["USB host", "J5", 1, "902-131A1021D10100", "C2344", "Selected", "USB-A-RA", "Right-angle USB-A"],
-  ["Ethernet magjack", "J6", 1, "HR911105A", "C12074", "Selected", "RJ45-Magjack", "HANRUN 10/100 magjack"],
   ["UART service", "J7", 1, "SM04B-SRSS-TB(LF)(SN)", "C160404", "Selected", "JST-SH-4", "JST 4-pin service connector"],
   ["100 nF bypass", expand("C", 1, 96).join(","), 96, "CL05B104KO5NNNC", "C1525", "Candidate", "C_0402", "Samsung 100 nF 16 V X7R"],
   ["1 uF bypass", expand("C", 101, 24).join(","), 24, "CL10A105KB8NNNC", "C15849", "Candidate", "C_0603", "Samsung 1 uF 50 V X7R"],
@@ -42,7 +40,7 @@ const parts = [
   ["Feedback and video resistors", expand("R", 121, 24).join(","), 24, "TBD", "", "Provisional", "R_0402", "Value mix; placement allowance"],
   ["Relay drivers", "Q1,Q2,Q3", 3, "2N7002", "C8545", "Candidate", "SOT-23", "N-channel MOSFET"],
   ["Relay flyback diodes", "D1,D2,D3", 3, "1N4148W", "C81598", "Candidate", "SOD-123", "Switching diode"],
-  ["USB/Ethernet ESD", "U30,U34", 2, "USBLC6-2SC6", "C7519", "Candidate", "SOT-23-6", "ST two-line ESD array"],
+  ["USB ESD", "U30", 1, "USBLC6-2SC6", "C7519", "Candidate", "SOT-23-6", "ST two-line ESD array"],
   ["HDMI ESD", "U31,U32", 2, "TBD", "", "Provisional", "ESD-array", "Ultra-low-capacitance arrays"],
   ["VGA ESD", "U33", 1, "TBD", "", "Provisional", "ESD-array", "Analog-video protection"],
   ["Auxiliary buck inductors", "L22,L23,L24", 3, "TBD", "", "Provisional", "Power inductor", "1 uH / current rating TBD"],
@@ -63,7 +61,7 @@ const parts = [
   ["MCU bulk capacitors", "C171,C172", 2, "CL21A106KAYNNNE", "C15850", "Candidate", "C_0805", "Samsung 10 uF 25 V X5R"],
   ["Manufacturing header", "J9", 1, "TBD", "", "Provisional", "Header-SMD", "Connector selection pending"],
   ["SLI link header (34-way 2.54 mm ribbon between two cards for scanline interleave, the original Voodoo 2 form; U50 depth SRAM is footprint-only and not in this BOM)", "J12", 1, "2.54-2*17P", "C9042", "Candidate", "IDC-2x17-2.54mm", "BOOMELE 2x17 2.54 mm shrouded IDC box header"],
-  ["Status LEDs", expand("D", 20, 5).join(","), 5, "TBD", "", "Provisional", "LED_0603", "Color and current pending"],
+  ["Status LEDs", "D20,D21,D22,D24", 4, "TBD", "", "Provisional", "LED_0603", "Color and current pending"],
 ];
 
 function expand(prefix, start, count) {
@@ -79,9 +77,9 @@ function addGrid(rows, refs, startX, startY, columns, dx, dy, rotation = 0) {
 const cpl = [
   ["J2", 26.83, 42.27, "Top", 270],
   ["J4", 23.5, 65.18, "Top", 90], ["J5", 23.8, 83.63, "Top", 0],
-  ["J6", 37.76, 106.76, "Top", 90], ["U6", 82, 87, "Top", 0],
+  ["U6", 82, 87, "Top", 0],
   ["K1", 60, 88, "Top", 90], ["K2", 68, 88, "Top", 90], ["K3", 76, 88, "Top", 90],
-  ["U2", 69, 47, "Top", 0], ["U3", 56, 31, "Top", 0], ["U4", 79, 31, "Top", 0],
+  ["U2", 69, 47, "Top", 0], ["U3", 56, 31, "Top", 0],
   ["Y2", 55, 58, "Top", 0], ["J7", 81, 58, "Top", 0],
   ["U1", 119, 54, "Top", 0], ["U8", 142, 48, "Top", 0], ["U9", 142, 63, "Top", 0],
   ["U10", 104, 76, "Top", 0], ["Y1", 118, 76, "Top", 0],
@@ -105,10 +103,10 @@ addGrid(cpl, expand("R", 31, 32), 49.5, 64, 8, 2, 1.7);
 addGrid(cpl, expand("R", 71, 40), 91.5, 100, 10, 2.2, 1.8);
 addGrid(cpl, expand("R", 121, 24), 148, 100, 8, 2.1, 1.8);
 cpl.push(
-  ["Q1", 49.5, 84, "Top", 0], ["Q2", 49.5, 88, "Top", 0], ["Q3", 49.5, 92, "Top", 0],
-  ["D1", 51.5, 84, "Top", 0], ["D2", 51.5, 88, "Top", 0], ["D3", 51.5, 92, "Top", 0],
+  ["Q1", 49.5, 84, "Top", 0], ["Q2", 49.5, 88, "Top", 0], ["Q3", 60, 98, "Top", 0],
+  ["D1", 51.5, 84, "Top", 0], ["D2", 51.5, 88, "Top", 0], ["D3", 63, 98, "Top", 0],
   ["U30", 43.5, 86, "Top", 0], ["U31", 43.5, 70, "Top", 0], ["U32", 43.5, 74, "Top", 0],
-  ["U33", 43.5, 47, "Top", 0], ["U34", 43.5, 103, "Top", 0],
+  ["U33", 43.5, 47, "Top", 0],
   ["L22", 158, 57.5, "Top", 0], ["L23", 176, 57.5, "Top", 0], ["L24", 158, 73, "Top", 0],
   ["F1", 184, 72, "Top", 0], ["D10", 188, 72, "Top", 0], ["Q10", 184, 77, "Top", 0],
   ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0], ["J12", 124, 27.5, "Top", 0],
@@ -116,13 +114,13 @@ cpl.push(
   ["J11", 190.955, 100, "Top", -90], ["U35", 186, 108, "Top", 0], ["SW1", 180, 110, "Top", 0],
   ["C171", 178, 86, "Top", 0], ["C172", 181, 86, "Top", 0],
   ["D20", 188, 83, "Top", 0], ["D21", 188, 85, "Top", 0], ["D22", 188, 87, "Top", 0],
-  ["D23", 188, 89, "Top", 0], ["D24", 188, 91, "Top", 0],
+  ["D24", 188, 91, "Top", 0],
 );
 
 addGrid(cpl, expand("R", 145, 4), 166, 114, 4, 2, 1.7);
 addGrid(cpl, expand("C", 163, 8), 168, 92, 4, 1.75, 1.65);
 
-if (cpl.length !== 347) throw new Error(`Expected 347 placements, found ${cpl.length}`);
+if (cpl.length !== 343) throw new Error(`Expected 343 placements, found ${cpl.length}`);
 
 const bomRows = [["Comment", "Designator", "Footprint", "LCSC Part #"]];
 for (const [func, designators, qty, mpn, lcsc, state, footprint, description] of parts) {

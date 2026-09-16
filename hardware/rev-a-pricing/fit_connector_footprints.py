@@ -15,6 +15,7 @@ import pcbnew
 BOARD = Path(sys.argv[1]).resolve()
 KICAD = Path("/Applications/KiCad/KiCad.app/Contents/SharedSupport")
 FOOTPRINTS = KICAD / "footprints"
+BRACKET_MODEL = BOARD.parent / "mechanical" / "pci_bracket_preview.step"
 
 
 def mm(x: float, y: float) -> pcbnew.VECTOR2I:
@@ -45,6 +46,24 @@ def use_molex_rj45_body(fp: pcbnew.FOOTPRINT) -> None:
     body.m_Scale = pcbnew.VECTOR3D(1.0, 1.0, 1.0)
     body.m_Rotation = pcbnew.VECTOR3D(0.0, 0.0, 0.0)
     fp.Add3DModel(body)
+
+
+def bracket_preview(board: pcbnew.BOARD) -> pcbnew.FOOTPRINT:
+    """Add a model-only bracket excluded from fabrication and assembly files."""
+    if not BRACKET_MODEL.exists():
+        raise RuntimeError(f"Missing bracket preview model: {BRACKET_MODEL}")
+    fp = pcbnew.FOOTPRINT(board)
+    fp.SetReference("BRKT1")
+    fp.SetValue("PRELIMINARY PCI BRACKET - VISUALIZATION ONLY")
+    fp.SetPosition(mm(20.0, 20.0))
+    fp.SetAttributes(pcbnew.FP_EXCLUDE_FROM_BOM | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
+    model = pcbnew.FP_3DMODEL()
+    model.m_Filename = str(BRACKET_MODEL)
+    model.m_Offset = pcbnew.VECTOR3D(0.0, 0.0, 0.0)
+    model.m_Scale = pcbnew.VECTOR3D(1.0, 1.0, 1.0)
+    model.m_Rotation = pcbnew.VECTOR3D(0.0, 0.0, 0.0)
+    fp.Add3DModel(model)
+    return fp
 
 
 def bounds(fp: pcbnew.FOOTPRINT) -> tuple[float, float, float, float]:
@@ -78,20 +97,24 @@ def main() -> None:
         load(
             "Connector_Video",
             "HDMI_A_Amphenol_10029449-x01xLF_Horizontal",
+            # 90 pointed the HDMI mating face into the card like the VGA; 270
+            # faces the bracket with the same courtyard y-extent.
             "J4", "HDMI-019S HDMI OUT (mechanical equivalent)",
-            23.50, 65.18, 90.0,
+            23.50, 65.18, 270.0,
         ),
         load(
             "Connector_USB",
             "USB_A_CNCTech_1001-011-01101_Horizontal",
             "J5", "902-131A1021D10100 USB HOST (mechanical equivalent)",
-            23.80, 83.63, 0.0,
+            23.80, 83.63, 180.0,
         ),
         load(
             "Connector_RJ",
             "RJ45_Hanrun_HR911105A_Horizontal",
             "J6", "HR911105A 100M ETHERNET",
-            37.76, 106.76, 90.0,
+            # 270 degrees exposes the jack opening at the bracket.  This
+            # model's mating plane then lands at board-edge X=20.00 mm.
+            37.76, 97.88, 270.0,
         ),
         load(
             "Connector_USB",
@@ -108,7 +131,7 @@ def main() -> None:
     }
 
     board = pcbnew.LoadBoard(str(BOARD))
-    replaced = {"J2", "J3", "J4", "J5", "J6", "J11"}
+    replaced = {"J2", "J3", "J4", "J5", "J6", "J11", "BRKT1"}
     retained: list[pcbnew.FOOTPRINT] = []
     for footprint in list(board.GetFootprints()):
         if footprint.GetReference() in replaced:
@@ -124,6 +147,14 @@ def main() -> None:
 
     for connector in connectors:
         board.Add(connector)
+    # Ethernet is pads-only on rev A: the magjack footprint stays for the
+    # bracket cut-out and a later build, but it is DNP and out of BOM/CPL.
+    connectors[3].SetAttributes(
+        connectors[3].GetAttributes()
+        | pcbnew.FP_DNP | pcbnew.FP_EXCLUDE_FROM_BOM | pcbnew.FP_EXCLUDE_FROM_POS_FILES
+    )
+    connectors[3].SetValue("HR911105A 100M ETHERNET — DNP, PADS ONLY")
+    board.Add(bracket_preview(board))
 
     pcbnew.SaveBoard(str(BOARD), board)
 

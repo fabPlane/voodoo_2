@@ -115,6 +115,13 @@ def option_placeholder(ref: str, value: str, x: float, y: float, w: float, h: fl
     return text[:-3] + rough.model(model_path, rotate_z, offset_x, offset_y) + "\n\t)"
 
 
+def mark_dnp(text: str, ref: str) -> str:
+    """Give an already-rendered rough footprint the DNP attributes."""
+    start = text.index(f'(footprint "Rough:{ref}"')
+    attr = text.index("(attr smd)", start)
+    return text[:attr] + f"(attr smd{DNP_ATTR})" + text[attr + len("(attr smd)"):]
+
+
 def numbered(prefix: str, start: int, count: int) -> list[str]:
     return [f"{prefix}{n}" for n in range(start, start + count)]
 
@@ -139,6 +146,8 @@ def build() -> str:
     ).replace(
         '"SN74CB3T16210"', '"SN74CBTD16211"'
     )
+    # Ethernet is pads-only on rev A: the PHY footprint stays, unpopulated.
+    board = mark_dnp(board.replace('"ETH PHY"', '"ETH PHY DNP"'), "U4")
 
     additions = [
         rough.text("TOP-SIDE POPULATION MODEL — SUPPORT VALUES PROVISIONAL", 107.5, 119.9, 0.85, "Cmts.User"),
@@ -176,7 +185,7 @@ def build() -> str:
         rough.placeholder("U31", "HDMI ESD A", 43.5, 70.0, 3.0, 3.0),
         rough.placeholder("U32", "HDMI ESD B", 43.5, 74.0, 3.0, 3.0),
         rough.placeholder("U33", "VGA ESD", 43.5, 47.0, 3.0, 3.0),
-        rough.placeholder("U34", "ETH ESD", 60.0, 103.0, 3.0, 3.0),
+        mark_dnp(rough.placeholder("U34", "ETH ESD DNP", 60.0, 103.0, 3.0, 3.0), "U34"),
         rough.placeholder("L22", "1uH AUX", 158.0, 57.5, 4.0, 4.0),
         rough.placeholder("L23", "1uH AUX", 176.0, 57.5, 4.0, 4.0),
         rough.placeholder("L24", "1uH AUX", 158.0, 73.0, 4.0, 4.0),
@@ -197,7 +206,7 @@ def build() -> str:
         smd2("D20", "POWER LED", 188.0, 83.0, "LED_0603", 1.6, 0.8),
         smd2("D21", "FPGA DONE", 188.0, 85.0, "LED_0603", 1.6, 0.8),
         smd2("D22", "CPU STATUS", 188.0, 87.0, "LED_0603", 1.6, 0.8),
-        smd2("D23", "ETH LINK", 188.0, 89.0, "LED_0603", 1.6, 0.8),
+        smd2("D23", "ETH LINK DNP", 188.0, 89.0, "LED_0603", 1.6, 0.8, dnp=True),
         smd2("D24", "FAULT", 188.0, 91.0, "LED_0603", 1.6, 0.8),
     ]
 

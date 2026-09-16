@@ -144,9 +144,24 @@ Two additions for the Voodoo 2 phase, both placed in the FPGA cluster:
   0.35 mm and the grid by 0.8 mm, which is placement-model spacing, not a
   routed-board clearance.
 
-The board is now 360 footprints and the workbooks 56 groups / 347 placements
-(J3 was dropped when the bracket went to one bidirectional VGA; J12 is the
-one new populated line).
+The board is now 360 footprints; the workbooks were 56 groups / 347 placements
+after this pass (J3 was dropped when the bracket went to one bidirectional VGA;
+J12 is the one new populated line) and 54 / 343 after Ethernet went pads-only.
+
+## Bracket orientation fix and Ethernet pads-only — 2026-09-17
+
+- **J4 HDMI now faces the bracket.** It was placed at 90 degrees, which points
+  the Amphenol footprint's mating face into the card exactly as the VGA did;
+  270 faces outward with the same courtyard y-extent, so bracket gaps are
+  unchanged. J5 USB-A was flipped to 180 in the same pass. The bracket-front
+  render is the check: VGA, HDMI and USB openings all show.
+- **Ethernet is footprint-only on rev A.** The J6 magjack, U4 RTL8201F PHY,
+  U34 Ethernet ESD and D23 link LED keep their footprints and pads for the
+  bracket cut-out and a later build, but carry the DNP / exclude-from-BOM /
+  exclude-from-position attributes like U50. They are gone from the workbooks:
+  54 groups / 343 placements. The passive allowances that served the PHY stay
+  in the generic grids. Saves about $2.50 in parts and one bracket opening's
+  worth of EMI work; the T113 keeps USB for host-less use.
 
 Regenerate everything with:
 
@@ -157,11 +172,18 @@ python3 hardware/rev-a-pricing/generate_pricing_board.py
 (cd hardware/rev-a-pricing && node build_quote_workbooks.mjs)
 /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli pcb render --output hardware/rev-a-pricing/rev_a_top_3d.png --width 1568 --height 984 --side top --quality high --background opaque --floor --perspective --rotate '20,0,-15' hardware/rev-a-pricing/voodoo2_artix_rev_a_pricing.kicad_pcb
 /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli pcb render --output hardware/rev-a-pricing/rev_a_bottom_3d.png --width 1568 --height 984 --side bottom --quality high --background opaque --floor --perspective --rotate '-20,0,15' hardware/rev-a-pricing/voodoo2_artix_rev_a_pricing.kicad_pcb
+/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli pcb render --output hardware/rev-a-pricing/rev_a_bracket_front_3d.png --width 1400 --height 900 --side left --quality high --background opaque hardware/rev-a-pricing/voodoo2_artix_rev_a_pricing.kicad_pcb
 ```
 
 The top and bottom images are required outputs for every subsequent board pass.
 Render both from the same generated board at the same resolution and quality so
 mechanical changes can be compared directly between revisions.
+
+The board also carries a preliminary model-only bracket footprint, `BRKT1`,
+generated from `mechanical/pci_bracket_preview.scad` and excluded from BOM/CPL.
+The bracket-facing render is the quickest check of port direction and panel
+opening alignment. It is a fit preview only; final metalwork requires exact
+manufacturer connector cutouts and a selected full-height PCI bracket drawing.
 
 Bracket and edge connectors are now post-processed into real KiCad footprints
 by `fit_connector_footprints.py`; `validate_connector_clearance.py` then checks

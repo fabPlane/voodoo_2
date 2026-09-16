@@ -33,6 +33,21 @@ Three 2.00 mm gaps bring the occupied stack to 89.86 mm, leaving approximately
 | J6 Ethernet | left bracket | Y 92.80–111.84 mm; 2.00 mm from J5 |
 | J11 USB-C service | right edge | Y 94.66–105.34 mm; no component overlap |
 
+USB-A and Ethernet are oriented with their cable openings facing outward. The
+Ethernet preview model's mating plane is aligned to the PCB edge at X 20.00 mm.
+
+## Bracket preview model
+
+`mechanical/pci_bracket_preview.scad` defines a preliminary 0.8 mm sheet-metal
+envelope with openings for the current four-connector stack and a simplified
+chassis-retention tab. Its generated STEP model is attached to the KiCad board
+as `BRKT1`, a model-only footprint excluded from BOM and placement files.
+
+The bracket is for fit visualization, not metal fabrication. Before release,
+replace its generous openings with panel cutouts derived from the exact
+Kinghelm, HDMI, USB-A and HANRUN manufacturer drawings, then add the selected
+full-height PCI bracket's screw slot, bends, reliefs and tolerances.
+
 `validate_connector_clearance.py` runs automatically after board generation
 and fails if a connector overlaps another footprint, a bracket gap drops below
 0.75 mm, or the bracket stack exceeds the usable board edge.
