@@ -1,0 +1,13 @@
+# scala-cli / SpinalHDL build products
+fpga/.scala-build/
+fpga/.bsp/
+fpga/rtl/
+fpga/simWorkspace/
+__pycache__/
+
+# OS, editor and tool leftovers
+.DS_Store
+node_modules
+*.inspect.ndjson
+*.kicad_prl
+*-backups/

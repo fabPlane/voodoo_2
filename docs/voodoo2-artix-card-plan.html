@@ -132,14 +132,15 @@
   <div>
     <p class="eyebrow">Project plan · 3dfx Voodoo recreation · 5V PCI</p>
     <h1>Voodoo 2 on an Artix-7 200T card</h1>
-    <p class="sub">A new-production PCI card for Socket 7 and Slot 1 machines. FPGA RTL built on SpinalVoodoo, a $18 Linux SoC for everything the original never had, two VGA ports and one HDMI. Under $200 a board at a hundred units.</p>
+    <p class="sub">A new-production PCI card for Socket 7 and Slot 1 machines. FPGA RTL built on SpinalVoodoo, a $18 Linux SoC for everything the original never had, two VGA ports and one HDMI. About $190 a board at a hundred units with the XC7A100T, about $245 with the XC7A200T.</p>
   </div>
   <div class="revbox">
     <b>rev B</b> · 2026-09-16<br>
     replaces the Kria K26 plan (rev A)<br>
     target: Voodoo 1 first, Voodoo 2 second<br>
     v1 hardware: ADC footprint <b>unpopulated</b><br>
-    memory: ISSI HyperRAM decided 2026-09-16
+    memory: ISSI HyperRAM decided 2026-09-16<br>
+    rev A build: XC7A100T on the 200T footprint, pin-identical, verified 2026-09-16
   </div>
 </header>
 
@@ -386,42 +387,43 @@
   <h2>Bill of materials <span class="tag">per card</span></h2>
   <div class="table-wrap">
   <table>
-    <tr><th>Item</th><th>Part</th><th class="num">Qty 5</th><th class="num">Qty 100</th></tr>
-    <tr><td>FPGA</td><td>XC7A200T-2FBG484 (LCSC, grey channel)</td><td class="num">$95</td><td class="num">$80</td></tr>
-    <tr><td>DDR3, 1 GB</td><td>2× 4 Gbit x16 DDR3L, 32-bit bus</td><td class="num">$30</td><td class="num">$22</td></tr>
-    <tr><td>HyperRAM, 32 MB</td><td>4× ISSI IS66WVH8M8BLL-100B1LI, LCSC C1349096</td><td class="num">$8</td><td class="num">$7</td></tr>
-    <tr><td>Companion CPU</td><td>T113-S3, SPI NAND, rails, crystal, USB-A, Ethernet PHY</td><td class="num">$28</td><td class="num">$25</td></tr>
-    <tr><td>PCI front end</td><td>3× SN74CBTD16211 bus switches</td><td class="num">$6</td><td class="num">$5</td></tr>
-    <tr><td>Power</td><td>bucks for 1.0V, 1.8V, 1.5V, 3.3V; VTT regulator</td><td class="num">$10</td><td class="num">$8</td></tr>
-    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$3</td><td class="num">$2.30</td></tr>
-    <tr><td>Video</td><td>ADV7123, relay, 2× DB15, HDMI connector, ESD</td><td class="num">$15</td><td class="num">$12</td></tr>
-    <tr><td>Capture ADC</td><td>TVP7002 + front end <span class="dnp-tag">DNP v1</span></td><td class="num">$0</td><td class="num">$0</td></tr>
-    <tr><td>Passives, bracket, heatsink</td><td>~150 decoupling caps, ferrites, full-height bracket</td><td class="num">$15</td><td class="num">$10</td></tr>
-    <tr><td>PCB</td><td>6-layer, 175 × 107 mm, impedance controlled, hard gold fingers, 30° bevel</td><td class="num">$25</td><td class="num">$12</td></tr>
-    <tr><td>Assembly</td><td>JLCPCB standard, 484-ball BGA, fees amortised</td><td class="num">$42</td><td class="num">$14</td></tr>
-    <tr class="total"><td colspan="2">Per card, before shipping, VAT and duty</td><td class="num">≈ $280</td><td class="num">≈ $200</td></tr>
+    <tr><th>Item</th><th>Part</th><th class="num">Rev A, 100T, qty 5</th><th class="num">200T, qty 5</th><th class="num">200T, qty 100</th></tr>
+    <tr><td>FPGA</td><td>XC7A100T-2FGG484I (JLC C410276) for rev A; XC7A200T-2FBG484I (C494680) is pin-identical on the same footprint</td><td class="num">$64</td><td class="num">$119</td><td class="num">$113</td></tr>
+    <tr><td>DDR3, 512 MB</td><td>2× Winbond W632GU6NB-11, 2 Gbit x16 DDR3L, 32-bit bus (C3034991); footprint also takes 4 Gbit for 1 GB</td><td class="num">$22</td><td class="num">$22</td><td class="num">$18</td></tr>
+    <tr><td>HyperRAM, 32 MB</td><td>4× ISSI IS66WVH8M8BLL-100B1LI, C1349096</td><td class="num">$26</td><td class="num">$26</td><td class="num">$20</td></tr>
+    <tr><td>Companion CPU</td><td>T113-S3, SPI NAND, crystal, USB-A, Ethernet PHY and magjack</td><td class="num">$33</td><td class="num">$33</td><td class="num">$28</td></tr>
+    <tr><td>PCI front end</td><td>3× SN74CBTD16211 bus switches (C2674790)</td><td class="num">$9</td><td class="num">$9</td><td class="num">$9</td></tr>
+    <tr><td>Power</td><td>bucks for 1.0V, 1.8V, 1.35V, 3.3V; VTT regulator</td><td class="num">$5</td><td class="num">$5</td><td class="num">$4</td></tr>
+    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$4</td><td class="num">$4</td><td class="num">$3.50</td></tr>
+    <tr><td>Video</td><td>ADV7123, 3 relays, 2× Kinghelm HD15 (C3038673), HDMI connector, ESD</td><td class="num">$18</td><td class="num">$18</td><td class="num">$15</td></tr>
+    <tr><td>Capture ADC</td><td>TVP7002 + front end <span class="dnp-tag">DNP v1</span></td><td class="num">$0</td><td class="num">$0</td><td class="num">$0</td></tr>
+    <tr><td>Passives, bracket, heatsink</td><td>~150 decoupling caps, ferrites, full-height bracket</td><td class="num">$15</td><td class="num">$15</td><td class="num">$10</td></tr>
+    <tr><td>PCB</td><td>6-layer, 175 × 107 mm, ENIG, gold fingers, 30° bevel (JLC quote, qty 5)</td><td class="num">$13</td><td class="num">$13</td><td class="num">$12</td></tr>
+    <tr><td>Assembly</td><td>JLCPCB standard, 484-ball BGA, X-ray, setup and feeders amortised (JLC quote, qty 5)</td><td class="num">$22</td><td class="num">$22</td><td class="num">$14</td></tr>
+    <tr class="total"><td colspan="2">Per card, before shipping, VAT and duty</td><td class="num">≈ $230</td><td class="num">≈ $285</td><td class="num">≈ $245</td></tr>
   </table>
   </div>
+  <p>Component prices are live JLCPCB catalogue prices on 2026-09-16 at the 1+ tier for quantity 5 and the nearest published break for quantity 100. Fab and assembly at quantity 5 are from the JLC quote of the rev A pricing board. The 100T card at a hundred units is about $190. The earlier $280 estimate used a stale $1.92 HyperRAM price, a $10 EDAC VGA connector and a $95 FPGA.</p>
   <p>Placing the ADC later adds about $18. Dropping the T113 for an RP2350 saves about $22 and loses the host-less self-test path.</p>
 </section>
 
 <section>
   <h2>Basic BOM variant <span class="tag">same board, Voodoo 1 only</span></h2>
-  <p>The core sets the floor: SpinalVoodoo's Voodoo 1 needs about 45K LUT6 with PCI, HyperRAM controllers and video, so nothing smaller than an Artix-7 100T holds it. A dedicated smaller board saves only $10 to $15 against populating this layout differently, so the basic card is a BOM, not a second design. It relies on the 484-ball footprint compatibility between the 100T and 200T, which is on the verify list.</p>
+  <p>The core sets the floor: SpinalVoodoo's Voodoo 1 needs about 45K LUT6 with PCI, HyperRAM controllers and video, so nothing smaller than an Artix-7 100T holds it. A dedicated smaller board saves only $10 to $15 against populating this layout differently, so the basic card is a BOM, not a second design. The 484-ball footprint compatibility between the 100T and 200T is verified: AMD DS180 lists FGG484 and FBG484 as footprint compatible, and a ball-by-ball diff of AMD's xc7a100tfgg484 and xc7a200tfbg484 pin files on 2026-09-16 shows all 484 balls identical in name, bank, byte group and I/O type. Rev A boards are built with the 100T on this footprint.</p>
   <div class="table-wrap">
   <table>
     <tr><th>Item</th><th>Full rev B</th><th>Basic BOM</th><th class="num">Basic, qty 100</th></tr>
-    <tr><td>FPGA</td><td>XC7A200T-2FBG484</td><td>XC7A100T-2FGG484, 63K LUT6, about 70% full</td><td class="num">$50</td></tr>
+    <tr><td>FPGA</td><td>XC7A200T-2FBG484</td><td>XC7A100T-2FGG484I, 63K LUT6, about 70% full</td><td class="num">$57</td></tr>
     <tr><td>DDR3</td><td>2× 4 Gbit x16, 1 GB</td><td>unpopulated; MIG omitted from the bitstream</td><td class="num">$0</td></tr>
-    <tr><td>HyperRAM</td><td>4× ISSI, colour buffers</td><td>4× ISSI, 32 MB, holds frame buffer, depth and textures; a Voodoo 1 addresses 4 MB of each at most</td><td class="num">$7</td></tr>
+    <tr><td>HyperRAM</td><td>4× ISSI, colour buffers</td><td>4× ISSI, 32 MB, holds frame buffer, depth and textures; a Voodoo 1 addresses 4 MB of each at most</td><td class="num">$20</td></tr>
     <tr><td>Companion CPU</td><td>T113-S3, Linux</td><td>RP2350B: bitstream load, USB updates, relay. T113 site unpopulated</td><td class="num">$2</td></tr>
-    <tr><td>PCI front end</td><td>3× bus switches</td><td>same</td><td class="num">$5</td></tr>
+    <tr><td>PCI front end</td><td>3× bus switches</td><td>same</td><td class="num">$9</td></tr>
     <tr><td>Power</td><td>1.0V, 1.8V, 1.5V, 3.3V, VTT</td><td>1.0V, 1.8V, 3.3V; DDR rails unpopulated</td><td class="num">$6</td></tr>
-    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz</td><td>same; the 100T bitstream is 30 Mbit</td><td class="num">$2.50</td></tr>
+    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz</td><td>same; the 100T bitstream is 30 Mbit</td><td class="num">$3.50</td></tr>
     <tr><td>Video</td><td>ADV7123, relay, 2× DB15, HDMI</td><td>resistor DAC in place of the ADV7123, otherwise same</td><td class="num">$6</td></tr>
     <tr><td>Passives, bracket</td><td></td><td>same</td><td class="num">$10</td></tr>
-    <tr><td>PCB, assembly</td><td>6-layer</td><td>same board, fewer placements</td><td class="num">$24</td></tr>
-    <tr class="total"><td colspan="3">Per card, qty 100 (full rev B: about $200)</td><td class="num">≈ $115</td></tr>
+    <tr><td>PCB, assembly</td><td>6-layer</td><td>same board, fewer placements</td><td class="num">$26</td></tr>
+    <tr class="total"><td colspan="3">Per card, qty 100 (full rev B with the 200T: about $245)</td><td class="num">≈ $140</td></tr>
   </table>
   </div>
   <p>What the basic card is: a register-level Voodoo 1 that runs the original drivers, 640×480 with Z, VGA passthrough and HDMI. What it gives up: Voodoo 2, Linux and networking, and some speed. The 100T's 4.9 Mbit of BRAM cannot hold the depth buffer, so depth goes to HyperRAM behind the read cache. Expect 60% to 100% of a real Voodoo 1, which a Pentium host cannot tell apart from the original. A dedicated 4-layer board on an ECP5-85, about $75 a card at 200 units, is the only way to go cheaper, and it needs its own toolchain and controller port.</p>
