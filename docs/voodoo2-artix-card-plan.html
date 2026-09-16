@@ -439,6 +439,22 @@
 </section>
 
 <section>
+  <h2>Expansion ports <span class="tag">low-speed I/O the 1995 way</span></h2>
+  <p>The card carries internal ribbon headers to slot-cover brackets, the same system PCs used for COM, LPT and game ports. The pinouts are de facto standards and bracket cables cost $2 to $5. Transceivers live on the main board next to each header. No module standard is invented until there is demand for one.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Header</th><th>Port</th><th>On the main board</th><th>How the PC sees it</th></tr>
+    <tr><td>2× 2x5, 0.1"</td><td>two DB9 serial</td><td>MAX3232-class RS-232 driver each, about $0.30</td><td>16550-compatible UARTs decoded at 3F8h and 2F8h</td></tr>
+    <tr><td>2x13, 0.1"</td><td>DB25 parallel</td><td>two 74LVC245 for 5V-tolerant data and control</td><td>SPP/EPP port decoded at 378h</td></tr>
+    <tr><td>2x8, 0.1"</td><td>DB15 game and MIDI</td><td>6N138 optocoupler in, current-loop driver out, pull-ups for the joystick axes</td><td>MPU-401 UART mode at 330h; game port at 201h with RC timing on the RP2350 PIO or FPGA timers</td></tr>
+    <tr><td>2× Pmod, 2x6</td><td>anything else</td><td>raw 3.3V FPGA I/O, Digilent's open standard, hundreds of existing modules</td><td>whatever the bitstream decodes</td></tr>
+  </table>
+  </div>
+  <p>The FPGA does the legacy address decode on the PCI bus. Positive decode by a PCI device beats the chipset's subtractive decode to ISA, so with the motherboard's own ports disabled in the BIOS, DOS and Windows 98 see ordinary COM1, LPT1 and an MPU-401 and use their in-box drivers. Open cores exist for all of them. Interrupts are the one wrinkle: the card can only raise INTA#, so DOS software that assumes IRQ 4 or 7 needs the BIOS to route the slot's interrupt there, which most boards of the era allow once the on-board ports are off. Windows does not care, and polled operation always works. Cost: about $4 of parts and roughly 30 FPGA pins for two serial, one parallel and one MIDI port, plus 16 pins for the two Pmods.</p>
+  <div class="callout"><b>Bracket width finding.</b> The main bracket is already full. Two DB15 at 31 mm, HDMI at 15, USB-A at 14 and RJ45 at 16 total about 107 mm against about 95 mm usable on a full-height bracket. A stacked RJ45-over-USB jack just fits; the cleaner answer is a second slot-cover bracket for the T113's USB and Ethernet, and once that bracket exists the expansion ports ride along on it. Decide before connector selection.</div>
+</section>
+
+<section>
   <h2>Open risks <span class="tag">check before ordering boards</span></h2>
   <div class="risk"><b>Grey-channel FPGAs.</b> DigiKey lists the 200T near $250; LCSC stock at $80 is pulls or relabels. Buy samples first, check date codes, test them, then buy the whole run and consign it to assembly.</div>
   <div class="risk"><b>Block RAM budget.</b> Depth buffer, texture caches and FIFOs all want the same 13 Mbit. Phase 1 must report the real split before the memory subsystem is frozen.</div>
