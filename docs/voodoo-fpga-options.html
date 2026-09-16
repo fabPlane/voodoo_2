@@ -176,7 +176,7 @@
     <tr><td class="name">AMD Artix-7 XC7A200T</td><td>134.6K</td><td>13.1 Mbit</td><td>none</td><td class="num">$80</td><td class="num">$175</td><td>Vivado free</td><td><span class="pill ok">safe</span> 50% full, most BRAM of the group</td></tr>
     <tr><td class="name">AMD Kintex-7 XC7K160T</td><td>101K, faster fabric</td><td>11.7 Mbit</td><td>none</td><td class="num">$72</td><td class="num">$170</td><td>Vivado free (160T covered, 325T not)</td><td><span class="pill ok">safe</span> 90 MHz trivial; 676-ball package; grey stock</td></tr>
     <tr><td class="name">AMD Zynq XC7Z030</td><td>78K</td><td>9.3 Mbit</td><td>2× Cortex-A9, DDR3 on PS</td><td class="num">$92</td><td class="num">$200</td><td>Vivado free</td><td><span class="pill tight">tight</span> no margin for Voodoo 2; fine for Voodoo 1</td></tr>
-    <tr><td class="name">Gowin GW5AST-138</td><td>138K LUT4 ≈ 90K</td><td>6.1 Mbit</td><td>800 MHz RISC-V AE350, Linux; hard PCIe</td><td class="num">≈ $50</td><td class="num">$140</td><td>Gowin EDA free</td><td><span class="pill tight">trial</span> 75–85% full in LUT4; soft DDR3; thin ecosystem</td></tr>
+    <tr><td class="name">Gowin GW5AST-138</td><td>138K LUT4 ≈ 90K</td><td>6.1 Mbit</td><td>400–800 MHz RISC-V A25, Linux; hard PCIe; hard DDR3</td><td class="num">$152 (PG484) / $189 (FPG676) at LCSC; Sipeed SoM with the chip, 1 GB DDR3 and flash: $69</td><td class="num">$250 bare / $130 on the SoM</td><td>Gowin EDA Pro, free</td><td><span class="pill tight">SoM only</span> the bare chip is the most expensive option here; only the Sipeed module makes it cheap. 6.1 Mbit BRAM cannot hold the depth buffer.</td></tr>
     <tr><td class="name">Intel Cyclone V GX 5CGXFC9</td><td>113K ALM ≈ 140K</td><td>12.2 Mbit</td><td>none</td><td class="num">quote</td><td class="num">≈ $250</td><td>Quartus Lite free</td><td><span class="pill ok">safe</span> least porting from SpinalVoodoo; price unverified</td></tr>
     <tr><td class="name">AMD Artix-7 XC7A100T</td><td>63.4K</td><td>4.9 Mbit</td><td>none</td><td class="num">$45</td><td class="num">$140</td><td>Vivado free</td><td><span class="pill no">too small</span> less BRAM than the DE10</td></tr>
     <tr><td class="name">AMD Artix US+ AU15P</td><td>≈ 78K, 16 nm</td><td>—</td><td>none</td><td class="num">$182 (DigiKey)</td><td class="num">$280</td><td>Vivado free</td><td><span class="pill tight">tight</span> fast but small for the money</td></tr>
@@ -189,7 +189,7 @@
 
   <h3>Board cost against the target</h3>
   <div class="bars">
-    <div class="lab">Gowin GW5AST-138</div><div class="track"><div class="fill est" style="width:40%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">≈ $140 · est.</div>
+    <div class="lab">Gowin GW5AST-138 on Sipeed SoM</div><div class="track"><div class="fill" style="width:37.1%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$130 · single-source module</div>
     <div class="lab">Artix-7 100T</div><div class="track"><div class="fill" style="width:40%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$140 · too small</div>
     <div class="lab">Kintex-7 160T</div><div class="track"><div class="fill" style="width:48.6%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$170</div>
     <div class="lab">Artix-7 200T</div><div class="track"><div class="fill" style="width:50%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$175</div>
@@ -197,11 +197,13 @@
     <div class="lab">Zynq 7Z030</div><div class="track"><div class="fill" style="width:57.1%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$200</div>
     <div class="lab">Cyclone V GX C9</div><div class="track"><div class="fill est" style="width:71.4%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">≈ $250 · est.</div>
     <div class="lab">Artix US+ AU15P</div><div class="track"><div class="fill" style="width:80%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$280</div>
+    <div class="lab">Gowin GW5AST-138, bare chip</div><div class="track"><div class="fill" style="width:71.4%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$250 · LCSC price</div>
     <div class="lab">Kria K26</div><div class="track"><div class="fill over" style="width:97.1%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$340</div>
   </div>
   <p class="bars-cap"><span><span class="sw"></span>verified list prices</span><span><span class="sw est"></span>estimated</span><span><span class="sw over"></span>over target</span><span><span class="sw lim"></span>$300 target</span><span>scale: $0 to $350</span></p>
 
-  <div class="callout" style="margin-top:18px"><b>The AMD prices are grey channel.</b> DigiKey lists the 200T near $250 and the 160T above $1,000. LCSC stock at $72 to $80 is pulls or relabels from Chinese supply. Workable for a 100-unit run if you buy samples first, check date codes and test every part, but not a channel you can contract against. Buy the whole run up front and consign it to assembly.</div>
+  <div class="callout" style="margin-top:18px"><b>Gowin at LCSC and JLCPCB, checked 2026-09-16.</b> GW5AST-LV138FPG676A $189 (120 in stock), GW5AST-LV138PG484A $152 (120 in stock), GW5A-LV25 $45, GW5AT-LV15 $29 to $38, GW2A-LV55 $72 at qty 1 and $28 at 200 but no stock, and nothing between 25K and 138K LUTs. The Gowin parts that fit a Voodoo cost three times an Artix-7 200T through this channel. Sipeed's Tang Mega 138K module at $69, with the PG484 chip, 1 GB DDR3 and flash on it, is the only cheap way to buy this silicon.</div>
+<div class="callout" style="margin-top:18px"><b>The AMD prices are grey channel.</b> DigiKey lists the 200T near $250 and the 160T above $1,000. LCSC stock at $72 to $80 is pulls or relabels from Chinese supply. Workable for a 100-unit run if you buy samples first, check date codes and test every part, but not a channel you can contract against. Buy the whole run up front and consign it to assembly.</div>
 </section>
 
 <section>
@@ -259,8 +261,8 @@
   <h2>Decision procedure <span class="tag">let the KV260 port pick the chip</span></h2>
   <ol class="steps">
     <li><div><div class="t">Port SpinalVoodoo to the KV260 kit</div><div class="d">$249, kept as a dev board whatever the outcome. Port Avalon to AXI and the DE10 runtime to the A53. This yields the real Voodoo 2 LUT count and real memory latency numbers.</div></div></li>
-    <li><div><div class="t">In parallel, synthesise the core through Gowin EDA</div><div class="d">A day's work, no hardware. Read the utilisation and Fmax it reports for the GW5AST-138. If it fits at 90 MHz with margin, the $140 board is real.</div></div></li>
-    <li><div><div class="t">Choose</div><div class="d">Core under 70K LUT6 and one-chip simplicity wanted: Zynq 7Z030. Otherwise Artix-7 200T or Kintex-7 160T with a T113-S3, at $175 to $195 a board. Gowin only if step 2 came back clean.</div></div></li>
+    <li><div><div class="t">In parallel, synthesise the core through Gowin EDA</div><div class="d">A day's work, no hardware. Read the utilisation, Fmax and BRAM it reports for the GW5AST-138. The bare chip is $152 to $189 at LCSC, so the Gowin route only pays through Sipeed's $69 Tang Mega 138K module, which also removes the T113 and RP2350 because the chip's hard RISC-V runs Linux. If the core fits at 90 MHz with depth in HyperRAM, a $130 module-based card is real.</div></div></li>
+    <li><div><div class="t">Choose</div><div class="d">Core under 70K LUT6 and one-chip simplicity wanted: Zynq 7Z030. Otherwise Artix-7 200T or Kintex-7 160T with a T113-S3, at $175 to $195 a board. Gowin on the Sipeed module only if step 2 came back clean and single-source supply is acceptable.</div></div></li>
   </ol>
 </section>
 
