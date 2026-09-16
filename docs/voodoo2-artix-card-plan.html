@@ -1,0 +1,429 @@
+<title>Voodoo 2 Artix Card</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F3F4F1;
+    --bg-2: #E9EBE6;
+    --ink: #1B1F1D;
+    --ink-2: #4E5551;
+    --muted: #737A75;
+    --line: #C8CDC6;
+    --line-2: #A9B0AA;
+    --accent: #D9560F;      /* 3dfx orange, host/command path */
+    --accent-soft: #FBE3D4;
+    --green: #2E6E4E;       /* PCB green, pixel/video path */
+    --green-soft: #DCEBE1;
+    --dnp: #8A918C;
+    --card: #FFFFFF;
+    --code-bg: #E9EBE6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131715; --bg-2: #1B211D; --ink: #E8EAE4; --ink-2: #C0C6BF; --muted: #8E958F;
+      --line: #2E3531; --line-2: #465049; --accent: #F0782F; --accent-soft: #3A2416;
+      --green: #63B88E; --green-soft: #1B3328; --dnp: #7C847E; --card: #1B211D; --code-bg: #232A26;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131715; --bg-2: #1B211D; --ink: #E8EAE4; --ink-2: #C0C6BF; --muted: #8E958F;
+    --line: #2E3531; --line-2: #465049; --accent: #F0782F; --accent-soft: #3A2416;
+    --green: #63B88E; --green-soft: #1B3328; --dnp: #7C847E; --card: #1B211D; --code-bg: #232A26;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15.5px; line-height: 1.55;
+    padding-inline: 20px; padding-block: 0 72px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  header {
+    padding-block: 36px 20px; border-bottom: 2px solid var(--ink);
+    display: grid; grid-template-columns: 1fr auto; gap: 16px 32px; align-items: end;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px;
+  }
+  h1 {
+    font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 700;
+    font-size: clamp(38px, 6vw, 56px); line-height: 0.98; letter-spacing: -0.005em; margin: 0; text-wrap: balance;
+  }
+  .sub { color: var(--ink-2); margin: 10px 0 0; max-width: 60ch; }
+  .revbox {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; line-height: 1.6;
+    color: var(--ink-2); border: 1px solid var(--line-2); padding: 10px 14px; white-space: nowrap;
+  }
+  .revbox b { color: var(--ink); font-weight: 500; }
+  section { padding-block: 34px 6px; }
+  h2 {
+    font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 600;
+    font-size: 28px; line-height: 1.05; margin: 0 0 14px; display: flex; align-items: baseline; gap: 12px;
+  }
+  h2 .tag { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+  h3 { font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 600; font-size: 20px; margin: 20px 0 6px; }
+  p { margin: 0 0 12px; max-width: 68ch; }
+  ul { margin: 0 0 12px; padding-left: 20px; max-width: 70ch; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--accent); }
+  code { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  a { color: var(--ink-2); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin: 4px 0 8px; }
+  .decisions > div { background: var(--card); padding: 14px 16px; }
+  .decisions .k { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .decisions .v { font-weight: 500; }
+  .decisions .n { color: var(--ink-2); font-size: 14px; margin-top: 2px; }
+
+  .diagram-wrap { border: 1px solid var(--line); background: var(--card); overflow-x: auto; padding: 12px 8px 4px; }
+  .diagram-wrap svg { display: block; width: 100%; min-width: 900px; max-width: 100%; height: auto; font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink-2); padding: 10px 4px 0; }
+  .legend span::before { content: ""; display: inline-block; width: 22px; height: 0; border-top: 2.5px solid var(--line-2); vertical-align: middle; margin-right: 8px; }
+  .legend .host::before { border-color: var(--accent); }
+  .legend .pix::before { border-color: var(--green); }
+  .legend .dnp::before { border-top-style: dashed; border-color: var(--dnp); }
+
+  .blk { fill: var(--card); stroke: var(--ink); stroke-width: 1.4; }
+  .blk-soft { fill: var(--bg-2); stroke: var(--line-2); stroke-width: 1; }
+  .blk-host { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+  .blk-pix { fill: var(--green-soft); stroke: var(--green); stroke-width: 1.4; }
+  .blk-dnp { fill: none; stroke: var(--dnp); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .fpga { fill: var(--bg); stroke: var(--ink); stroke-width: 1.8; }
+  .fingers { fill: var(--accent); stroke: none; }
+  .t { fill: var(--ink); font-size: 12.5px; }
+  .t-b { fill: var(--ink); font-size: 13px; font-weight: 500; }
+  .t-s { fill: var(--ink-2); font-size: 11px; }
+  .t-m { fill: var(--muted); font-size: 11px; letter-spacing: 0.06em; }
+  .t-h { fill: var(--ink); font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 17px; font-weight: 600; letter-spacing: 0.02em; }
+  .w-host { fill: none; stroke: var(--accent); stroke-width: 2.4; }
+  .w-pix { fill: none; stroke: var(--green); stroke-width: 2.4; }
+  .w-plain { fill: none; stroke: var(--line-2); stroke-width: 1.6; }
+  .w-dnp { fill: none; stroke: var(--dnp); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .lbl { fill: var(--muted); font-size: 10.5px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: 6px 0 10px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; border-bottom: 1.5px solid var(--line-2); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; border-top: 1.5px solid var(--ink); border-bottom: none; }
+  .table-wrap { overflow-x: auto; }
+  td .dnp-tag { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: 0.06em; color: var(--dnp); border: 1px dashed var(--dnp); padding: 0 5px; margin-left: 6px; white-space: nowrap; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 36px; }
+  @media (max-width: 680px) { .cols { grid-template-columns: 1fr; } header { grid-template-columns: 1fr; } .revbox { white-space: normal; } }
+
+  ol.phases { list-style: none; padding: 0; margin: 6px 0 0; counter-reset: ph; border-top: 1px solid var(--line); }
+  ol.phases li { counter-increment: ph; display: grid; grid-template-columns: 64px 1fr; gap: 0 16px; padding: 14px 0; border-bottom: 1px solid var(--line); margin: 0; }
+  ol.phases li::before { content: counter(ph); font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 34px; font-weight: 700; line-height: 1; color: var(--accent); }
+  ol.phases .ph-t { font-weight: 600; margin-bottom: 3px; }
+  ol.phases .ph-d { color: var(--ink-2); max-width: 66ch; }
+  ol.phases .ph-exit { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  ol.phases .ph-exit b { color: var(--green); font-weight: 500; }
+
+  .risk { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; margin: 0 0 14px; max-width: 68ch; }
+  .risk b { font-weight: 600; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+</style>
+
+<div class="wrap">
+<header>
+  <div>
+    <p class="eyebrow">Project plan · 3dfx Voodoo recreation · 5V PCI</p>
+    <h1>Voodoo 2 on an Artix-7 200T card</h1>
+    <p class="sub">A new-production PCI card for Socket 7 and Slot 1 machines. FPGA RTL built on SpinalVoodoo, a $18 Linux SoC for everything the original never had, two VGA ports and one HDMI. Under $200 a board at a hundred units.</p>
+  </div>
+  <div class="revbox">
+    <b>rev B</b> · 2026-09-16<br>
+    replaces the Kria K26 plan (rev A)<br>
+    target: Voodoo 1 first, Voodoo 2 second<br>
+    v1 hardware: ADC footprint <b>unpopulated</b>
+  </div>
+</header>
+
+<section>
+  <h2>Decisions <span class="tag">locked for rev B</span></h2>
+  <div class="decisions">
+    <div><div class="k">FPGA</div><div class="v">AMD Artix-7 XC7A200T-2FBG484</div><div class="n">134.6K LUT6, 13.1 Mbit BRAM, 740 DSP. About 50% full with Voodoo 2. $80 at qty 100 via LCSC.</div></div>
+    <div><div class="k">Companion CPU</div><div class="v">Allwinner T113-S3</div><div class="n">2× Cortex-A7 at 1.2 GHz, 128 MB DDR3 in the package, mainline Linux, USB 2.0 host, 100M Ethernet. $18.</div></div>
+    <div><div class="k">Host bus</div><div class="v">PCI 32-bit, 33 MHz, 5V</div><div class="n">Target-only, like the original. Bus switches bridge 5V signalling to the FPGA's 3.3V banks.</div></div>
+    <div><div class="k">Video</div><div class="v">2× VGA + 1× HDMI</div><div class="n">VGA IN from the 2D card, VGA OUT via relay or DAC, HDMI straight from fabric TMDS.</div></div>
+    <div><div class="k">Capture ADC</div><div class="v">Footprint only on v1</div><div class="n">TVP7002 stays unpopulated until 3D works. Pins, terminations and the capture port are reserved so v2 is firmware.</div></div>
+    <div><div class="k">Memory</div><div class="v">BRAM + PSRAM + DDR3</div><div class="n">Depth and tile cache in BRAM, colour buffers in four PSRAM channels, textures in 1 GB DDR3 behind a cache.</div></div>
+  </div>
+  <p style="margin-top:14px">Why not the Kria K26 from rev A: $340 a board at qty 100, against a $300 target. The chip survey that led here is on the <a href="https://claude.ai/artifact/Lf62KtUa85aEHGBhXYxpqE">FPGA options page</a>.</p>
+</section>
+
+<section>
+  <h2>Block diagram <span class="tag">card rev B</span></h2>
+  <div class="diagram-wrap">
+  <svg viewBox="0 0 1060 760" role="img" aria-label="Block diagram of the Voodoo 2 Artix-7 200T PCI card with T113-S3 companion">
+    <!-- PCI edge -->
+    <rect x="22" y="60" width="26" height="230" class="fingers"/>
+    <text x="56" y="306" class="t-m">PCI EDGE</text>
+    <text x="56" y="320" class="t-s">32-bit · 33 MHz</text>
+    <text x="56" y="334" class="t-s">5V signalling</text>
+
+    <!-- bus switches -->
+    <rect x="86" y="97" width="132" height="68" class="blk-host"/>
+    <text x="152" y="119" class="t-b" text-anchor="middle">Bus switches</text>
+    <text x="152" y="135" class="t-s" text-anchor="middle">3× SN74CBTD16211</text>
+    <text x="152" y="150" class="t-s" text-anchor="middle">5V ↔ 3.3V, ~50 lines</text>
+    <path d="M48 131 H86" class="w-host"/>
+    <path d="M218 131 H268" class="w-host"/>
+    <text x="243" y="123" class="lbl" text-anchor="middle">AD[31:0]</text>
+
+    <!-- PSRAM chips -->
+    <rect x="86" y="426" width="132" height="58" class="blk-pix"/>
+    <text x="152" y="447" class="t-b" text-anchor="middle">4× PSRAM</text>
+    <text x="152" y="462" class="t-s" text-anchor="middle">APS12808L, 64 MB</text>
+    <text x="152" y="476" class="t-s" text-anchor="middle">4 channels, ~1.6 GB/s</text>
+    <path d="M218 455 H240 V380 H268" class="w-pix"/>
+
+    <!-- power -->
+    <rect x="22" y="548" width="196" height="96" class="blk"/>
+    <text x="120" y="570" class="t-b" text-anchor="middle">Power</text>
+    <text x="120" y="587" class="t-s" text-anchor="middle">slot +5V only, no slot 3.3V</text>
+    <text x="120" y="602" class="t-s" text-anchor="middle">bucks: 1.0V core, 1.8V aux,</text>
+    <text x="120" y="617" class="t-s" text-anchor="middle">1.5V DDR3 + VTT, 3.3V I/O</text>
+    <text x="120" y="632" class="t-s" text-anchor="middle">budget 7–9 W (slot: 25 W)</text>
+    <path d="M35 290 V548" class="w-plain"/>
+    <path d="M218 596 H250" class="w-plain"/>
+
+    <!-- FPGA outer -->
+    <rect x="250" y="60" width="410" height="590" class="fpga"/>
+    <text x="264" y="84" class="t-h">ARTIX-7 XC7A200T-2FBG484</text>
+    <text x="644" y="84" class="t-m" text-anchor="end">134.6K LUT6 · 13.1 Mb BRAM</text>
+
+    <!-- row A: PCI target + FIFO -->
+    <rect x="268" y="100" width="170" height="62" class="blk-host"/>
+    <text x="353" y="122" class="t-b" text-anchor="middle">PCI target</text>
+    <text x="353" y="138" class="t-s" text-anchor="middle">config space, BARs</text>
+    <text x="353" y="153" class="t-s" text-anchor="middle">regs · LFB · tex</text>
+    <rect x="452" y="100" width="190" height="62" class="blk-host"/>
+    <text x="547" y="122" class="t-b" text-anchor="middle">Command FIFO</text>
+    <text x="547" y="138" class="t-s" text-anchor="middle">PCI FIFO 128 entries</text>
+    <text x="547" y="153" class="t-s" text-anchor="middle">cmdFifo · memory FIFO</text>
+    <path d="M438 131 H452" class="w-host"/>
+
+    <!-- row B: Voodoo core -->
+    <rect x="268" y="182" width="374" height="118" class="blk"/>
+    <text x="455" y="204" class="t-b" text-anchor="middle">Voodoo core · 90 MHz</text>
+    <rect x="284" y="218" width="100" height="66" class="blk-soft"/>
+    <text x="334" y="242" class="t" text-anchor="middle">FBI</text>
+    <text x="334" y="258" class="t-s" text-anchor="middle">setup, raster,</text>
+    <text x="334" y="272" class="t-s" text-anchor="middle">blend, fog, Z</text>
+    <rect x="404" y="218" width="100" height="66" class="blk-soft"/>
+    <text x="454" y="242" class="t" text-anchor="middle">TMU 0</text>
+    <text x="454" y="258" class="t-s" text-anchor="middle">LOD, bilinear</text>
+    <text x="454" y="272" class="t-s" text-anchor="middle">12 formats</text>
+    <rect x="524" y="218" width="100" height="66" class="blk-soft"/>
+    <text x="574" y="242" class="t" text-anchor="middle">TMU 1</text>
+    <text x="574" y="258" class="t-s" text-anchor="middle">Voodoo 2 only</text>
+    <text x="574" y="272" class="t-s" text-anchor="middle">multi-texture</text>
+    <path d="M547 162 V182" class="w-host"/>
+
+    <!-- row C: memory subsystem -->
+    <rect x="268" y="320" width="374" height="86" class="blk-pix"/>
+    <text x="455" y="342" class="t-b" text-anchor="middle">Memory subsystem</text>
+    <text x="455" y="360" class="t-s" text-anchor="middle">depth buffer + tile cache in BRAM · colour buffers in PSRAM</text>
+    <text x="455" y="375" class="t-s" text-anchor="middle">texture cache per TMU in BRAM · textures in DDR3</text>
+    <text x="455" y="390" class="t-s" text-anchor="middle">4× PSRAM controllers · arbitration</text>
+    <path d="M455 300 V320" class="w-pix"/>
+
+    <!-- row D: config/link + MIG -->
+    <rect x="268" y="426" width="170" height="58" class="blk"/>
+    <text x="353" y="447" class="t-b" text-anchor="middle">Config + host link</text>
+    <text x="353" y="462" class="t-s" text-anchor="middle">QSPI flash boot</text>
+    <text x="353" y="476" class="t-s" text-anchor="middle">SPI regs · LCD-port pipe</text>
+    <rect x="452" y="426" width="190" height="58" class="blk-pix"/>
+    <text x="547" y="447" class="t-b" text-anchor="middle">DDR3 controller (MIG)</text>
+    <text x="547" y="462" class="t-s" text-anchor="middle">32-bit, 1066 MT/s</text>
+    <text x="547" y="476" class="t-s" text-anchor="middle">~4.2 GB/s, ~6K LUTs</text>
+    <path d="M547 406 V426" class="w-pix"/>
+    <path d="M642 455 H690" class="w-pix"/>
+
+    <!-- row E: capture v2 + video out -->
+    <rect x="268" y="556" width="170" height="80" class="blk-dnp"/>
+    <text x="353" y="578" class="t-b" text-anchor="middle">Capture + OSD</text>
+    <text x="353" y="595" class="t-s" text-anchor="middle">VGA capture, scaler,</text>
+    <text x="353" y="610" class="t-s" text-anchor="middle">scanlines, menu</text>
+    <text x="353" y="627" class="t-m" text-anchor="middle">V2 FIRMWARE</text>
+    <rect x="452" y="556" width="190" height="80" class="blk-pix"/>
+    <text x="547" y="578" class="t-b" text-anchor="middle">Video out</text>
+    <text x="547" y="595" class="t-s" text-anchor="middle">VGA timing, CLUT, 24-bit to DAC</text>
+    <text x="547" y="610" class="t-s" text-anchor="middle">TMDS encoder, 720p/1080p</text>
+    <text x="547" y="625" class="t-s" text-anchor="middle">integer scale</text>
+    <path d="M455 406 V416 H445 V596 H452" class="w-pix"/>
+
+    <!-- DDR3 chips -->
+    <rect x="690" y="426" width="96" height="58" class="blk-pix"/>
+    <text x="738" y="447" class="t-b" text-anchor="middle">2× DDR3L</text>
+    <text x="738" y="462" class="t-s" text-anchor="middle">4 Gbit x16</text>
+    <text x="738" y="476" class="t-s" text-anchor="middle">1 GB total</text>
+
+    <!-- T113 -->
+    <rect x="268" y="672" width="374" height="70" class="blk"/>
+    <text x="455" y="694" class="t-b" text-anchor="middle">Allwinner T113-S3 · 2× Cortex-A7 1.2 GHz · Linux</text>
+    <text x="455" y="711" class="t-s" text-anchor="middle">128 MB DDR3 in package · SPI NAND boot · UART console</text>
+    <text x="455" y="726" class="t-s" text-anchor="middle">loads bitstream, menus, updates, USB input, Glide self-test</text>
+    <path d="M268 470 H259 V680 H268" class="w-plain"/>
+    <text x="268" y="666" class="lbl">SPI · slave-serial · LCD pipe</text>
+    <rect x="660" y="676" width="72" height="28" class="blk"/>
+    <text x="696" y="694" class="t-s" text-anchor="middle">USB-A host</text>
+    <rect x="660" y="712" width="72" height="28" class="blk-dnp"/>
+    <text x="696" y="730" class="t-s" text-anchor="middle">RJ45 + PHY</text>
+    <path d="M642 690 H660" class="w-plain"/>
+    <path d="M642 726 H660" class="w-dnp"/>
+
+    <!-- Right side: video connectors -->
+    <rect x="880" y="96" width="150" height="46" class="blk-pix"/>
+    <text x="955" y="116" class="t-b" text-anchor="middle">VGA IN · DB15</text>
+    <text x="955" y="132" class="t-s" text-anchor="middle">from the 2D card</text>
+
+    <rect x="830" y="176" width="112" height="56" class="blk-dnp"/>
+    <text x="886" y="197" class="t-b" text-anchor="middle">TVP7002 ADC</text>
+    <text x="886" y="213" class="t-s" text-anchor="middle">triple 10-bit</text>
+    <text x="886" y="226" class="t-m" text-anchor="middle">DNP ON V1</text>
+
+    <rect x="958" y="176" width="72" height="120" class="blk-pix"/>
+    <text x="994" y="220" class="t-b" text-anchor="middle">Relay</text>
+    <text x="994" y="237" class="t-s" text-anchor="middle">2D pass /</text>
+    <text x="994" y="251" class="t-s" text-anchor="middle">3D DAC</text>
+    <text x="994" y="272" class="t-s" text-anchor="middle">unpowered</text>
+    <text x="994" y="286" class="t-s" text-anchor="middle">= pass</text>
+
+    <rect x="830" y="262" width="112" height="56" class="blk-pix"/>
+    <text x="886" y="284" class="t-b" text-anchor="middle">ADV7123 DAC</text>
+    <text x="886" y="300" class="t-s" text-anchor="middle">triple 10-bit, 3D out</text>
+
+    <rect x="880" y="340" width="150" height="46" class="blk-pix"/>
+    <text x="955" y="360" class="t-b" text-anchor="middle">VGA OUT · DB15</text>
+    <text x="955" y="376" class="t-s" text-anchor="middle">to the monitor</text>
+
+    <rect x="880" y="430" width="150" height="46" class="blk-pix"/>
+    <text x="955" y="450" class="t-b" text-anchor="middle">HDMI OUT</text>
+    <text x="955" y="466" class="t-s" text-anchor="middle">TMDS from fabric</text>
+
+    <!-- video wires -->
+    <path d="M994 142 V176" class="w-pix"/>
+    <text x="1004" y="163" class="lbl">RGB+HV</text>
+    <path d="M930 142 V150 H886 V176" class="w-dnp"/>
+    <path d="M942 290 H958" class="w-pix"/>
+    <path d="M994 296 V330 H1010 V340" class="w-pix"/>
+    <path d="M642 580 H798 V290 H830" class="w-pix"/>
+    <text x="720" y="574" class="lbl" text-anchor="middle">24-bit RGB + sync</text>
+    <path d="M642 612 H840 V453 H880" class="w-pix"/>
+    <text x="740" y="628" class="lbl" text-anchor="middle">TMDS ×4 pairs</text>
+    <path d="M830 204 H822 V660 H353 V636" class="w-dnp"/>
+    <text x="812" y="380" class="lbl" text-anchor="middle" transform="rotate(-90 812 380)">24b + HV + I2C</text>
+
+    <!-- mechanical note -->
+    <text x="1030" y="700" class="t-m" text-anchor="end">FULL-HEIGHT PCI · 175 × 107 mm · 6 LAYERS</text>
+    <text x="1030" y="716" class="t-s" text-anchor="end">passive heatsink on the FPGA, no fan</text>
+  </svg>
+  </div>
+  <div class="legend">
+    <span class="host">host / command path</span>
+    <span class="pix">pixel / memory / video path</span>
+    <span class="dnp">footprint only on v1, or v2 firmware</span>
+    <span>orange edge = gold fingers</span>
+  </div>
+</section>
+
+<section>
+  <h2>Video path <span class="tag">two VGA, one HDMI</span></h2>
+  <div class="cols">
+    <div>
+      <h3>2D mode</h3>
+      <p>The relay passes VGA IN straight to VGA OUT. The card is invisible to the monitor, and stays that way if the FPGA is unconfigured, crashed or unpowered. HDMI shows a status screen or the menu.</p>
+      <h3>3D mode</h3>
+      <p>Glide opens the device, the relay switches, and the ADV7123 drives VGA OUT from the fabric's video timing. HDMI carries the same frame, scaled to 720p or 1080p with integer scaling and optional scanlines.</p>
+    </div>
+    <div>
+      <h3>What v1 leaves unpopulated</h3>
+      <p>The TVP7002 capture ADC and its front end. VGA IN is routed to the ADC inputs through series resistors that are not placed, so the empty footprint puts no load on the passthrough. Its 24 data pins, syncs and I2C are assigned on the FPGA pinout and the capture path stays in the design.</p>
+      <p>When it is placed, HDMI shows the 2D desktop as well, and the card becomes the whole PC's modern output.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Memory <span class="tag">where the original's three EDO buses go</span></h2>
+  <p>The Artix-7 has 13.1 Mbit of block RAM, about 1.6 MB. That is not enough for two colour buffers plus depth at 640×480, so the layout splits by access pattern. The read-modify-write path stays on chip; the streaming paths go to PSRAM and DDR3.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Buffer</th><th>Original Voodoo 2</th><th>This card</th><th>Why</th></tr>
+    <tr><td>Depth / alpha aux, 600 KB</td><td>FBI EDO, 64-bit, 90 MHz</td><td>BRAM</td><td>per-pixel read-modify-write is the latency-critical path</td></tr>
+    <tr><td>Colour front + back, 1.2 MB</td><td>FBI EDO</td><td>4× PSRAM, one channel per buffer half</td><td>short fixed latency, ~400 MB/s per chip; the M64 approach</td></tr>
+    <tr><td>Textures, 2 to 4 MB per TMU</td><td>one EDO bus per TMU</td><td>DDR3 via MIG, BRAM cache per TMU</td><td>bandwidth is ample; the cache hides DDR3 latency</td></tr>
+    <tr><td>Tile cache, FIFOs</td><td>—</td><td>BRAM, remaining ~0.8 MB</td><td>deep FIFOs fix the small-triangle stall seen on the DE10</td></tr>
+    <tr><td>800×600 and above</td><td>FBI EDO</td><td>depth spills to PSRAM</td><td>measure; PSRAM latency is still far below shared DDR</td></tr>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>What the T113 does <span class="tag">the MiSTer split, applied here</span></h2>
+  <div class="cols">
+    <ul>
+      <li>Boots Linux from SPI NAND. Holds the FPGA bitstream and rewrites the FPGA's QSPI flash for field updates over USB or Ethernet.</li>
+      <li>Serves the on-screen menu on HDMI over SPI: scaler mode, scanlines, VGA timing, relay override.</li>
+      <li>Runs SpinalVoodoo's existing Glide runtime against the core. The 24-bit LCD port, driven as a one-way parallel pipe at over 100 MB/s, is fast enough to play games from the ARM with no host PC in the slot.</li>
+    </ul>
+    <ul>
+      <li>USB 2.0 host for a keyboard or gamepad in menus and self-test.</li>
+      <li>Collects performance counters: triangles per second, FIFO stalls, cache hit rate, frame time.</li>
+      <li>Takes screenshots and traces for regression against the pixel-exact reference model.</li>
+      <li>Never sits in the pixel or PCI path. Config-space cycles must answer within a few PCI clocks, so that stays in fabric.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>Bill of materials <span class="tag">per card</span></h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Item</th><th>Part</th><th class="num">Qty 5</th><th class="num">Qty 100</th></tr>
+    <tr><td>FPGA</td><td>XC7A200T-2FBG484 (LCSC, grey channel)</td><td class="num">$95</td><td class="num">$80</td></tr>
+    <tr><td>DDR3, 1 GB</td><td>2× 4 Gbit x16 DDR3L, 32-bit bus</td><td class="num">$30</td><td class="num">$22</td></tr>
+    <tr><td>PSRAM, 64 MB</td><td>4× APS12808L 128 Mbit OPI</td><td class="num">$11</td><td class="num">$9</td></tr>
+    <tr><td>Companion CPU</td><td>T113-S3, SPI NAND, rails, crystal, USB-A, Ethernet PHY</td><td class="num">$28</td><td class="num">$25</td></tr>
+    <tr><td>PCI front end</td><td>3× SN74CBTD16211 bus switches</td><td class="num">$6</td><td class="num">$5</td></tr>
+    <tr><td>Power</td><td>bucks for 1.0V, 1.8V, 1.5V, 3.3V; VTT regulator</td><td class="num">$10</td><td class="num">$8</td></tr>
+    <tr><td>Config flash, clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$3</td><td class="num">$2.30</td></tr>
+    <tr><td>Video</td><td>ADV7123, relay, 2× DB15, HDMI connector, ESD</td><td class="num">$15</td><td class="num">$12</td></tr>
+    <tr><td>Capture ADC</td><td>TVP7002 + front end <span class="dnp-tag">DNP v1</span></td><td class="num">$0</td><td class="num">$0</td></tr>
+    <tr><td>Passives, bracket, heatsink</td><td>~150 decoupling caps, ferrites, full-height bracket</td><td class="num">$15</td><td class="num">$10</td></tr>
+    <tr><td>PCB</td><td>6-layer, 175 × 107 mm, impedance controlled, hard gold fingers, 30° bevel</td><td class="num">$25</td><td class="num">$12</td></tr>
+    <tr><td>Assembly</td><td>JLCPCB standard, 484-ball BGA, fees amortised</td><td class="num">$42</td><td class="num">$14</td></tr>
+    <tr class="total"><td colspan="2">Per card, before shipping, VAT and duty</td><td class="num">≈ $280</td><td class="num">≈ $200</td></tr>
+  </table>
+  </div>
+  <p>Placing the ADC later adds about $18. Dropping the T113 for an RP2350 saves about $22 and loses the host-less self-test path.</p>
+</section>
+
+<section>
+  <h2>Phases <span class="tag">each ends with something that runs</span></h2>
+  <ol class="phases">
+    <li><div><div class="ph-t">Port SpinalVoodoo to an Artix-7 200T PCIe dev board</div><div class="ph-d">An Alinx or QMTech 200T board with DDR3 and PCIe, about $200 to $300, in a Linux PC. Avalon ports become AXI and MIG; the DE10 MMIO runtime maps the PCIe BARs through UIO, which is the same memory-mapped model. Move the framebuffer into BRAM and PSRAM and measure the small-triangle numbers again.</div><div class="ph-exit"><b>exit:</b> Quake and Screamer 2 run at or above real Voodoo 1 rates; real LUT and BRAM usage known</div></div></li>
+    <li><div><div class="ph-t">Card rev B</div><div class="ph-d">PCI target with config space, T113, relay, DAC, HDMI, PSRAM, ADC footprint. Bring up on a Socket 7 board with DOS Glide and the Win9x reference drivers.</div><div class="ph-exit"><b>exit:</b> unmodified 3dfx Voodoo 1 drivers enumerate and run the card</div></div></li>
+    <li><div><div class="ph-t">Voodoo 2 extensions</div><div class="ph-d">Second TMU with multi-texture chaining, cmdFifo triangle packets, memory FIFO, 128-entry PCI FIFO, 90 MHz timing closure. Validate against MAME and 86Box traces.</div><div class="ph-exit"><b>exit:</b> Voodoo 2 drivers run; core under 75K LUT6</div></div></li>
+    <li><div><div class="ph-t">v2 firmware</div><div class="ph-d">Place the ADC. Capture, scaler and menu in fabric, controlled from the T113. HDMI now shows the whole session.</div><div class="ph-exit"><b>exit:</b> one HDMI cable from a 1998 PC</div></div></li>
+  </ol>
+</section>
+
+<section>
+  <h2>Open risks <span class="tag">check before ordering boards</span></h2>
+  <div class="risk"><b>Grey-channel FPGAs.</b> DigiKey lists the 200T near $250; LCSC stock at $80 is pulls or relabels. Buy samples first, check date codes, test them, then buy the whole run and consign it to assembly.</div>
+  <div class="risk"><b>Block RAM budget.</b> Depth buffer, texture caches and FIFOs all want the same 13 Mbit. Phase 1 must report the real split before the memory subsystem is frozen.</div>
+  <div class="risk"><b>T113 power sequencing.</b> Three or four rails in order, plus a 128-ball BGA. Copy a known-good reference design (MangoPi MQ-Dual) rather than deriving it.</div>
+  <div class="risk"><b>Tools.</b> AMD's free Vivado tier for 2026.1 is reported as Windows-only. Plan the build machine, or pin an earlier release.</div>
+  <div class="risk"><b>License.</b> SpinalVoodoo's repository shows no license file. Ask the author before building a product on it.</div>
+</section>
+
+<footer>
+  Built on <a href="https://github.com/fayalalebrun/SpinalVoodoo">SpinalVoodoo</a> (Voodoo 1 in SpinalHDL). Chip survey and cost model on the <a href="https://claude.ai/artifact/Lf62KtUa85aEHGBhXYxpqE">FPGA options page</a>. Prices are LCSC, DigiKey and JLCPCB list prices as of September 2026.
+</footer>
+</div>

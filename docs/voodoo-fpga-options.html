@@ -1,0 +1,270 @@
+<title>Voodoo Card FPGA Options</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F3F4F1;
+    --bg-2: #E9EBE6;
+    --ink: #1B1F1D;
+    --ink-2: #4E5551;
+    --muted: #737A75;
+    --line: #C8CDC6;
+    --line-2: #A9B0AA;
+    --accent: #D9560F;
+    --accent-soft: #FBE3D4;
+    --green: #2E6E4E;
+    --green-soft: #DCEBE1;
+    --warn: #B08A1E;
+    --bad: #9A3B2E;
+    --card: #FFFFFF;
+    --code-bg: #E9EBE6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131715; --bg-2: #1B211D; --ink: #E8EAE4; --ink-2: #C0C6BF; --muted: #8E958F;
+      --line: #2E3531; --line-2: #465049; --accent: #F0782F; --accent-soft: #3A2416;
+      --green: #63B88E; --green-soft: #1B3328; --warn: #D9B04A; --bad: #E07A6A;
+      --card: #1B211D; --code-bg: #232A26;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131715; --bg-2: #1B211D; --ink: #E8EAE4; --ink-2: #C0C6BF; --muted: #8E958F;
+    --line: #2E3531; --line-2: #465049; --accent: #F0782F; --accent-soft: #3A2416;
+    --green: #63B88E; --green-soft: #1B3328; --warn: #D9B04A; --bad: #E07A6A;
+    --card: #1B211D; --code-bg: #232A26;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15.5px; line-height: 1.55;
+    padding-inline: 20px; padding-block: 0 72px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header {
+    padding-block: 36px 20px; border-bottom: 2px solid var(--ink);
+    display: grid; grid-template-columns: 1fr auto; gap: 16px 32px; align-items: end;
+  }
+  .eyebrow, .mono-label {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px;
+  }
+  h1 {
+    font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 700;
+    font-size: clamp(38px, 6vw, 56px); line-height: 0.98; margin: 0; text-wrap: balance;
+  }
+  .sub { color: var(--ink-2); margin: 10px 0 0; max-width: 62ch; }
+  .revbox {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; line-height: 1.6;
+    color: var(--ink-2); border: 1px solid var(--line-2); padding: 10px 14px; white-space: nowrap;
+  }
+  .revbox b { color: var(--ink); font-weight: 500; }
+  section { padding-block: 34px 6px; }
+  h2 {
+    font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 600;
+    font-size: 28px; line-height: 1.05; margin: 0 0 14px; display: flex; align-items: baseline; gap: 12px;
+  }
+  h2 .tag { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+  h3 { font-family: "Barlow Condensed", "Arial Narrow", Impact, sans-serif; font-weight: 600; font-size: 20px; margin: 20px 0 6px; }
+  p { margin: 0 0 12px; max-width: 68ch; }
+  ul { margin: 0 0 12px; padding-left: 20px; max-width: 70ch; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--accent); }
+  code { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+
+  /* requirement tiles */
+  .req { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin: 4px 0 8px; }
+  .req > div { background: var(--card); padding: 12px 14px; }
+  .req .k { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .req .v { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 26px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .req .n { color: var(--ink-2); font-size: 13.5px; margin-top: 4px; }
+
+  /* tables */
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 6px 0 10px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; border-bottom: 1.5px solid var(--line-2); white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; border-top: 1.5px solid var(--ink); border-bottom: none; }
+  td.name { font-weight: 500; white-space: nowrap; }
+  .pill { display: inline-block; font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 7px; border: 1px solid; border-radius: 2px; white-space: nowrap; }
+  .pill.ok { color: var(--green); border-color: var(--green); }
+  .pill.tight { color: var(--warn); border-color: var(--warn); }
+  .pill.no { color: var(--bad); border-color: var(--bad); }
+  .pill.watch { color: var(--muted); border-color: var(--line-2); }
+
+  /* cost bars */
+  .bars { display: grid; grid-template-columns: max-content 1fr max-content; gap: 8px 14px; align-items: center; margin: 8px 0 4px; font-size: 14px; }
+  .bars .lab { font-weight: 500; white-space: nowrap; }
+  .bars .track { position: relative; height: 18px; background: var(--bg-2); }
+  .bars .fill { position: absolute; inset: 0 auto 0 0; background: var(--green); }
+  .bars .fill.over { background: var(--bad); }
+  .bars .fill.est { background: repeating-linear-gradient(135deg, var(--green) 0 6px, transparent 6px 10px); }
+  .bars .val { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
+  .bars .limit { position: absolute; top: -6px; bottom: -6px; width: 0; border-left: 2px dashed var(--accent); }
+  .bars-cap { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); margin: 6px 0 0; display: flex; gap: 20px; flex-wrap: wrap; }
+  .bars-cap .sw { display: inline-block; width: 14px; height: 10px; vertical-align: middle; margin-right: 6px; background: var(--green); }
+  .bars-cap .sw.est { background: repeating-linear-gradient(135deg, var(--green) 0 4px, transparent 4px 7px); }
+  .bars-cap .sw.over { background: var(--bad); }
+  .bars-cap .sw.lim { background: none; border-left: 2px dashed var(--accent); width: 0; height: 12px; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 36px; }
+  .callout { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; margin: 0 0 14px; max-width: 68ch; }
+  .callout b { font-weight: 600; }
+  ol.steps { list-style: none; padding: 0; margin: 6px 0 0; counter-reset: st; border-top: 1px solid var(--line); }
+  ol.steps li { counter-increment: st; display: grid; grid-template-columns: 56px 1fr; gap: 0 14px; padding: 12px 0; border-bottom: 1px solid var(--line); margin: 0; }
+  ol.steps li::before { content: counter(st); font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 30px; font-weight: 700; line-height: 1; color: var(--accent); }
+  ol.steps .t { font-weight: 600; margin-bottom: 2px; }
+  ol.steps .d { color: var(--ink-2); max-width: 66ch; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  footer a { color: var(--ink-2); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 680px) { .cols { grid-template-columns: 1fr; } header { grid-template-columns: 1fr; } .revbox { white-space: normal; } .bars { grid-template-columns: 1fr; gap: 4px; } .bars .val { margin-bottom: 8px; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div>
+    <p class="eyebrow">Voodoo 2 PCI card · silicon selection</p>
+    <h1>FPGA options under $300 a board</h1>
+    <p class="sub">Which chips can hold a register-level Voodoo 2, what each one makes the whole card cost at a hundred units, and which companion CPU to put next to it.</p>
+  </div>
+  <div class="revbox">
+    <b>rev A</b> · 2026-09-16<br>
+    target: whole board &lt; $300 at qty 100<br>
+    baseline: SpinalVoodoo (Voodoo 1) at 70% of a DE10-Nano
+  </div>
+</header>
+
+<section>
+  <h2>What the core needs <span class="tag">from the SpinalVoodoo yardstick</span></h2>
+  <div class="req">
+    <div><div class="k">Logic, Voodoo 2</div><div class="v">65K–75K</div><div class="n">LUT6. Voodoo 1 core is 35K–40K; second TMU, cmdFifo and memory FIFO add half again; PCI target, DDR3 controller and video add 10K.</div></div>
+    <div><div class="k">Block RAM</div><div class="v">≥ 10 Mbit</div><div class="n">Texture caches per TMU and deep FIFOs. This is what fixes the small-triangle stall measured on the DE10.</div></div>
+    <div><div class="k">Core clock</div><div class="v">90 MHz</div><div class="n">Voodoo 2 native. The closed-source ECP5 Voodoo 1 hit 100 MHz on a slower fabric.</div></div>
+    <div><div class="k">I/O</div><div class="v">3.3V bank</div><div class="n">About 50 pins for PCI behind 5V bus switches, plus DDR3, PSRAM and video. Roughly 225 pins total.</div></div>
+    <div><div class="k">Tools</div><div class="v">free</div><div class="n">No per-seat licence. This rules out Kintex-7 325T and Zynq 7Z035/7Z045 in Vivado.</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>How the board cost is built <span class="tag">qty 100, per card</span></h2>
+  <p>Everything except the FPGA is the same across candidates, so the board is a fixed part plus the chip. Prices are LCSC and JLCPCB list prices from September 2026.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Block</th><th>Parts</th><th class="num">Qty 100</th></tr>
+    <tr><td>DDR3, 1 GB</td><td>2× 4 Gbit x16 DDR3L, 32-bit bus</td><td class="num">$22</td></tr>
+    <tr><td>PSRAM, 64 MB</td><td>4× APS12808L 128 Mbit OPI</td><td class="num">$9</td></tr>
+    <tr><td>PCI front end</td><td>3× SN74CBTD16211 5V bus switches</td><td class="num">$5</td></tr>
+    <tr><td>Power</td><td>bucks for core, aux, DDR, 3.3V; VTT; all from the slot's 5V</td><td class="num">$8</td></tr>
+    <tr><td>Config flash + clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$2.30</td></tr>
+    <tr><td>Companion CPU</td><td>RP2040 subsystem (T113-S3 adds about $21, see below)</td><td class="num">$3</td></tr>
+    <tr><td>Video</td><td>ADV7123 DAC, relay, 2× DB15, HDMI connector, ESD</td><td class="num">$10</td></tr>
+    <tr><td>Passives, bracket</td><td>decoupling, ferrites, headers, full-height bracket</td><td class="num">$10</td></tr>
+    <tr><td>PCB</td><td>6-layer, 175 × 107 mm, hard gold fingers, bevel</td><td class="num">$12</td></tr>
+    <tr><td>Assembly</td><td>JLCPCB standard, BGA, fees amortised</td><td class="num">$14</td></tr>
+    <tr class="total"><td colspan="2">Board without the FPGA</td><td class="num">≈ $95</td></tr>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>Candidates <span class="tag">chip price at qty 100 unless noted</span></h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>FPGA</th><th>Logic, LUT6 equiv.</th><th>Block RAM</th><th>CPU on chip</th><th class="num">Chip</th><th class="num">Board</th><th>Tools</th><th>Fit</th></tr>
+    <tr><td class="name">AMD Artix-7 XC7A200T</td><td>134.6K</td><td>13.1 Mbit</td><td>none</td><td class="num">$80</td><td class="num">$175</td><td>Vivado free</td><td><span class="pill ok">safe</span> 50% full, most BRAM of the group</td></tr>
+    <tr><td class="name">AMD Kintex-7 XC7K160T</td><td>101K, faster fabric</td><td>11.7 Mbit</td><td>none</td><td class="num">$72</td><td class="num">$170</td><td>Vivado free (160T covered, 325T not)</td><td><span class="pill ok">safe</span> 90 MHz trivial; 676-ball package; grey stock</td></tr>
+    <tr><td class="name">AMD Zynq XC7Z030</td><td>78K</td><td>9.3 Mbit</td><td>2× Cortex-A9, DDR3 on PS</td><td class="num">$92</td><td class="num">$200</td><td>Vivado free</td><td><span class="pill tight">tight</span> no margin for Voodoo 2; fine for Voodoo 1</td></tr>
+    <tr><td class="name">Gowin GW5AST-138</td><td>138K LUT4 ≈ 90K</td><td>6.1 Mbit</td><td>800 MHz RISC-V AE350, Linux; hard PCIe</td><td class="num">≈ $50</td><td class="num">$140</td><td>Gowin EDA free</td><td><span class="pill tight">trial</span> 75–85% full in LUT4; soft DDR3; thin ecosystem</td></tr>
+    <tr><td class="name">Intel Cyclone V GX 5CGXFC9</td><td>113K ALM ≈ 140K</td><td>12.2 Mbit</td><td>none</td><td class="num">quote</td><td class="num">≈ $250</td><td>Quartus Lite free</td><td><span class="pill ok">safe</span> least porting from SpinalVoodoo; price unverified</td></tr>
+    <tr><td class="name">AMD Artix-7 XC7A100T</td><td>63.4K</td><td>4.9 Mbit</td><td>none</td><td class="num">$45</td><td class="num">$140</td><td>Vivado free</td><td><span class="pill no">too small</span> less BRAM than the DE10</td></tr>
+    <tr><td class="name">AMD Artix US+ AU15P</td><td>≈ 78K, 16 nm</td><td>—</td><td>none</td><td class="num">$182 (DigiKey)</td><td class="num">$280</td><td>Vivado free</td><td><span class="pill tight">tight</span> fast but small for the money</td></tr>
+    <tr><td class="name">AMD Kria K26 module</td><td>117K</td><td>5.1 Mbit + 18 Mbit URAM</td><td>4× Cortex-A53, 4 GB DDR4</td><td class="num">$230 + $40 conn.</td><td class="num">$340</td><td>Vivado free</td><td><span class="pill no">over budget</span> best chip, wrong price</td></tr>
+    <tr><td class="name">Lattice CertusPro-NX 100K</td><td>100K LUT4 ≈ 65K</td><td>7.3 Mbit</td><td>none</td><td class="num">$100</td><td class="num">$195</td><td>Radiant free</td><td><span class="pill no">too small</span></td></tr>
+    <tr><td class="name">Altera Agilex 5 E-series SoC</td><td>A5E013 ≈ 65–70K; larger parts exist</td><td>—</td><td>2× A55 + 2× A76</td><td class="num">quote</td><td class="num">unknown</td><td>Quartus Pro, free for E-series</td><td><span class="pill watch">watch</span> 013 too small, bigger ones unpriced</td></tr>
+    <tr><td class="name">Efinix Ti180 / Ti375</td><td>180K / 370K LE</td><td>—</td><td>Ti375: hard quad RISC-V, Linux</td><td class="num">quote</td><td class="num">unknown</td><td>Efinity free</td><td><span class="pill watch">watch</span> priced by volume; kits from $825</td></tr>
+  </table>
+  </div>
+
+  <h3>Board cost against the target</h3>
+  <div class="bars">
+    <div class="lab">Gowin GW5AST-138</div><div class="track"><div class="fill est" style="width:40%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">≈ $140 · est.</div>
+    <div class="lab">Artix-7 100T</div><div class="track"><div class="fill" style="width:40%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$140 · too small</div>
+    <div class="lab">Kintex-7 160T</div><div class="track"><div class="fill" style="width:48.6%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$170</div>
+    <div class="lab">Artix-7 200T</div><div class="track"><div class="fill" style="width:50%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$175</div>
+    <div class="lab">Artix-7 200T + T113</div><div class="track"><div class="fill" style="width:55.7%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$195</div>
+    <div class="lab">Zynq 7Z030</div><div class="track"><div class="fill" style="width:57.1%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$200</div>
+    <div class="lab">Cyclone V GX C9</div><div class="track"><div class="fill est" style="width:71.4%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">≈ $250 · est.</div>
+    <div class="lab">Artix US+ AU15P</div><div class="track"><div class="fill" style="width:80%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$280</div>
+    <div class="lab">Kria K26</div><div class="track"><div class="fill over" style="width:97.1%"></div><div class="limit" style="left:85.7%"></div></div><div class="val">$340</div>
+  </div>
+  <p class="bars-cap"><span><span class="sw"></span>verified list prices</span><span><span class="sw est"></span>estimated</span><span><span class="sw over"></span>over target</span><span><span class="sw lim"></span>$300 target</span><span>scale: $0 to $350</span></p>
+
+  <div class="callout" style="margin-top:18px"><b>The AMD prices are grey channel.</b> DigiKey lists the 200T near $250 and the 160T above $1,000. LCSC stock at $72 to $80 is pulls or relabels from Chinese supply. Workable for a 100-unit run if you buy samples first, check date codes and test every part, but not a channel you can contract against. Buy the whole run up front and consign it to assembly.</div>
+</section>
+
+<section>
+  <h2>Size against the DE10-Nano <span class="tag">why the vendor numbers mislead</span></h2>
+  <p>Altera "logic elements" and AMD "logic cells" are marketing units. An Altera ALM is worth about 1.2 to 1.4 AMD LUT6 in practice; a LUT4 is worth about 0.65 of a LUT6.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Resource</th><th>DE10-Nano (Cyclone V 5CSEBA6)</th><th>Artix-7 100T</th><th>Artix-7 200T</th><th>Kintex-7 160T</th></tr>
+    <tr><td>Logic</td><td>41.9K ALM ≈ 50K–59K LUT6</td><td>63.4K LUT6</td><td>134.6K LUT6</td><td>101K LUT6</td></tr>
+    <tr><td>Relative size</td><td>1.0×</td><td>1.1× to 1.25×</td><td>2.3× to 2.7×</td><td>1.7× to 2.0×</td></tr>
+    <tr><td>Block RAM</td><td>5.5 Mbit</td><td>4.9 Mbit</td><td>13.1 Mbit</td><td>11.7 Mbit</td></tr>
+    <tr><td>Multipliers</td><td>112 DSP blocks (224 × 18-bit)</td><td>240 DSP48E1</td><td>740 DSP48E1</td><td>600 DSP48E1</td></tr>
+    <tr><td>DDR controller</td><td>hard, in the HPS, shared with the ARM</td><td>soft MIG, about 6K LUTs</td><td>soft MIG</td><td>soft MIG</td></tr>
+  </table>
+  </div>
+  <p>SpinalVoodoo's Voodoo 1 at 70% of the DE10 is about 29K ALMs. The 100T is the same size as the DE10 with less block RAM. The 200T and 160T are the first parts with room for a second TMU and the caches that make it fast.</p>
+</section>
+
+<section>
+  <h2>Companion CPU <span class="tag">what sits next to the FPGA</span></h2>
+  <p>The FPGA does the Voodoo. Something else has to load the bitstream, drive the relay, talk USB and take updates. Two parts cover the range.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>RP2040 (or RP2350)</th><th>Allwinner T113-S3</th></tr>
+    <tr><td class="name">Cores</td><td>2× Cortex-M0+ at 133 MHz, no MMU (RP2350: 2× M33 at 150 MHz)</td><td>2× Cortex-A7 at 1.2 GHz + HiFi4 DSP, MMU</td></tr>
+    <tr><td class="name">Memory</td><td>264 KB SRAM (520 KB), external QSPI flash</td><td>128 MB DDR3 inside the package, so no DDR routing</td></tr>
+    <tr><td class="name">Software</td><td>bare metal C SDK or FreeRTOS</td><td>mainline Linux: Buildroot or Debian</td></tr>
+    <tr><td class="name">USB</td><td>USB 1.1 device or host, 12 Mbit</td><td>USB 2.0 host + OTG, 480 Mbit</td></tr>
+    <tr><td class="name">Network</td><td>none; W5500 over SPI adds $3</td><td>100M Ethernet MAC, PHY adds $1.50</td></tr>
+    <tr><td class="name">Link to FPGA</td><td>SPI or PIO parallel, up to about 30 MB/s</td><td>SPI at about 12 MB/s, or the 24-bit RGB LCD port used as a one-way parallel pipe above 100 MB/s</td></tr>
+    <tr><td class="name">Support parts</td><td>crystal, 2 MB flash, one 3.3V rail; QFN-56</td><td>crystal, SPI NAND, three or four sequenced rails; 128-ball BGA</td></tr>
+    <tr><td class="name">Subsystem cost</td><td>about $3.50</td><td>about $25 with Ethernet</td></tr>
+    <tr><td class="name">Power, boot</td><td>tens of milliwatts, milliseconds</td><td>about 1 W, a few seconds</td></tr>
+    <tr><td class="name">Can do</td><td>hold and load the bitstream, USB console and DFU updates, relay, fan, LEDs, I2C to DAC and HDMI</td><td>all of that, plus SSH and network updates, settings menu, USB keyboards and gamepads, a file system for traces, and the SpinalVoodoo Glide regression suite on the card with no host PC</td></tr>
+  </table>
+  </div>
+  <div class="callout"><b>Recommendation: T113-S3.</b> The $21 premium buys the host-less self-test path, which is what makes bring-up of a register-level Voodoo tractable. If cost wins, the RP2350 is the better microcontroller than the RP2040 for the same job.</div>
+</section>
+
+<section>
+  <h2>Memory trade-off <span class="tag">what the K26 was quietly paying for</span></h2>
+  <div class="cols">
+    <div>
+      <h3>With UltraRAM (Zynq UltraScale+)</h3>
+      <p>18 Mbit on chip holds two 640×480×16 colour buffers plus depth with single-cycle latency. The whole Voodoo 2 framebuffer lives inside the FPGA.</p>
+    </div>
+    <div>
+      <h3>With 7-series block RAM</h3>
+      <p>The 200T's 13 Mbit holds one colour buffer plus depth. The back buffer goes to PSRAM or DDR3. Workable, and the ModRetro M64 does exactly this with PSRAM, but it is a design cost the cheaper chips carry.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Decision procedure <span class="tag">let the KV260 port pick the chip</span></h2>
+  <ol class="steps">
+    <li><div><div class="t">Port SpinalVoodoo to the KV260 kit</div><div class="d">$249, kept as a dev board whatever the outcome. Port Avalon to AXI and the DE10 runtime to the A53. This yields the real Voodoo 2 LUT count and real memory latency numbers.</div></div></li>
+    <li><div><div class="t">In parallel, synthesise the core through Gowin EDA</div><div class="d">A day's work, no hardware. Read the utilisation and Fmax it reports for the GW5AST-138. If it fits at 90 MHz with margin, the $140 board is real.</div></div></li>
+    <li><div><div class="t">Choose</div><div class="d">Core under 70K LUT6 and one-chip simplicity wanted: Zynq 7Z030. Otherwise Artix-7 200T or Kintex-7 160T with a T113-S3, at $175 to $195 a board. Gowin only if step 2 came back clean.</div></div></li>
+  </ol>
+</section>
+
+<footer>
+  Prices: <a href="https://www.lcsc.com/product-detail/C494680.html">LCSC XC7A200T</a>, <a href="https://www.lcsc.com/product-detail/C966964.html">LCSC XC7K160T</a>, <a href="https://www.lcsc.com/product-detail/C966962.html">LCSC XC7Z030</a>, <a href="https://www.lcsc.com/product-detail/Microcontroller-Units-MCUs-MPUs-SOCs_Allwinner-Tech-T113-S3_C5197687.html">LCSC T113-S3</a>, <a href="https://www.cnx-software.com/2024/06/28/sipeed-tang-mega-138k-dock-is-a-lower-cost-gowin-gw5ast-fpga-risc-v-development-board/">Tang Mega 138K module</a>, <a href="https://www.digikey.com/en/products/detail/amd/XCAU15P-1FFVB676E/16720162">DigiKey AU15P</a>, AMD Kria and Vivado product pages, September 2026. Core size from the <a href="https://github.com/fayalalebrun/SpinalVoodoo">SpinalVoodoo</a> README.
+</footer>
+</div>
