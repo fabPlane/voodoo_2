@@ -241,7 +241,7 @@
     <tr><td class="name">Can do</td><td>hold and load the bitstream, USB console and DFU updates, relay, fan, LEDs, I2C to DAC and HDMI</td><td>all of that, plus SSH and network updates, settings menu, USB keyboards and gamepads, a file system for traces, and the SpinalVoodoo Glide regression suite on the card with no host PC</td></tr>
   </table>
   </div>
-  <div class="callout"><b>Recommendation: T113-S3.</b> The $21 premium buys the host-less self-test path, which is what makes bring-up of a register-level Voodoo tractable. The microcontroller option was dropped on 2026-09-16: the FPGA boots from its own QSPI flash, JTAG programs it, updates arrive over PCI or from the T113, and the FPGA drives the relays, so a basic card without the T113 carries no companion CPU at all. The comparison above is kept for the record.</div>
+  <div class="callout"><b>Recommendation: T113-S3.</b> The $21 premium buys the host-less self-test path, which is what makes bring-up of a register-level Voodoo tractable. The microcontroller option was dropped on 2026-09-16: the FPGA boots from its own QSPI flash, JTAG programs it, updates arrive over PCI or from the T113, and the FPGA drives the relays, so a basic card without the T113 has no boot-path microcontroller. An RP2350B does sit on the card as a peripheral: USB JTAG programmer, console, and PIO experiments behind a registered FPGA link. The comparison above is kept for the record.</div>
 </section>
 
 <section>
