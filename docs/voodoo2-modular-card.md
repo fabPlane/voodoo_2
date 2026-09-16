@@ -30,9 +30,9 @@ What modularity buys:
 - Rework means swapping a module, not reflowing a BGA.
 - The Gowin module works on the same carrier.
 
-What it costs: about $70 more per card at qty 100 than the monolithic board,
-and about $110 more at qty 5, for the second PCB, its assembly setup, 280 pins
-of connectors and the duplicated passives. Section 6 has the numbers. This is
+What it costs: about $60 more per card at qty 100 than the monolithic board,
+and about $100 more at qty 5. The connectors are only about $9 of that; the
+rest is the second PCB, its assembly, and the duplicated support parts. Section 6 has the numbers. This is
 the honest trade: modularity is a bet that more than one carrier will exist.
 
 ## 2. The module standard
@@ -51,6 +51,10 @@ fixed so that any conforming module works on any conforming carrier.
 | Stack height | 3.0 mm |
 | Max component height on module | 6 mm top, 1.5 mm bottom, so module plus carrier stays inside PCI's 14.5 mm |
 | Mounting | four holes matching Sipeed's M1 to M4; ours adds two more at the far end of a 70 mm module |
+
+Connector prices, LCSC September 2026: DF40HC(3.0)-100DS receptacle $1.88 at
+qty 1, $1.26 at 500; DF40C-100DP plug $1.74 and $1.02. The full set for one
+card, both sides, is about $9.
 
 ### Electrical
 
@@ -105,7 +109,7 @@ The carrier is the current rev A/B card with the FPGA half cut out.
 | Expansion | 2x5 serial headers, 2x13 parallel, 2x8 game/MIDI, 2x Pmod, with transceivers |
 | Board | 4-layer, 175 x 107 mm, hard gold fingers, 30 degree bevel |
 
-Carrier cost: about $67 at qty 100, about $95 at qty 5, without HyperRAM.
+Carrier cost: about $64 at qty 100, about $91 at qty 5, without HyperRAM.
 Add $24 if the HyperRAM sites are populated for a Gowin module.
 
 ## 4. Our module: VM-A7, Artix-7 200T or 100T
@@ -158,19 +162,19 @@ which covers the fixed groups and most of the expansion set.
 | T113-S3, SPI NAND, crystal, rails | $38 | $35 |
 | Regulators and sequencing | $12 | $10 |
 | QSPI, oscillator | $4 | $4 |
-| 3x DF40C plugs | $9 | $8 |
+| 3x DF40C plugs | $5 | $4.50 |
 | Passives | $15 | $12 |
 | PCB, 8-layer, 35 x 70 mm | $40 | $12 |
 | Assembly, BGA | $45 | $15 |
-| Module with 100T | about $267 | about $192 |
-| Module with 200T | about $339 | about $242 |
+| Module with 100T | about $263 | about $188 |
+| Module with 200T | about $335 | about $238 |
 
 ### Card cost, module plus PCI carrier
 
 | | Qty 5 | Qty 100 | Monolithic card, same FPGA |
 |---|---:|---:|---:|
-| 100T module + carrier | about $360 | about $260 | $220 to $230 / $190 |
-| 200T module + carrier | about $435 | about $310 | $275 to $285 / $245 |
+| 100T module + carrier | about $355 | about $252 | $220 to $230 / $190 |
+| 200T module + carrier | about $425 | about $302 | $275 to $285 / $245 |
 | Gowin module + carrier with HyperRAM | about $205 | about $160 | n/a |
 
 ## 5. When the modular version is the right one
@@ -185,15 +189,20 @@ which covers the fixed groups and most of the expansion set.
 When it is not: a single PCI product at the lowest price, which is the
 monolithic card.
 
-## 6. Where the $70 goes
+## 6. Where the $60 goes
 
 | Item | Per card at qty 100 |
 |---|---:|
-| Second PCB and its assembly setup | $27 |
-| 280 pins of DF40 connectors, both sides | $16 |
-| Duplicated passives, filtering, a second 3.3 V rail | $12 |
+| Second PCB and its assembly, less the area saved on the carrier | $20 |
 | 8-layer premium on the module against 6-layer monolithic | $10 |
+| Duplicated passives, filtering, a second 3.3 V rail | $12 |
+| 280 pins of DF40 connectors, both sides, LCSC prices | $9 |
 | Test and handling of two boards | $5 |
+| Rounding in two separately estimated BOMs | $4 |
+
+The connectors are the smallest real line. At qty 5 the premium is dominated
+by the 8-layer minimum order and the second assembly setup instead, about $40
+of the $100.
 
 ## 7. Risks and open questions
 
