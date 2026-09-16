@@ -5,7 +5,7 @@
       "Application": "Pcbnew",
       "Version": "10.0.4"
     },
-    "CreationDate": "2026-09-16T23:16:24+07:00"
+    "CreationDate": "2026-09-17T02:07:32+07:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
@@ -14,8 +14,8 @@
       "Revision": "0.2-PRICING"
     },
     "Size": {
-      "X": 175.1,
-      "Y": 107.1
+      "X": 174.73,
+      "Y": 106.7801
     },
     "LayerNumber": 6,
     "BoardThickness": 1.6,
@@ -68,6 +68,16 @@
       "FilePolarity": "Positive"
     },
     {
+      "Path": "voodoo2_artix_rev_a_pricing-F_Adhesive.gta",
+      "FileFunction": "Glue,Top",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "voodoo2_artix_rev_a_pricing-B_Adhesive.gba",
+      "FileFunction": "Glue,Bot",
+      "FilePolarity": "Positive"
+    },
+    {
       "Path": "voodoo2_artix_rev_a_pricing-F_Paste.gtp",
       "FileFunction": "SolderPaste,Top",
       "FilePolarity": "Positive"
@@ -98,8 +108,38 @@
       "FilePolarity": "Negative"
     },
     {
+      "Path": "voodoo2_artix_rev_a_pricing-User_Drawings.gbr",
+      "FileFunction": "Other,User",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "voodoo2_artix_rev_a_pricing-User_Comments.gbr",
+      "FileFunction": "Other,User",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "voodoo2_artix_rev_a_pricing-User_Eco1.gbr",
+      "FileFunction": "Other,User",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "voodoo2_artix_rev_a_pricing-User_Eco2.gbr",
+      "FileFunction": "Other,User",
+      "FilePolarity": "Positive"
+    },
+    {
       "Path": "voodoo2_artix_rev_a_pricing-Edge_Cuts.gm1",
       "FileFunction": "Profile",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "voodoo2_artix_rev_a_pricing-F_Fab.gbr",
+      "FileFunction": "AssemblyDrawing,Top",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "voodoo2_artix_rev_a_pricing-B_Fab.gbr",
+      "FileFunction": "AssemblyDrawing,Bot",
       "FilePolarity": "Positive"
     }
   ],

@@ -27,8 +27,7 @@ const parts = [
   ["FPGA clock", "Y1", 1, "ASE-50.000MHZ-LC-T", "C596955", "Selected", "OSC-SMD", "Abracon 50 MHz oscillator"],
   ["CPU crystal", "Y2", 1, "X1E0000210129", "C255917", "Selected", "Crystal-SMD", "Epson 24 MHz crystal"],
   ["VGA relays", "K1,K2,K3", 3, "G6K-2F-Y DC5 BY OMZ/C", "C231389", "Selected", "G6K-SMD", "Omron DPDT signal relay"],
-  ["VGA input", "J2", 1, "KH-HDR15P-F3.08", "C3038673", "Candidate", "DSub-15-RA", "Kinghelm right-angle HD15 female"],
-  ["VGA output", "J3", 1, "KH-HDR15P-F3.08", "C3038673", "Candidate", "DSub-15-RA", "Kinghelm right-angle HD15 female"],
+  ["Bidirectional VGA", "J2", 1, "KH-HDR15P-F3.08", "C3038673", "Candidate", "DSub-15-RA", "Kinghelm right-angle HD15 female; FPGA-selected ADC input or DAC output"],
   ["HDMI output", "J4", 1, "HDMI-019S", "C111617", "Selected", "HDMI-A-RA", "SOFNG right-angle HDMI-A"],
   ["USB host", "J5", 1, "902-131A1021D10100", "C2344", "Selected", "USB-A-RA", "Right-angle USB-A"],
   ["Ethernet magjack", "J6", 1, "HR911105A", "C12074", "Selected", "RJ45-Magjack", "HANRUN 10/100 magjack"],
@@ -51,7 +50,6 @@ const parts = [
   ["PCI 5 V TVS", "D10", 1, "SMAJ5.0A-TP", "C129544", "Candidate", "SMA", "5 V unidirectional TVS"],
   ["Input load switch", "Q10", 1, "TBD", "", "Provisional", "QFN", "Inrush and reverse-block allowance"],
   ["FPGA JTAG header (Xilinx 2 mm 2x7 cable pinout)", "J8", 1, "IDC2.0-2*7PZ", "C53207571", "Candidate", "IDC-2x7-2.0mm", "JXTCONN 2 mm 2x7 shrouded box header"],
-  ["Bench 5 V input (diode-OR or load switch against the slot rail)", "J10", 1, "DC-005C-20A", "C84007", "Candidate", "DC-Jack-RA", "Korean Hroparts 2.0 mm barrel jack, 3 A"],
   ["Bitbang and USB-JTAG MCU (24-pin registered link to the FPGA plus JTAG and config lines; not in the boot or PCI path)", "U40", 1, "RP2350B", "C42415655", "Candidate", "QFN-80", "Raspberry Pi RP2350B, 48 GPIO"],
   ["MCU crystal", "Y3", 1, "X322512MSB4SI", "C9002", "Candidate", "Crystal-3225", "YXC 12 MHz"],
   ["MCU flash (same reel as U10)", "U41", 1, "W25Q128JVSIQ", "C97521", "Candidate", "SOIC-8", "Winbond 128 Mbit QSPI NOR"],
@@ -64,6 +62,7 @@ const parts = [
   ["MCU decoupling", expand("C", 163, 8).join(","), 8, "CL05B104KO5NNNC", "C1525", "Candidate", "C_0402", "Samsung 100 nF 16 V X7R"],
   ["MCU bulk capacitors", "C171,C172", 2, "CL21A106KAYNNNE", "C15850", "Candidate", "C_0805", "Samsung 10 uF 25 V X5R"],
   ["Manufacturing header", "J9", 1, "TBD", "", "Provisional", "Header-SMD", "Connector selection pending"],
+  ["SLI link header (34-way 1.27 mm ribbon between two cards for scanline interleave; U50 depth SRAM is footprint-only and not in this BOM)", "J12", 1, "X1322WV-2X17H-C40D30-E80", "C5243658", "Candidate", "PinHeader-2x17-1.27mm", "XKB 2x17 1.27 mm pin header"],
   ["Status LEDs", expand("D", 20, 5).join(","), 5, "TBD", "", "Provisional", "LED_0603", "Color and current pending"],
 ];
 
@@ -78,19 +77,19 @@ function addGrid(rows, refs, startX, startY, columns, dx, dy, rotation = 0) {
 }
 
 const cpl = [
-  ["J2", 31.5, 36, "Top", 0], ["J3", 31.5, 55, "Top", 0],
-  ["J4", 31.5, 72, "Top", 0], ["J5", 31.5, 87, "Top", 0],
-  ["J6", 31.5, 105, "Top", 0], ["U6", 82, 87, "Top", 0],
-  ["K1", 54, 88, "Top", 90], ["K2", 62, 88, "Top", 90], ["K3", 70, 88, "Top", 90],
+  ["J2", 26.83, 42.27, "Top", 270],
+  ["J4", 23.5, 65.18, "Top", 90], ["J5", 23.8, 83.63, "Top", 0],
+  ["J6", 37.76, 106.76, "Top", 90], ["U6", 82, 87, "Top", 0],
+  ["K1", 60, 88, "Top", 90], ["K2", 68, 88, "Top", 90], ["K3", 76, 88, "Top", 90],
   ["U2", 69, 47, "Top", 0], ["U3", 56, 31, "Top", 0], ["U4", 79, 31, "Top", 0],
   ["Y2", 55, 58, "Top", 0], ["J7", 81, 58, "Top", 0],
-  ["U1", 119, 54, "Top", 0], ["U8", 142, 46, "Top", 0], ["U9", 142, 61, "Top", 0],
+  ["U1", 119, 54, "Top", 0], ["U8", 142, 48, "Top", 0], ["U9", 142, 63, "Top", 0],
   ["U10", 104, 76, "Top", 0], ["Y1", 118, 76, "Top", 0],
   ["U11", 99, 89, "Top", 0], ["U12", 111, 89, "Top", 0],
   ["U13", 123, 89, "Top", 0], ["U14", 135, 89, "Top", 0],
-  ["U20", 164, 35, "Top", 0], ["L20", 160, 43, "Top", 0], ["L21", 168, 43, "Top", 0],
-  ["U21", 180, 35, "Top", 0], ["U22", 164, 51, "Top", 0], ["U23", 180, 51, "Top", 0],
-  ["U24", 164, 67, "Top", 0], ["L1", 180, 67, "Top", 0],
+  ["U20", 154.5, 35, "Top", 0], ["L20", 153, 43, "Top", 0], ["L21", 158.5, 43, "Top", 0],
+  ["U21", 188, 50, "Top", 0], ["U22", 158, 55, "Top", 0], ["U23", 176, 60, "Top", 0],
+  ["U24", 158, 70, "Top", 0], ["L1", 180, 72, "Top", 0],
   ["U15", 74, 108, "Top", 0], ["U16", 98, 108, "Top", 0], ["U17", 122, 108, "Top", 0],
 ];
 
@@ -112,9 +111,9 @@ cpl.push(
   ["U33", 43.5, 47, "Top", 0], ["U34", 43.5, 103, "Top", 0],
   ["L22", 158, 57.5, "Top", 0], ["L23", 176, 57.5, "Top", 0], ["L24", 158, 73, "Top", 0],
   ["F1", 184, 72, "Top", 0], ["D10", 188, 72, "Top", 0], ["Q10", 184, 77, "Top", 0],
-  ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0], ["J10", 190, 27, "Top", 0],
+  ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0], ["J12", 127, 27.5, "Top", 0],
   ["U40", 172, 100, "Top", 0], ["Y3", 165, 108, "Top", 0], ["U41", 184, 92, "Top", 0], ["L25", 172, 110, "Top", 0],
-  ["J11", 192, 100, "Top", 0], ["U35", 186, 108, "Top", 0], ["SW1", 180, 110, "Top", 0],
+  ["J11", 190.955, 100, "Top", -90], ["U35", 186, 108, "Top", 0], ["SW1", 180, 110, "Top", 0],
   ["C171", 178, 86, "Top", 0], ["C172", 181, 86, "Top", 0],
   ["D20", 188, 83, "Top", 0], ["D21", 188, 85, "Top", 0], ["D22", 188, 87, "Top", 0],
   ["D23", 188, 89, "Top", 0], ["D24", 188, 91, "Top", 0],
@@ -123,7 +122,7 @@ cpl.push(
 addGrid(cpl, expand("R", 145, 4), 166, 114, 4, 2, 1.7);
 addGrid(cpl, expand("C", 163, 8), 168, 92, 4, 1.75, 1.65);
 
-if (cpl.length !== 348) throw new Error(`Expected 348 placements, found ${cpl.length}`);
+if (cpl.length !== 347) throw new Error(`Expected 347 placements, found ${cpl.length}`);
 
 const bomRows = [["Comment", "Designator", "Footprint", "LCSC Part #"]];
 for (const [func, designators, qty, mpn, lcsc, state, footprint, description] of parts) {

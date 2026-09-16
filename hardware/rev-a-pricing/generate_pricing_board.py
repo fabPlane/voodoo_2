@@ -10,6 +10,7 @@ release.
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import subprocess
 from uuid import NAMESPACE_URL, uuid5
 
 
@@ -27,11 +28,26 @@ def uid(name: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"voodoo2-artix-rev-a-pricing/{name}"))
 
 
-def smd2(ref: str, value: str, x: float, y: float, package: str, w: float, h: float) -> str:
+DNP_ATTR = " dnp exclude_from_pos_files exclude_from_bom"
+
+
+def smd2(ref: str, value: str, x: float, y: float, package: str, w: float, h: float,
+         dnp: bool = False) -> str:
     """Small two-terminal pricing footprint with nominal package geometry."""
     pad_w = 0.55 if w <= 1.1 else 0.80
     pad_h = max(0.45, min(h, 1.25))
     pad_x = max(0.30, w / 2 - pad_w / 2)
+    model_paths = {
+        "R_0402": "Resistor_SMD.3dshapes/R_0402_1005Metric.step",
+        "C_0402": "Capacitor_SMD.3dshapes/C_0402_1005Metric.step",
+        "C_0603": "Capacitor_SMD.3dshapes/C_0603_1608Metric.step",
+        "C_0805": "Capacitor_SMD.3dshapes/C_0805_2012Metric.step",
+        "SOD-123": "Diode_SMD.3dshapes/D_SOD-123.step",
+        "SMA": "Diode_SMD.3dshapes/D_SMA.step",
+        "Crystal-3225": "Crystal.3dshapes/Crystal_SMD_3225-4Pin_3.2x2.5mm.step",
+        "LED_0603": "LED_SMD.3dshapes/LED_0603_1608Metric.step",
+    }
+    model_text = rough.model(model_paths[package]) if package in model_paths else ""
     return f'''
 	(footprint "Pricing:{package}"
 		(layer "F.Cu")
@@ -49,7 +65,7 @@ def smd2(ref: str, value: str, x: float, y: float, package: str, w: float, h: fl
 			(uuid "{uid(ref+'-value')}")
 			(effects (font (size 0.55 0.55) (thickness 0.10)))
 		)
-		(attr smd)
+		(attr smd{DNP_ATTR if dnp else ""})
 		(fp_rect
 			(start {-w/2:.3f} {-h/2:.3f})
 			(end {w/2:.3f} {h/2:.3f})
@@ -66,17 +82,33 @@ def smd2(ref: str, value: str, x: float, y: float, package: str, w: float, h: fl
 			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
 			(uuid "{uid(ref+'-pad-2')}")
 		)
+{model_text}
 	)'''
 
 
 def grid(refs: list[str], value: str, package: str, start_x: float, start_y: float,
-         columns: int, dx: float, dy: float, w: float, h: float) -> list[str]:
+         columns: int, dx: float, dy: float, w: float, h: float, dnp: bool = False) -> list[str]:
     items = []
     for index, ref in enumerate(refs):
         x = start_x + (index % columns) * dx
         y = start_y + (index // columns) * dy
-        items.append(smd2(ref, value, x, y, package, w, h))
+        items.append(smd2(ref, value, x, y, package, w, h, dnp))
     return items
+
+
+def option_placeholder(ref: str, value: str, x: float, y: float, w: float, h: float,
+                       model_path: str, rotate_z: float = 0, offset_x: float = 0,
+                       offset_y: float = 0, dnp: bool = False) -> str:
+    """Quote placeholder for a part the rough board does not know about.
+
+    Adds a stock STEP body and, for footprint-only options, the DNP attributes so
+    the part stays out of the BOM and CPL like the unpopulated ADC.
+    """
+    text = rough.placeholder(ref, value, x, y, w, h)
+    if dnp:
+        text = text.replace("(attr smd)", f"(attr smd{DNP_ATTR})")
+    assert text.endswith("\n\t)")
+    return text[:-3] + rough.model(model_path, rotate_z, offset_x, offset_y) + "\n\t)"
 
 
 def numbered(prefix: str, start: int, count: int) -> list[str]:
@@ -105,7 +137,7 @@ def build() -> str:
     )
 
     additions = [
-        rough.text("TOP-SIDE POPULATION MODEL — SUPPORT VALUES PROVISIONAL", 107.5, 119.9, 0.85),
+        rough.text("TOP-SIDE POPULATION MODEL — SUPPORT VALUES PROVISIONAL", 107.5, 119.9, 0.85, "Cmts.User"),
     ]
 
     # 148 capacitor placements: dense local bypassing plus regulator input/output
@@ -132,15 +164,15 @@ def build() -> str:
     additions += [
         rough.placeholder("Q1", "2N7002 RELAY", 49.5, 84.0, 3.0, 2.0),
         rough.placeholder("Q2", "2N7002 RELAY", 49.5, 88.0, 3.0, 2.0),
-        rough.placeholder("Q3", "2N7002 RELAY", 49.5, 92.0, 3.0, 2.0),
+        rough.placeholder("Q3", "2N7002 RELAY", 60.0, 98.0, 3.0, 2.0),
         smd2("D1", "1N4148W", 51.5, 84.0, "SOD-123", 3.7, 1.8),
         smd2("D2", "1N4148W", 51.5, 88.0, "SOD-123", 3.7, 1.8),
-        smd2("D3", "1N4148W", 51.5, 92.0, "SOD-123", 3.7, 1.8),
+        smd2("D3", "1N4148W", 63.0, 98.0, "SOD-123", 3.7, 1.8),
         rough.placeholder("U30", "USB ESD", 43.5, 86.0, 3.0, 3.0),
         rough.placeholder("U31", "HDMI ESD A", 43.5, 70.0, 3.0, 3.0),
         rough.placeholder("U32", "HDMI ESD B", 43.5, 74.0, 3.0, 3.0),
         rough.placeholder("U33", "VGA ESD", 43.5, 47.0, 3.0, 3.0),
-        rough.placeholder("U34", "ETH ESD", 43.5, 103.0, 3.0, 3.0),
+        rough.placeholder("U34", "ETH ESD", 60.0, 103.0, 3.0, 3.0),
         rough.placeholder("L22", "1uH AUX", 158.0, 57.5, 4.0, 4.0),
         rough.placeholder("L23", "1uH AUX", 176.0, 57.5, 4.0, 4.0),
         rough.placeholder("L24", "1uH AUX", 158.0, 73.0, 4.0, 4.0),
@@ -149,12 +181,11 @@ def build() -> str:
         rough.placeholder("Q10", "5V LOAD SWITCH", 184.0, 77.0, 4.0, 4.0),
         rough.placeholder("J8", "JTAG 2x7 2.0mm", 86.0, 92.0, 16.0, 7.0),
         rough.placeholder("J9", "MFG TEST", 73.0, 96.0, 16.0, 4.0),
-        rough.placeholder("J10", "BENCH 5V DC JACK", 190.0, 27.0, 9.0, 14.0),
         rough.placeholder("U40", "RP2350B", 172.0, 100.0, 10.0, 10.0),
         smd2("Y3", "12MHz", 165.0, 108.0, "Crystal-3225", 3.2, 2.5),
         rough.placeholder("U41", "W25Q128 MCU FLASH", 184.0, 92.0, 5.0, 6.0),
         rough.placeholder("L25", "3.3uH MCU", 172.0, 110.0, 4.0, 4.0),
-        rough.placeholder("J11", "USB-C MCU", 192.0, 100.0, 9.0, 7.5),
+        rough.placeholder("J11", "USB-C MCU", 190.0, 100.0, 9.0, 7.5),
         rough.placeholder("U35", "USB ESD", 186.0, 108.0, 3.0, 3.0),
         rough.placeholder("SW1", "BOOTSEL", 180.0, 110.0, 3.9, 3.9),
         smd2("C171", "10uF", 178.0, 86.0, "C_0805", 2.0, 1.25),
@@ -166,9 +197,44 @@ def build() -> str:
         smd2("D24", "FAULT", 188.0, 91.0, "LED_0603", 1.6, 0.8),
     ]
 
+    # Footprint-only depth-buffer SRAM option, left of the FPGA. One 512K x 36
+    # ZBT SRAM (ISSI IS61NLP51236B-200B3LI, TFBGA-165 13 x 15 mm, 1.0 mm pitch)
+    # holds a 1024 x 768 16-bit depth buffer with single-cycle random access,
+    # which lets a 200T build move depth off block RAM. Not populated on rev A;
+    # the DNP attributes keep U50 and its bypass out of the BOM and CPL. The
+    # stock 165-ball STEP body is 11.9 x 16 mm, close enough for the quote view.
+    additions += [
+        option_placeholder(
+            "U50", "ZBT SRAM 512Kx36 DNP", 99.0, 53.0, 13.0, 15.0,
+            "Package_BGA.3dshapes/Analog_BGA-165_11.9x16mm_Layout11x15_P1.0mm.step", dnp=True,
+        ),
+        rough.text("SRAM OPTION — DNP V1", 99.0, 41.0, 1.0),
+    ]
+    additions += grid(numbered("C", 173, 8), "100nF DNP", "C_0402", 92.0, 62.5, 4, 1.75, 1.65, 1.0, 0.5, dnp=True)
+
+    # SLI link header on the top edge: 2 x 17 pins at 1.27 mm (34 ways, the
+    # same count as the original Voodoo 2 ribbon at a quarter of the length).
+    # Carries the slave card's scanlines to the master for scanline interleave.
+    # Populated: XKB X1322WV-2X17H-C40D30-E80, LCSC C5243658.
+    additions += [
+        option_placeholder(
+            "J12", "SLI 2x17 1.27mm", 127.0, 27.5, 24.0, 5.5,
+            "Connector_PinHeader_1.27mm.3dshapes/PinHeader_2x17_P1.27mm_Vertical.step",
+            rotate_z=90, offset_x=10.16, offset_y=0.635,
+        ),
+    ]
+
     return board + "".join(additions).replace("\n+", "\n") + "\n)\n"
 
 
 if __name__ == "__main__":
     OUT.write_text(build())
+    kicad_python = Path("/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3")
+    fitter = HERE / "fit_connector_footprints.py"
+    validator = HERE / "validate_connector_clearance.py"
+    if kicad_python.exists():
+        subprocess.run([str(kicad_python), str(fitter), str(OUT)], check=True)
+        subprocess.run([str(kicad_python), str(validator), str(OUT)], check=True)
+    else:
+        print("warning: KiCad Python not found; connector placeholders were not replaced")
     print(OUT)

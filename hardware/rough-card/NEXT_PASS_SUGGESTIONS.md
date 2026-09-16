@@ -54,7 +54,7 @@ carried $2.65; JLC charges $15.80). Four BOM lines change:
 | FPGA (rev A) | XC7A200T-2FBG484I `C494680`, $119.35 | XC7A100T-2FGG484I | `C410276` | $63.75 | 1,405 | −$55.60 |
 | DDR3L, 32-bit bus | 2× K4B4G1646E-BYMA `C500275`, $15.80 | 2× Winbond W632GU6NB-11, 2 Gbit x16 | `C3034991` | $11.10 | 1,418 | −$9.39 |
 | PCI bus switches | 3× SN74CB3T16210DGGR `C2674635`, $4.51, 1 in stock | 3× SN74CBTD16211DGGR | `C2674790` | $3.00 | 15 | −$4.52 |
-| VGA connectors | 2× EDAC 634-015-363-543 `C3099918`, $10.32, 0 in stock | 2× Kinghelm KH-HDR15P-F3.08 | `C3038673` | $0.28 | 310 | −$20.08 |
+| VGA connector | 2× EDAC 634-015-363-543 `C3099918`, $10.32, 0 in stock | 1× bidirectional Kinghelm KH-HDR15P-F3.08 | `C3038673` | $0.28 | 310 | −$20.36 |
 
 Rules attached to each swap:
 
@@ -102,11 +102,20 @@ CPL to confirm; the $272 quote is for the previous BOM.
 
 ## Highest-priority changes before a real schematic/layout pass
 
-1. **Verify the PCI edge geometry from the governing PCI mechanical drawing.**
-   The rough board uses an explicitly preliminary 1.27 mm pitch finger bank and
-   key. Confirm the datum, finger count/length, 5 V key position, bracket datum,
-   retention dimensions, keep-outs, 30° bevel depth, and finished 1.6 mm edge
-   thickness before ordering even a mechanical sample.
+1. **Finish the PCI bracket and manufacturing-detail pass.** The board envelope
+   is now 174.63 × 106.68 mm and the 5 V-only connector follows the PCI 2.x /
+   KiCad reference geometry: 1.27 mm pitch, 60 physical contacts per side,
+   A/B1–62 numbering with A/B50–51 keyed out, and the matching board notch.
+   The next pass still needs the chosen full-height bracket drawing, connector
+   shell datums, mounting/retention holes, component keep-outs, specified hard-
+   gold thickness, 30° bevel depth, and fab confirmation of the routed key-slot
+   radius. Make a bare mechanical sample before committing assembled boards.
+   Keep all silkscreen and assembly text out of the full gold-finger and bevel
+   region; manufacturing notes belong on a user/comment layer and in the
+   fabrication drawing instead.
+   The board body now steps up 7.24 mm on both sides of the 79.14 mm connector
+   tab, so PCB material does not continue along the motherboard insertion edge
+   beyond the PCI connector.
 
 2. **Move from “parts named” to “parts selected.”** Lock manufacturer part
    numbers and datasheets for the two DDR3L devices, HyperRAM, regulators, VGA
@@ -149,7 +158,7 @@ CPL to confirm; the $272 quote is for the previous BOM.
    before investing in routing; the cost delta may be small relative to the FPGA.
 
 9. **Separate analog video from digital and switch-mode power.** Keep the DAC,
-   relay, VGA connectors, terminations, and optional ADC at the bracket side with
+   relays, VGA connector, terminations, and ADC at the bracket side with
    a clean reference plane. Add explicit ESD, 75 Ω source/load networks, input
    protection, relay fail-safe state, and controlled return paths. Verify that
    the unpopulated ADC network presents negligible stub capacitance.
@@ -162,8 +171,8 @@ CPL to confirm; the $272 quote is for the previous BOM.
 11. **Add bring-up hooks.** Include JTAG, UART, FPGA DONE/INIT/PROGRAM, T113 boot
     recovery, rail current measurement links, test points for every supply,
     clock test pads, relay override, safe PCI reset isolation, and a manufacturing
-    test header. Make the default state passive VGA passthrough with all active
-    devices unconfigured.
+    test header. Default the VGA port to disconnected or protected input mode
+    while the FPGA is unconfigured; never enable the DAC during relay changes.
 
 12. **Plan thermal and mechanical validation.** Estimate FPGA junction
     temperature at the stated 7–9 W board budget inside a poorly ventilated ATX
@@ -345,7 +354,7 @@ but an electrical or mechanical calculation still controls final release.
 | DDR3L | 2× Winbond `W632GU6NB-11` | `C3034991` | candidate | route A14 so the footprint also takes the 4 Gbit alternate; MIG timing model |
 | PCI translation | 3× TI `SN74CBTD16211DGGR` | `C2674790` | candidate | stock is 15; enumerate PCI signals and OE groups; close 33 MHz timing |
 | VGA switching | 3× Omron `G6K-2F-Y DC5 BY OMZ/C` | `C231389` | selected | normally-closed RGB/H/V passthrough; coil drivers and flyback paths |
-| VGA input/output | 2× Kinghelm `KH-HDR15P-F3.08` | `C3038673` | candidate | freeze bracket and board-edge datum from the Kinghelm drawing |
+| Bidirectional VGA | 1× Kinghelm `KH-HDR15P-F3.08` | `C3038673` | candidate | freeze bracket and board-edge datum from the Kinghelm drawing; validate switched ADC/DAC networks |
 | HDMI output | SOFNG `HDMI-019S` | `C111617` | selected | shell stakes, bracket height, ESD and HPD/DDC circuits |
 | USB-A host | `902-131A1021D10100` | `C2344` | selected | wave-solder fixture and bracket opening |
 | Ethernet magjack | HANRUN `HR911105A` | `C12074` | selected | verify RTL8201F center taps, LED polarity and wave soldering |
@@ -354,12 +363,14 @@ but an electrical or mechanical calculation still controls final release.
 | UART service connector | JST `SM04B-SRSS-TB(LF)(SN)` | `C160404` | selected | assign GND, 3.3 V reference, TX and RX; do not back-power the card |
 | Rail test access | 1.0 mm plated soldermask-open pads | no BOM part | selected | one pad per rail plus nearby ground pads |
 | FPGA JTAG | JXTCONN `IDC2.0-2*7PZ`, 2 mm 2x7 shrouded | `C53207571` | candidate | Xilinx cable pinout; T113 access to the same pins |
-| Bench 5 V input | Korean Hroparts `DC-005C-20A`, 2.0 mm, 3 A | `C84007` | candidate | diode-OR or load switch against the slot rail; current budget for the 200T |
+| Bench 5 V input | none on card; powered PCI riser or fixture | — | removed | avoids a second 5 V inlet and back-feed/error case |
 
-The three DPDT relays provide six normally-closed changeover poles: five are used
-for RGB, HSync, and VSync, with one spare. This is intentionally fail-safe: when
-the card is unpowered, VGA input connects directly to VGA output. It also means
-the rough placement must grow from one relay placeholder to three.
+The three DPDT relays provide six changeover poles: five select RGB, HSync, and
+VSync between the ADC input network and DAC output network, with one spare. The
+single connector is not a passive passthrough: input mode captures VGA into the
+FPGA for DVI/HDMI output, while output mode drives VGA from the FPGA/DAC. During
+reset and switching, both output drivers must remain disabled until the relay
+state and the mode-specific 75-ohm networks are settled.
 
 The bracket connectors are intentionally through-hole or shell-staked where that
 improves mechanical strength. The JLC quote must therefore include wave soldering
@@ -413,12 +424,9 @@ Consequences for the next pass:
   the Xilinx Platform Cable pinout. Route TCK/TMS/TDI/TDO short. The T113
   should reach the same pins so it can be the on-board programmer under
   OpenOCD later.
-- Bench 5 V input J10 added: Korean Hroparts `DC-005C-20A` (`C84007`), 2.0 mm
-  centre pin, 3 A, on the top edge beside the power block. Diode-OR or switch
-  it against the slot rail through the load switch Q10 so a bench supply never
-  back-feeds the slot, and size it for the 200T build. A 5.08 mm 4-pin
-  disk-drive power header is the alternative if an ATX supply is preferred on
-  the bench.
+- Bench-power proposal J10 was removed on 2026-09-17. Use a powered PCI riser
+  or dedicated fixture for out-of-system work so the card has only one 5 V
+  power path.
 - Bus-switch enables pulled inactive and released by DONE, so an unconfigured
   card looks empty to the slot.
 - The 5 V PCI audit in item 4 becomes an ordering gate: the first card carries
@@ -460,3 +468,30 @@ configuration (PROGRAM_B, INIT_B, DONE, slave-serial data or CCLK), 2 UART,
 the rest for LEDs, relay override and I2C. USB, QSPI and SWD are dedicated
 pins. Route the 3.3 uH inductor and its capacitors per the RP2350 hardware
 design guide; the chip's 1.1 V core is generated on-chip.
+
+## Populated 3D placement review — 2026-09-17
+
+The rev A pricing board now renders 349 of its 351 footprints with package-level
+3D bodies.  J1 is the modeled copper edge itself, and L1 remains deliberately
+unmodeled until its input-filter topology and package are selected.  Principal
+ICs use the selected package family; connector bodies and the RP2350B use close
+KiCad-library equivalents where an exact manufacturer STEP file is not
+available.
+
+The initial populated render exposed a bracket-layout blocker. Actual library
+footprints confirmed that two HD15s, HDMI-A, USB-A and RJ45 required 115.77 mm
+of vertical courtyard before gaps, but only about 99.44 mm is available. Rev A
+now uses one bidirectional VGA followed by HDMI-A, USB-A and RJ45 on the bracket.
+The four courtyards plus three 2 mm gaps occupy 89.86 mm, and an automated check
+rejects connector/component overlaps. See `rev-a-pricing/CONNECTOR_CLEARANCE.md`.
+Before routing, verify the chosen Kinghelm, HDMI, USB-A and HANRUN drawings and
+the full-height PCI bracket datum.  The installed KiCad library has no exact
+HR911105A STEP body, so J6 uses its exact footprint with a size-compatible
+Molex body.
+
+The J10 barrel jack has been removed from the production-card population.  It
+was only a proposed out-of-system bench-power input.  Power development should
+instead use a powered PCI riser or a dedicated fixture, which avoids a second
+5 V inlet and the associated back-feed/error case on the card. The VGA, HDMI,
+USB-A and RJ45 3D bodies are now aligned along the bracket with their cable
+openings facing outward.
