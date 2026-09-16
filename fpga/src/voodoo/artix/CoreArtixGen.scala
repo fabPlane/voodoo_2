@@ -34,3 +34,21 @@ object CoreArtixGen extends App {
     )
   GenSupport.mirrorRomSidecars(targetDirectory, report.toplevelName)
 }
+
+object AmdAc701Gen extends App {
+  val targetDirectory = "rtl/artix"
+  val report = ArtixGenSupport
+    .verilog(targetDirectory)
+    .generate(
+      AmdAc701(
+        Config
+          .voodoo1()
+          .copy(
+            useFbWriteBuffer = true,
+            fbWriteBufferLineWords = 256,
+            useFbReadCache = true
+          )
+      )
+    )
+  GenSupport.mirrorRomSidecars(targetDirectory, report.toplevelName)
+}
