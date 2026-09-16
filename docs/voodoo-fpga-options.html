@@ -154,7 +154,7 @@
   <table>
     <tr><th>Block</th><th>Parts</th><th class="num">Qty 100</th></tr>
     <tr><td>DDR3, 1 GB</td><td>2× 4 Gbit x16 DDR3L, 32-bit bus</td><td class="num">$22</td></tr>
-    <tr><td>PSRAM, 64 MB</td><td>4× APS12808L 128 Mbit OPI</td><td class="num">$9</td></tr>
+    <tr><td>HyperRAM, 32 MB</td><td>4× ISSI IS66WVH8M8BLL 64 Mbit HyperBus, LCSC stock</td><td class="num">$7</td></tr>
     <tr><td>PCI front end</td><td>3× SN74CBTD16211 5V bus switches</td><td class="num">$5</td></tr>
     <tr><td>Power</td><td>bucks for core, aux, DDR, 3.3V; VTT; all from the slot's 5V</td><td class="num">$8</td></tr>
     <tr><td>Config flash + clock</td><td>128 Mbit QSPI, 50 MHz oscillator</td><td class="num">$2.30</td></tr>
@@ -250,7 +250,7 @@
     </div>
     <div>
       <h3>With 7-series block RAM</h3>
-      <p>The 200T's 13 Mbit holds one colour buffer plus depth. The back buffer goes to PSRAM or DDR3. Workable, and the ModRetro M64 does exactly this with PSRAM, but it is a design cost the cheaper chips carry.</p>
+      <p>The 200T's 13 Mbit holds one colour buffer plus depth. The colour buffers go to HyperRAM (ISSI IS66WVH8M8BLL, chosen 2026-09-16) with textures in DDR3. Workable, and the ModRetro M64 does the same with PSRAM, but it is a design cost the cheaper chips carry.</p>
     </div>
   </div>
 </section>

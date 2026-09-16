@@ -107,7 +107,7 @@
     <div><div class="k">Code touched</div><div class="v">≈ 13%</div><div class="n">About 2,200 of 16,960 lines are DE10-specific. The Voodoo pipeline is not among them.</div></div>
     <div><div class="k">Altera primitives in the core</div><div class="v">0</div><div class="n">No BlackBox, no altsyncram, no attributes. One comment about a Quartus inference quirk.</div></div>
     <div><div class="k">First bitstream</div><div class="v">2 wks</div><div class="n">Reproduce the DE10 memory architecture on a dedicated DDR3 through MIG.</div></div>
-    <div><div class="k">Full port</div><div class="v">6–12 wks</div><div class="n">Including the BRAM and PSRAM memory split and the PCIe dev-board host path. One FPGA engineer.</div></div>
+    <div><div class="k">Full port</div><div class="v">6–12 wks</div><div class="n">Including the BRAM and HyperRAM memory split and the PCIe dev-board host path. One FPGA engineer.</div></div>
   </div>
   <p>The port is a wrapper job. The core exposes generic SpinalHDL BMB buses on every side, the video output is parallel RGB, and the whole regression suite runs under Verilator against the generic core, so every replacement backend can be proven in simulation before it touches hardware.</p>
 </section>
@@ -172,7 +172,7 @@
     <rect x="700" y="172" width="240" height="34" class="blk-new"/>
     <text x="820" y="194" class="t" text-anchor="middle">BMB → AXI4 → MIG DDR3 (lib bridge)</text>
     <rect x="700" y="214" width="240" height="34" class="blk-new"/>
-    <text x="820" y="236" class="t" text-anchor="middle">BMB → PSRAM / HyperRAM controller</text>
+    <text x="820" y="236" class="t" text-anchor="middle">BMB → HyperBus (open MJoergen controller)</text>
     <rect x="700" y="256" width="240" height="34" class="blk-new"/>
     <text x="820" y="278" class="t" text-anchor="middle">BmbOnChipRam · depth in BRAM (lib)</text>
     <rect x="700" y="298" width="240" height="34" class="blk-new"/>
@@ -216,7 +216,7 @@
   <div class="table-wrap">
   <table>
     <tr><th>DE10 piece</th><th class="num">Lines</th><th>Artix replacement</th><th>Effort</th></tr>
-    <tr><td class="name"><code>De10MemBackend</code>: six BMB→Avalon-MM bridges into the HPS DDR3, with burst splitting, range checks and a two-deep read queue</td><td class="num">704</td><td>Textures: BMB→AXI4 via the library's <code>BmbToAxi4SharedBridge</code> into MIG. Depth: <code>BmbOnChipRam</code>. Colour: a new BMB→PSRAM controller.</td><td>1 week for AXI and BRAM; 1 to 3 weeks for the PSRAM controller</td></tr>
+    <tr><td class="name"><code>De10MemBackend</code>: six BMB→Avalon-MM bridges into the HPS DDR3, with burst splitting, range checks and a two-deep read queue</td><td class="num">704</td><td>Textures: BMB→AXI4 via the library's <code>BmbToAxi4SharedBridge</code> into MIG. Depth: <code>BmbOnChipRam</code>. Colour: a BMB wrapper around the open MJoergen HyperRAM controller, four instances.</td><td>1 week for AXI and BRAM; 1 to 2 weeks to wrap and calibrate the HyperRAM controller</td></tr>
     <tr><td class="name"><code>CoreDe10</code>: <code>H2fLwMmio</code> and <code>H2fLwToBmbBridge</code>, the ARM lightweight-bridge to host-BMB adapter, plus address map and status plumbing</td><td class="num">425</td><td>PCI target→BMB on the card (its own project, planned). SPI→BMB for the T113. AXI-lite BAR→BMB on the PCIe dev board for phase 1.</td><td>SPI path 2 days; PCIe BAR 1 to 2 weeks; PCI target separate</td></tr>
     <tr><td class="name"><code>De10PlatformTop.v</code>: Quartus top with two PLLs, <code>altddio_out</code> for the HDMI clock, HPS I2C for the ADV7513, Qsys SoC instance</td><td class="num">350</td><td><code>ArtixTop.v</code>: MMCM, MIG instance, TMDS encoder plus OSERDES for HDMI (open cores exist), DAC pins straight out.</td><td>3 to 4 days</td></tr>
     <tr><td class="name"><code>De10DdrBenchTop</code>: DDR stress and visibility bench</td><td class="num">551</td><td>Keep the idea, retarget to MIG. Optional.</td><td>2 days if wanted</td></tr>
@@ -233,7 +233,7 @@
   <ol class="steps">
     <li><div><div class="t">Reproduce the DE10 memory architecture on the Artix</div><div class="d">All six BMB ports through one arbiter into MIG DDR3. Generate an <code>ArtixTop</code> the way <code>De10TopGen</code> does, add it as a <code>SIM_INTERFACE=artix</code> variant so the Verilator suite runs against it, then build in Vivado. This already beats the DE10, because the DDR3 is no longer shared with the ARM.</div><div class="x"><b>exit:</b> Glide tests pass on the dev board through the PCIe BAR; first bitstream in about two weeks</div></div></li>
     <li><div><div class="t">Move the depth buffer into BRAM</div><div class="d"><code>BmbOnChipRam</code> behind the two aux ports. Verify against the traces in simulation first. Measure the Gouraud+fog+alpha+Z small-triangle row from the README table again.</div><div class="x"><b>exit:</b> the 20% row moves toward the flat-shaded 32% row or better</div></div></li>
-    <li><div><div class="t">Move colour buffers to PSRAM</div><div class="d">Write or adopt the controller, size the write buffer (<code>fbWriteBufferLineWords</code>, <code>useFbWriteBuffer</code> are already config knobs), and run the DDR bench idea against it.</div><div class="x"><b>exit:</b> every row of the performance table at or above the original Voodoo 1</div></div></li>
+    <li><div><div class="t">Move colour buffers to HyperRAM</div><div class="d">Wrap the MJoergen controller in BMB, size the write buffer (<code>fbWriteBufferLineWords</code>, <code>useFbWriteBuffer</code> are already config knobs), and run the DDR bench idea against it. The ISSI part is the device that controller was developed on, so the PHY constraints carry over.</div><div class="x"><b>exit:</b> every row of the performance table at or above the original Voodoo 1</div></div></li>
     <li><div><div class="t">Run the texture cache sizing</div><div class="d"><code>tools/TmuTextureCacheBenchmark.scala</code> exists for this. Fix the BRAM split between depth buffer, texture caches and FIFOs with numbers, before the card layout is frozen.</div><div class="x"><b>exit:</b> BRAM budget on the 200T documented</div></div></li>
   </ol>
 </section>
@@ -242,8 +242,8 @@
   <h2>Decisions to make now <span class="tag">they change the board</span></h2>
   <div class="cols">
     <div>
-      <h3>HyperRAM instead of OPI PSRAM</h3>
-      <p>Open HyperBus controllers exist and are proven on ULX3S-class boards. Open controllers for the APS12808L's octal DDR interface are scarce, and writing that PHY on Artix-7 is real work. Infineon's 64 Mbit HyperRAM is about $5 a chip. Paying $2 more per chip to skip a DDR PHY is the right trade.</p>
+      <h3>HyperRAM instead of OPI PSRAM (decided 2026-09-16)</h3>
+      <p>The APS12808L is an OPI Xccela device with no open controller, and JLC has no stock. The card now uses the ISSI IS66WVH8M8BLL-100B1LI: 64 Mbit HyperBus, 3.0V, 100 MHz, about $1.92 in LCSC stock, and the exact part the MJoergen controller was developed on for the MEGA65. Four chips give 32 MB against the Voodoo 2's 4 MB frame buffer; the four channels are for latency, not size. The Infineon S27KL0642 is the same-footprint 200 MHz upgrade.</p>
     </div>
     <div>
       <h3>Phase 1 host path</h3>
@@ -260,7 +260,7 @@
     <tr><td>Artix top, MIG path, Vivado project, first bitstream on a dev board</td><td class="num">2 to 3</td><td>MIG configuration and AXI burst behaviour; verified in simulation first</td></tr>
     <tr><td>PCIe BAR host path and runtime shim</td><td class="num">1 to 2</td><td>Xilinx PCIe IP setup; well documented</td></tr>
     <tr><td>Depth buffer in BRAM</td><td class="num">1</td><td>BRAM budget against the texture cache</td></tr>
-    <tr><td>Colour buffers in PSRAM or HyperRAM</td><td class="num">1 to 3</td><td>Controller availability; the reason to pick HyperRAM</td></tr>
+    <tr><td>Colour buffers in HyperRAM</td><td class="num">1 to 2</td><td>Read-path calibration on Artix-7; the open controller ships constraints for it</td></tr>
     <tr><td>TMDS HDMI output</td><td class="num">0.5 to 1</td><td>none of note; open encoders exist</td></tr>
     <tr><td>T113 SPI link and deploy scripts</td><td class="num">1</td><td>none of note</td></tr>
     <tr class="total"><td>Total, no changes to the Voodoo pipeline</td><td class="num">6 to 12</td><td></td></tr>

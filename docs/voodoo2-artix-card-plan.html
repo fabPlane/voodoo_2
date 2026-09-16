@@ -138,7 +138,8 @@
     <b>rev B</b> · 2026-09-16<br>
     replaces the Kria K26 plan (rev A)<br>
     target: Voodoo 1 first, Voodoo 2 second<br>
-    v1 hardware: ADC footprint <b>unpopulated</b>
+    v1 hardware: ADC footprint <b>unpopulated</b><br>
+    memory: ISSI HyperRAM decided 2026-09-16
   </div>
 </header>
 
@@ -150,7 +151,7 @@
     <div><div class="k">Host bus</div><div class="v">PCI 32-bit, 33 MHz, 5V</div><div class="n">Target-only, like the original. Bus switches bridge 5V signalling to the FPGA's 3.3V banks.</div></div>
     <div><div class="k">Video</div><div class="v">2× VGA + 1× HDMI</div><div class="n">VGA IN from the 2D card, VGA OUT via relay or DAC, HDMI straight from fabric TMDS.</div></div>
     <div><div class="k">Capture ADC</div><div class="v">Footprint only on v1</div><div class="n">TVP7002 stays unpopulated until 3D works. Pins, terminations and the capture port are reserved so v2 is firmware.</div></div>
-    <div><div class="k">Memory</div><div class="v">BRAM + PSRAM + DDR3</div><div class="n">Depth and tile cache in BRAM, colour buffers in four PSRAM channels, textures in 1 GB DDR3 behind a cache.</div></div>
+    <div><div class="k">Memory</div><div class="v">BRAM + HyperRAM + DDR3</div><div class="n">Depth and tile cache in BRAM, colour buffers in four ISSI HyperRAM channels (IS66WVH8M8BLL-100B1LI, 3.0V, 100 MHz, LCSC stock), textures in 1 GB DDR3 behind a cache.</div></div>
   </div>
   <p style="margin-top:14px">Why not the Kria K26 from rev A: $340 a board at qty 100, against a $300 target. The chip survey that led here is on the <a href="https://claude.ai/artifact/Lf62KtUa85aEHGBhXYxpqE">FPGA options page</a>.</p>
 </section>
@@ -176,9 +177,9 @@
 
     <!-- PSRAM chips -->
     <rect x="86" y="426" width="132" height="58" class="blk-pix"/>
-    <text x="152" y="447" class="t-b" text-anchor="middle">4× PSRAM</text>
-    <text x="152" y="462" class="t-s" text-anchor="middle">APS12808L, 64 MB</text>
-    <text x="152" y="476" class="t-s" text-anchor="middle">4 channels, ~1.6 GB/s</text>
+    <text x="152" y="447" class="t-b" text-anchor="middle">4× HyperRAM</text>
+    <text x="152" y="462" class="t-s" text-anchor="middle">IS66WVH8M8BLL, 32 MB</text>
+    <text x="152" y="476" class="t-s" text-anchor="middle">4 ch · 100 MHz · ~560 MB/s</text>
     <path d="M218 455 H240 V380 H268" class="w-pix"/>
 
     <!-- power -->
@@ -227,9 +228,9 @@
     <!-- row C: memory subsystem -->
     <rect x="268" y="320" width="374" height="86" class="blk-pix"/>
     <text x="455" y="342" class="t-b" text-anchor="middle">Memory subsystem</text>
-    <text x="455" y="360" class="t-s" text-anchor="middle">depth buffer + tile cache in BRAM · colour buffers in PSRAM</text>
+    <text x="455" y="360" class="t-s" text-anchor="middle">depth buffer + tile cache in BRAM · colour buffers in HyperRAM</text>
     <text x="455" y="375" class="t-s" text-anchor="middle">texture cache per TMU in BRAM · textures in DDR3</text>
-    <text x="455" y="390" class="t-s" text-anchor="middle">4× PSRAM controllers · arbitration</text>
+    <text x="455" y="390" class="t-s" text-anchor="middle">4× HyperBus controllers (open, MJoergen) · arbitration</text>
     <path d="M455 300 V320" class="w-pix"/>
 
     <!-- row D: config/link + MIG -->
@@ -351,15 +352,15 @@
 
 <section>
   <h2>Memory <span class="tag">where the original's three EDO buses go</span></h2>
-  <p>The Artix-7 has 13.1 Mbit of block RAM, about 1.6 MB. That is not enough for two colour buffers plus depth at 640×480, so the layout splits by access pattern. The read-modify-write path stays on chip; the streaming paths go to PSRAM and DDR3.</p>
+  <p>The Artix-7 has 13.1 Mbit of block RAM, about 1.6 MB. That is not enough for two colour buffers plus depth at 640×480, so the layout splits by access pattern. The read-modify-write path stays on chip; the streaming paths go to HyperRAM and DDR3. The HyperRAM is the ISSI IS66WVH8M8BLL-100B1LI: 64 Mbit, HyperBus, 3.0V, 100 MHz, in LCSC stock at about $1.92, and the device the open MJoergen controller was developed on. The Infineon S27KL0642 is the same-footprint, same-voltage 200 MHz upgrade if ever needed.</p>
   <div class="table-wrap">
   <table>
     <tr><th>Buffer</th><th>Original Voodoo 2</th><th>This card</th><th>Why</th></tr>
     <tr><td>Depth / alpha aux, 600 KB</td><td>FBI EDO, 64-bit, 90 MHz</td><td>BRAM</td><td>per-pixel read-modify-write is the latency-critical path</td></tr>
-    <tr><td>Colour front + back, 1.2 MB</td><td>FBI EDO</td><td>4× PSRAM, one channel per buffer half</td><td>short fixed latency, ~400 MB/s per chip; the M64 approach</td></tr>
+    <tr><td>Colour front + back, 1.2 MB</td><td>FBI EDO</td><td>4× HyperRAM, one channel per buffer half</td><td>tACC 35 ns; about 140 MB/s effective per chip in 64-byte bursts, 3× the worst-case colour traffic</td></tr>
     <tr><td>Textures, 2 to 4 MB per TMU</td><td>one EDO bus per TMU</td><td>DDR3 via MIG, BRAM cache per TMU</td><td>bandwidth is ample; the cache hides DDR3 latency</td></tr>
     <tr><td>Tile cache, FIFOs</td><td>—</td><td>BRAM, remaining ~0.8 MB</td><td>deep FIFOs fix the small-triangle stall seen on the DE10</td></tr>
-    <tr><td>800×600 and above</td><td>FBI EDO</td><td>depth spills to PSRAM</td><td>measure; PSRAM latency is still far below shared DDR</td></tr>
+    <tr><td>800×600 and above</td><td>FBI EDO</td><td>depth spills to HyperRAM</td><td>measure; HyperRAM latency is still far below shared DDR</td></tr>
   </table>
   </div>
 </section>
@@ -388,7 +389,7 @@
     <tr><th>Item</th><th>Part</th><th class="num">Qty 5</th><th class="num">Qty 100</th></tr>
     <tr><td>FPGA</td><td>XC7A200T-2FBG484 (LCSC, grey channel)</td><td class="num">$95</td><td class="num">$80</td></tr>
     <tr><td>DDR3, 1 GB</td><td>2× 4 Gbit x16 DDR3L, 32-bit bus</td><td class="num">$30</td><td class="num">$22</td></tr>
-    <tr><td>PSRAM, 64 MB</td><td>4× APS12808L 128 Mbit OPI</td><td class="num">$11</td><td class="num">$9</td></tr>
+    <tr><td>HyperRAM, 32 MB</td><td>4× ISSI IS66WVH8M8BLL-100B1LI, LCSC C1349096</td><td class="num">$8</td><td class="num">$7</td></tr>
     <tr><td>Companion CPU</td><td>T113-S3, SPI NAND, rails, crystal, USB-A, Ethernet PHY</td><td class="num">$28</td><td class="num">$25</td></tr>
     <tr><td>PCI front end</td><td>3× SN74CBTD16211 bus switches</td><td class="num">$6</td><td class="num">$5</td></tr>
     <tr><td>Power</td><td>bucks for 1.0V, 1.8V, 1.5V, 3.3V; VTT regulator</td><td class="num">$10</td><td class="num">$8</td></tr>
@@ -407,8 +408,8 @@
 <section>
   <h2>Phases <span class="tag">each ends with something that runs</span></h2>
   <ol class="phases">
-    <li><div><div class="ph-t">Port SpinalVoodoo to an Artix-7 200T PCIe dev board</div><div class="ph-d">An Alinx or QMTech 200T board with DDR3 and PCIe, about $200 to $300, in a Linux PC. Avalon ports become AXI and MIG; the DE10 MMIO runtime maps the PCIe BARs through UIO, which is the same memory-mapped model. Move the framebuffer into BRAM and PSRAM and measure the small-triangle numbers again.</div><div class="ph-exit"><b>exit:</b> Quake and Screamer 2 run at or above real Voodoo 1 rates; real LUT and BRAM usage known</div></div></li>
-    <li><div><div class="ph-t">Card rev B</div><div class="ph-d">PCI target with config space, T113, relay, DAC, HDMI, PSRAM, ADC footprint. Bring up on a Socket 7 board with DOS Glide and the Win9x reference drivers.</div><div class="ph-exit"><b>exit:</b> unmodified 3dfx Voodoo 1 drivers enumerate and run the card</div></div></li>
+    <li><div><div class="ph-t">Port SpinalVoodoo to an Artix-7 200T PCIe dev board</div><div class="ph-d">An Alinx or QMTech 200T board with DDR3 and PCIe, about $200 to $300, in a Linux PC. Avalon ports become AXI and MIG; the DE10 MMIO runtime maps the PCIe BARs through UIO, which is the same memory-mapped model. Move the framebuffer into BRAM and HyperRAM and measure the small-triangle numbers again.</div><div class="ph-exit"><b>exit:</b> Quake and Screamer 2 run at or above real Voodoo 1 rates; real LUT and BRAM usage known</div></div></li>
+    <li><div><div class="ph-t">Card rev B</div><div class="ph-d">PCI target with config space, T113, relay, DAC, HDMI, HyperRAM, ADC footprint. Bring up on a Socket 7 board with DOS Glide and the Win9x reference drivers.</div><div class="ph-exit"><b>exit:</b> unmodified 3dfx Voodoo 1 drivers enumerate and run the card</div></div></li>
     <li><div><div class="ph-t">Voodoo 2 extensions</div><div class="ph-d">Second TMU with multi-texture chaining, cmdFifo triangle packets, memory FIFO, 128-entry PCI FIFO, 90 MHz timing closure. Validate against MAME and 86Box traces.</div><div class="ph-exit"><b>exit:</b> Voodoo 2 drivers run; core under 75K LUT6</div></div></li>
     <li><div><div class="ph-t">v2 firmware</div><div class="ph-d">Place the ADC. Capture, scaler and menu in fabric, controlled from the T113. HDMI now shows the whole session.</div><div class="ph-exit"><b>exit:</b> one HDMI cable from a 1998 PC</div></div></li>
   </ol>
