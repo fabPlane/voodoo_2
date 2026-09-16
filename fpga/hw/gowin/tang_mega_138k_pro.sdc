@@ -1,0 +1,6 @@
+create_clock -name clk50 -period 20 [get_ports {clk50}]
+create_clock -name clk100 -period 10 [get_nets {clk100}]
+create_clock -name clk400 -period 2.5 [get_nets {clk400}]
+create_clock -name clk_hdmi_serial -period 7.936 [get_nets {clk_hdmi_serial}]
+create_clock -name clk_hdmi_pixel -period 39.68 [get_nets {clk_hdmi_pixel}]
+set_clock_groups -asynchronous -group [get_clocks {clk50}] -group [get_clocks {clk100}] -group [get_clocks {clk400}] -group [get_clocks {clk_hdmi_serial}] -group [get_clocks {clk_hdmi_pixel}]

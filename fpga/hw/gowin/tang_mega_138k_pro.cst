@@ -1,0 +1,122 @@
+// Physical constraints for Sipeed Tang Mega 138K Pro Dock
+// (GW5AST-LV138FPG676A). Pin names from LiteX sipeed_tang_mega_138k_pro
+// and Sipeed's published SoM/dock mapping.
+
+IO_LOC "clk50" P16;
+IO_PORT "clk50" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+IO_LOC "pcie_rstn" L23;
+IO_PORT "pcie_rstn" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "led_n[0]" J14;
+IO_LOC "led_n[1]" R26;
+IO_LOC "led_n[2]" L20;
+IO_LOC "led_n[3]" M25;
+IO_PORT "led_n[0]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE;
+IO_PORT "led_n[1]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE;
+IO_PORT "led_n[2]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE;
+IO_PORT "led_n[3]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE;
+
+// DVI TX / HDMI out on dock J1. LiteX reports DVI_TX flaky on some docks;
+// if the monitor stays dark, swap these to the DVI_RX pair (see README).
+IO_LOC "tmds_clk_p" Y22;
+IO_LOC "tmds_clk_n" Y23;
+IO_LOC "tmds_data_p[0]" AB24;
+IO_LOC "tmds_data_n[0]" AC24;
+IO_LOC "tmds_data_p[1]" V24;
+IO_LOC "tmds_data_n[1]" W24;
+IO_LOC "tmds_data_p[2]" AA22;
+IO_LOC "tmds_data_n[2]" AA23;
+IO_LOC "tmds_hpd" T15;
+IO_PORT "tmds_clk_p" IO_TYPE=LVCMOS33D DRIVE=8 PULL_MODE=NONE;
+IO_PORT "tmds_data_p[0]" IO_TYPE=LVCMOS33D DRIVE=8 PULL_MODE=NONE;
+IO_PORT "tmds_data_p[1]" IO_TYPE=LVCMOS33D DRIVE=8 PULL_MODE=NONE;
+IO_PORT "tmds_data_p[2]" IO_TYPE=LVCMOS33D DRIVE=8 PULL_MODE=NONE;
+IO_PORT "tmds_hpd" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// DDR3, H5TQ4G63EFR, 32-bit, SSTL15.
+IO_LOC "O_ddr_addr[0]" N1;
+IO_LOC "O_ddr_addr[1]" R1;
+IO_LOC "O_ddr_addr[2]" R2;
+IO_LOC "O_ddr_addr[3]" N2;
+IO_LOC "O_ddr_addr[4]" P1;
+IO_LOC "O_ddr_addr[5]" T2;
+IO_LOC "O_ddr_addr[6]" N4;
+IO_LOC "O_ddr_addr[7]" U1;
+IO_LOC "O_ddr_addr[8]" T4;
+IO_LOC "O_ddr_addr[9]" T3;
+IO_LOC "O_ddr_addr[10]" M1;
+IO_LOC "O_ddr_addr[11]" P4;
+IO_LOC "O_ddr_addr[12]" N3;
+IO_LOC "O_ddr_addr[13]" U2;
+IO_LOC "O_ddr_addr[14]" U5;
+IO_LOC "O_ddr_ba[0]" M4;
+IO_LOC "O_ddr_ba[1]" L5;
+IO_LOC "O_ddr_ba[2]" K3;
+IO_LOC "O_ddr_ras_n" H2;
+IO_LOC "O_ddr_cas_n" H1;
+IO_LOC "O_ddr_we_n" J3;
+IO_LOC "O_ddr_cs_n" L4;
+IO_LOC "O_ddr_dqm[0]" F4;
+IO_LOC "O_ddr_dqm[1]" H9;
+IO_LOC "O_ddr_dqm[2]" E3;
+IO_LOC "O_ddr_dqm[3]" A3;
+IO_LOC "IO_ddr_dq[0]" G4;
+IO_LOC "IO_ddr_dq[1]" J6;
+IO_LOC "IO_ddr_dq[2]" L8;
+IO_LOC "IO_ddr_dq[3]" G5;
+IO_LOC "IO_ddr_dq[4]" K7;
+IO_LOC "IO_ddr_dq[5]" J5;
+IO_LOC "IO_ddr_dq[6]" K8;
+IO_LOC "IO_ddr_dq[7]" K6;
+IO_LOC "IO_ddr_dq[8]" E6;
+IO_LOC "IO_ddr_dq[9]" H8;
+IO_LOC "IO_ddr_dq[10]" H6;
+IO_LOC "IO_ddr_dq[11]" G8;
+IO_LOC "IO_ddr_dq[12]" D6;
+IO_LOC "IO_ddr_dq[13]" F8;
+IO_LOC "IO_ddr_dq[14]" G6;
+IO_LOC "IO_ddr_dq[15]" F7;
+IO_LOC "IO_ddr_dq[16]" C4;
+IO_LOC "IO_ddr_dq[17]" F3;
+IO_LOC "IO_ddr_dq[18]" B4;
+IO_LOC "IO_ddr_dq[19]" E5;
+IO_LOC "IO_ddr_dq[20]" D3;
+IO_LOC "IO_ddr_dq[21]" D5;
+IO_LOC "IO_ddr_dq[22]" A4;
+IO_LOC "IO_ddr_dq[23]" D4;
+IO_LOC "IO_ddr_dq[24]" E1;
+IO_LOC "IO_ddr_dq[25]" A2;
+IO_LOC "IO_ddr_dq[26]" G2;
+IO_LOC "IO_ddr_dq[27]" C2;
+IO_LOC "IO_ddr_dq[28]" F2;
+IO_LOC "IO_ddr_dq[29]" E2;
+IO_LOC "IO_ddr_dq[30]" G1;
+IO_LOC "IO_ddr_dq[31]" D1;
+IO_LOC "IO_ddr_dqs[0]" J4;
+IO_LOC "IO_ddr_dqs_n[0]" H4;
+IO_LOC "IO_ddr_dqs[1]" H7;
+IO_LOC "IO_ddr_dqs_n[1]" G7;
+IO_LOC "IO_ddr_dqs[2]" B5;
+IO_LOC "IO_ddr_dqs_n[2]" A5;
+IO_LOC "IO_ddr_dqs[3]" C1;
+IO_LOC "IO_ddr_dqs_n[3]" B1;
+IO_LOC "O_ddr_clk" M2;
+IO_LOC "O_ddr_clk_n" L2;
+IO_LOC "O_ddr_cke" L3;
+IO_LOC "O_ddr_odt" J1;
+IO_LOC "O_ddr_reset_n" N8;
+
+IO_PORT "O_ddr_addr[0]" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_ba[0]" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_ras_n" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_cas_n" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_we_n" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_cs_n" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_dqm[0]" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "IO_ddr_dq[0]" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "IO_ddr_dqs[0]" IO_TYPE=SSTL15D DRIVE=8 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_clk" IO_TYPE=SSTL15D DRIVE=8 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_cke" IO_TYPE=SSTL15 DRIVE=4 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_odt" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;
+IO_PORT "O_ddr_reset_n" IO_TYPE=SSTL15 DRIVE=12 PULL_MODE=NONE BANK_VCCIO=1.5;

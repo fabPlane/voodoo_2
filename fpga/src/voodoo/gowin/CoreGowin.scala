@@ -1,0 +1,103 @@
+package voodoo.gowin
+
+import spinal.core._
+import spinal.lib._
+import spinal.lib.bus.amba4.axi._
+import spinal.lib.bus.amba4.axilite._
+import spinal.lib.bus.bmb._
+import voodoo.{Config, Core}
+import voodoo.artix.{AxiLite4ToBmbBridge, BmbToAxi4Mem, CoreArtix}
+import voodoo.hdmi.HdmiScanoutPort
+
+/** Gowin wrapper around Core. Same host and memory contracts as CoreArtix:
+  * AXI4-Lite for the PCIe BAR, AXI4 for framebuffer and texture traffic into
+  * the Gowin DDR3 controller, parallel RGB for the DVI TX IP.
+  *
+  * Texture AXI addresses are relocated to GowinAddressMap.texMemBase so a
+  * single DDR3 controller can hold both colour/depth and textures.
+  */
+object CoreGowin {
+  val barAddressWidth = CoreArtix.barAddressWidth
+  val axiBurstLog2 = CoreArtix.axiBurstLog2
+
+  def fbAxiConfig(c: Config) = CoreArtix.fbAxiConfig(c)
+  def texAxiConfig(c: Config) = CoreArtix.texAxiConfig(c)
+}
+
+case class CoreGowin(c: Config) extends Component {
+  val io = new Bundle {
+    val bar = slave(AxiLite4(AxiLite4ToBmbBridge.axiConfig(CoreGowin.barAddressWidth)))
+    val memFb = master(Axi4(CoreGowin.fbAxiConfig(c)))
+    val memTex = master(Axi4(CoreGowin.texAxiConfig(c)))
+    val hdmi = master(HdmiScanoutPort(c))
+    val hostWedged = out Bool ()
+  }
+
+  val core = Core(c)
+  val barBridge = AxiLite4ToBmbBridge(CoreGowin.barAddressWidth, Core.cpuBmbParams)
+
+  val fbArbiter = BmbArbiter(
+    inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
+    outputParameter = Core.fbMemBmbParams(c),
+    lowerFirstPriority = true
+  )
+  val fbAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), CoreGowin.axiBurstLog2)
+  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreGowin.axiBurstLog2)
+  val texReloc = Axi4AddressRelocate(
+    CoreGowin.texAxiConfig(c),
+    GowinAddressMap.texMemBase
+  )
+
+  io.bar <> barBridge.io.axi
+  core.io.cpuBus <> barBridge.io.cpuBus
+  io.hostWedged := barBridge.io.wedged
+
+  fbArbiter.io.inputs(0) <> core.io.fbMemWrite
+  fbArbiter.io.inputs(1) <> core.io.fbColorWriteMem
+  fbArbiter.io.inputs(2) <> core.io.fbAuxWriteMem
+  fbArbiter.io.inputs(3) <> core.io.fbColorReadMem
+  fbArbiter.io.inputs(4) <> core.io.fbAuxReadMem
+  fbAxi.io.input <> fbArbiter.io.output
+  texAxi.io.input <> core.io.texMem
+  io.memFb << fbAxi.io.output
+  texReloc.io.input << texAxi.io.output
+  io.memTex << texReloc.io.output
+
+  core.io.statusInputs.vRetrace := core.io.hdmi.status.newFrame
+  core.io.statusInputs.memFifoFree := 0xffff
+  core.io.statusInputs.pciInterrupt := False
+  core.io.hdmi.clock := io.hdmi.clock
+  core.io.hdmi.reset := io.hdmi.reset
+  io.hdmi.video := core.io.hdmi.video
+  io.hdmi.status := core.io.hdmi.status
+  io.hdmi.underflow := core.io.hdmi.underflow
+  io.hdmi.fifoLevel := core.io.hdmi.fifoLevel
+
+  core.io.fbBaseAddr := GowinAddressMap.fbMemBase
+  core.io.flushFbCaches := False
+}
+
+/** Adds a constant to AXI4 AW/AR addresses. Used to park textures above the
+  * framebuffer in the same DDR3.
+  */
+case class Axi4AddressRelocate(config: Axi4Config, offset: BigInt) extends Component {
+  val io = new Bundle {
+    val input = slave(Axi4(config))
+    val output = master(Axi4(config))
+  }
+
+  private def relocate(addr: UInt): UInt =
+    (addr.resized + U(offset, config.addressWidth bits)).resized
+
+  io.output.aw << io.input.aw
+  io.output.aw.addr.allowOverride()
+  io.output.aw.addr := relocate(io.input.aw.addr)
+
+  io.output.ar << io.input.ar
+  io.output.ar.addr.allowOverride()
+  io.output.ar.addr := relocate(io.input.ar.addr)
+
+  io.output.w << io.input.w
+  io.input.b << io.output.b
+  io.input.r << io.output.r
+}

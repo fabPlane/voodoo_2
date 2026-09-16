@@ -3,6 +3,9 @@ fpga/.scala-build/
 fpga/.bsp/
 fpga/rtl/
 fpga/simWorkspace/
+fpga/hw/gowin/impl/
+fpga/hw/gowin/ip/**/*.v
+fpga/hw/gowin/ip/**/*.vo
 __pycache__/
 
 # OS, editor and tool leftovers
