@@ -12934,12 +12934,12 @@
 		(uuid "01a6319a-5cb8-5659-af15-b5c1eea892a8")
 		(at 86.000 92.000)
 		(property "Reference" "J8"
-			(at 0 -3.900 0)
+			(at 0 -4.900 0)
 			(layer "F.SilkS")
 			(uuid "7fb02953-3f25-56c1-8f08-ac06a5c2a005")
 			(effects (font (size 1.0 1.0) (thickness 0.18)))
 		)
-		(property "Value" "FPGA JTAG"
+		(property "Value" "JTAG 2x7 2.0mm"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(uuid "964729ef-d158-5f94-96f4-d48533b3a33a")
@@ -12947,8 +12947,8 @@
 		)
 		(attr smd)
 		(fp_rect
-			(start -6.000 -2.500)
-			(end 6.000 2.500)
+			(start -8.000 -3.500)
+			(end 8.000 3.500)
 			(stroke (width 0.3) (type default))
 			(fill none)
 			(layer "F.SilkS")
@@ -12956,25 +12956,25 @@
 		)
 
 		(pad "1" smd roundrect
-			(at -5.000 -1.500)
+			(at -7.000 -2.500)
 			(size 1.200 1.200)
 			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
 			(uuid "acc895df-735e-53f2-9959-4e42a08b9068")
 		)
 		(pad "2" smd roundrect
-			(at 5.000 -1.500)
+			(at 7.000 -2.500)
 			(size 1.200 1.200)
 			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
 			(uuid "0a400b67-d898-5f87-bd08-8cc89faaee92")
 		)
 		(pad "3" smd roundrect
-			(at 5.000 1.500)
+			(at 7.000 2.500)
 			(size 1.200 1.200)
 			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
 			(uuid "d9831fb6-e3d6-5dad-bdd9-ac11a2aa0622")
 		)
 		(pad "4" smd roundrect
-			(at -5.000 1.500)
+			(at -7.000 2.500)
 			(size 1.200 1.200)
 			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
 			(uuid "7629bca7-6edf-5a12-a748-f8344b442a53")
@@ -13029,6 +13029,57 @@
 			(size 1.200 1.200)
 			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
 			(uuid "d63e3e34-e571-50b4-9c64-0d5f0e746e77")
+		)
+	)
+	(footprint "Rough:J10"
+		(layer "F.Cu")
+		(uuid "e28461ba-9c25-55ee-ade6-b975ebb145de")
+		(at 190.000 27.000)
+		(property "Reference" "J10"
+			(at 0 -8.400 0)
+			(layer "F.SilkS")
+			(uuid "deed0d19-4780-5e2c-8d0d-4c1da9442a45")
+			(effects (font (size 1.0 1.0) (thickness 0.18)))
+		)
+		(property "Value" "BENCH 5V DC JACK"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(uuid "17898ead-e34b-5f16-92ef-20ae666b99d5")
+			(effects (font (size 0.9 0.9) (thickness 0.16)))
+		)
+		(attr smd)
+		(fp_rect
+			(start -4.500 -7.000)
+			(end 4.500 7.000)
+			(stroke (width 0.3) (type default))
+			(fill none)
+			(layer "F.SilkS")
+			(uuid "abe26987-ba0f-5edd-a04f-dee811fb2234")
+		)
+
+		(pad "1" smd roundrect
+			(at -3.500 -6.000)
+			(size 1.200 1.200)
+			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
+			(uuid "c81a37c5-b8ea-5486-b07c-cde3dc48c173")
+		)
+		(pad "2" smd roundrect
+			(at 3.500 -6.000)
+			(size 1.200 1.200)
+			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
+			(uuid "22b1528e-3578-543e-97f7-70b47ddf8535")
+		)
+		(pad "3" smd roundrect
+			(at 3.500 6.000)
+			(size 1.200 1.200)
+			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
+			(uuid "ce2a837a-6881-5160-bfcc-adb509e45d14")
+		)
+		(pad "4" smd roundrect
+			(at -3.500 6.000)
+			(size 1.200 1.200)
+			(layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2)
+			(uuid "ac0fbd22-c290-5559-a90c-8240c41ec7b3")
 		)
 	)
 	(footprint "Pricing:LED_0603"

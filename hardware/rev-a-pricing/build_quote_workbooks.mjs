@@ -50,7 +50,8 @@ const parts = [
   ["PCI input fuse", "F1", 1, "TBD", "", "Provisional", "Fuse-SMD", "Resettable or fixed fuse"],
   ["PCI 5 V TVS", "D10", 1, "SMAJ5.0A-TP", "C129544", "Candidate", "SMA", "5 V unidirectional TVS"],
   ["Input load switch", "Q10", 1, "TBD", "", "Provisional", "QFN", "Inrush and reverse-block allowance"],
-  ["FPGA JTAG header", "J8", 1, "TBD", "", "Provisional", "Header-SMD", "Connector selection pending"],
+  ["FPGA JTAG header (Xilinx 2 mm 2x7 cable pinout)", "J8", 1, "IDC2.0-2*7PZ", "C53207571", "Candidate", "IDC-2x7-2.0mm", "JXTCONN 2 mm 2x7 shrouded box header"],
+  ["Bench 5 V input (diode-OR or load switch against the slot rail)", "J10", 1, "DC-005C-20A", "C84007", "Candidate", "DC-Jack-RA", "Korean Hroparts 2.0 mm barrel jack, 3 A"],
   ["Manufacturing header", "J9", 1, "TBD", "", "Provisional", "Header-SMD", "Connector selection pending"],
   ["Status LEDs", expand("D", 20, 5).join(","), 5, "TBD", "", "Provisional", "LED_0603", "Color and current pending"],
 ];
@@ -100,12 +101,12 @@ cpl.push(
   ["U33", 43.5, 47, "Top", 0], ["U34", 43.5, 103, "Top", 0],
   ["L22", 158, 57.5, "Top", 0], ["L23", 176, 57.5, "Top", 0], ["L24", 158, 73, "Top", 0],
   ["F1", 184, 72, "Top", 0], ["D10", 188, 72, "Top", 0], ["Q10", 184, 77, "Top", 0],
-  ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0],
+  ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0], ["J10", 190, 27, "Top", 0],
   ["D20", 188, 83, "Top", 0], ["D21", 188, 85, "Top", 0], ["D22", 188, 87, "Top", 0],
   ["D23", 188, 89, "Top", 0], ["D24", 188, 91, "Top", 0],
 );
 
-if (cpl.length !== 326) throw new Error(`Expected 326 placements, found ${cpl.length}`);
+if (cpl.length !== 327) throw new Error(`Expected 327 placements, found ${cpl.length}`);
 
 const bomRows = [["Comment", "Designator", "Footprint", "LCSC Part #"]];
 for (const [func, designators, qty, mpn, lcsc, state, footprint, description] of parts) {
@@ -184,8 +185,8 @@ async function buildCpl() {
   sheet.freezePanes.freezeRows(1);
   styleHeader(sheet.getRange("A1:E1"));
   sheet.getRangeByIndexes(0, 0, rows.length, 5).format.font = { name: font, size: 10 };
-  sheet.getRange("B2:C327").format.numberFormat = "0.000";
-  sheet.getRange("E2:E327").format.numberFormat = "0";
+  sheet.getRange("B2:C328").format.numberFormat = "0.000";
+  sheet.getRange("E2:E328").format.numberFormat = "0";
   [18, 14, 14, 12, 12].forEach((width, i) => sheet.getRangeByIndexes(0, i, rows.length, 1).format.columnWidth = width);
   console.log((await wb.inspect({ kind: "table", sheetId: "CPL", range: "A1:E12", include: "values,formulas", tableMaxRows: 12, tableMaxCols: 5 })).ndjson);
   console.log((await wb.inspect({ kind: "match", searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!|#SPILL!|#CALC!", options: { useRegex: true, maxResults: 100 }, summary: "final formula error scan" })).ndjson);

@@ -82,6 +82,14 @@ and FBG484 as footprint compatible, and a ball-by-ball diff of AMD's
 identical in name, bank, byte group and I/O type. The K4B4G1646E-BYMA stays as
 the 1 GB DDR3 alternate on the same 96-ball footprint (route A14).
 
+Two connectors were added or firmed up on 2026-09-16 after the microcontroller
+and bring-up card were dropped: J8 is now the JXTCONN `IDC2.0-2*7PZ` 2 mm 2x7
+shrouded JTAG header (`C53207571`, $0.25, Xilinx cable pinout) and J10 is a new
+bench 5 V input, Korean Hroparts `DC-005C-20A` 2.0 mm barrel jack rated 3 A
+(`C84007`, $0.23) on the top edge next to the power block. The BOM is now 46
+groups and 327 placements. J10 must be diode-ORed or switched against the slot
+rail through the load switch Q10 in the power-tree pass.
+
 Estimated complete card at quantity 5 from live JLC prices, with the quoted
 fabrication and assembly charges unchanged: about $220 with the 100T, about
 $275 with the 200T. The SN74CBTD16211 stock of 15 may not clear JLC attrition

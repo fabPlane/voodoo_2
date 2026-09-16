@@ -353,6 +353,8 @@ but an electrical or mechanical calculation still controls final release.
 | 1.0 V core buck | TI `TPS62480RNCR` + 2× Murata `DFE252012F-R47M=P2` | `C2071434`, `C703140` | preferred candidate | Xilinx power estimate, transient/thermal checks and reference layout |
 | UART service connector | JST `SM04B-SRSS-TB(LF)(SN)` | `C160404` | selected | assign GND, 3.3 V reference, TX and RX; do not back-power the card |
 | Rail test access | 1.0 mm plated soldermask-open pads | no BOM part | selected | one pad per rail plus nearby ground pads |
+| FPGA JTAG | JXTCONN `IDC2.0-2*7PZ`, 2 mm 2x7 shrouded | `C53207571` | candidate | Xilinx cable pinout; T113 access to the same pins |
+| Bench 5 V input | Korean Hroparts `DC-005C-20A`, 2.0 mm, 3 A | `C84007` | candidate | diode-OR or load switch against the slot rail; current budget for the 200T |
 
 The three DPDT relays provide six normally-closed changeover poles: five are used
 for RGB, HSync, and VSync, with one spare. This is intentionally fail-safe: when
@@ -406,13 +408,17 @@ itself from the QSPI (MultiBoot with a golden image), is programmed over JTAG,
 takes field updates over PCI or from the T113, and drives the relay MOSFETs.
 Consequences for the next pass:
 
-- JTAG J8 is a first-class connector, not a debug afterthought: pick the
-  connector (2 mm 2x7 Xilinx header or 6-pin 0.1 in) and route TCK/TMS/TDI/TDO
-  short. The T113 should reach the same pins so it can be the on-board
-  programmer under OpenOCD later.
-- Add a bench 5 V input (4-pin Molex or barrel jack) diode-ORed or switched
-  against the slot rail through the load switch Q10, so the card runs outside
-  a PC for JTAG-to-AXI and T113 Linux work.
+- JTAG J8 is a first-class connector, not a debug afterthought. Selected:
+  JXTCONN `IDC2.0-2*7PZ` (`C53207571`), the 2 mm 2x7 shrouded box header with
+  the Xilinx Platform Cable pinout. Route TCK/TMS/TDI/TDO short. The T113
+  should reach the same pins so it can be the on-board programmer under
+  OpenOCD later.
+- Bench 5 V input J10 added: Korean Hroparts `DC-005C-20A` (`C84007`), 2.0 mm
+  centre pin, 3 A, on the top edge beside the power block. Diode-OR or switch
+  it against the slot rail through the load switch Q10 so a bench supply never
+  back-feeds the slot, and size it for the 200T build. A 5.08 mm 4-pin
+  disk-drive power header is the alternative if an ATX supply is preferred on
+  the bench.
 - Bus-switch enables pulled inactive and released by DONE, so an unconfigured
   card looks empty to the slot.
 - The 5 V PCI audit in item 4 becomes an ordering gate: the first card carries
