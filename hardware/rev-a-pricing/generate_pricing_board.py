@@ -98,13 +98,17 @@ def grid(refs: list[str], value: str, package: str, start_x: float, start_y: flo
 
 def option_placeholder(ref: str, value: str, x: float, y: float, w: float, h: float,
                        model_path: str, rotate_z: float = 0, offset_x: float = 0,
-                       offset_y: float = 0, dnp: bool = False) -> str:
+                       offset_y: float = 0, dnp: bool = False,
+                       ref_y: float | None = None) -> str:
     """Quote placeholder for a part the rough board does not know about.
 
     Adds a stock STEP body and, for footprint-only options, the DNP attributes so
     the part stays out of the BOM and CPL like the unpopulated ADC.
     """
     text = rough.placeholder(ref, value, x, y, w, h)
+    if ref_y is not None:
+        # Move the reference label off the default above-the-outline spot.
+        text = text.replace(f"(at 0 {-h/2-1.4:.3f} 0)", f"(at 0 {ref_y:.3f} 0)", 1)
     if dnp:
         text = text.replace("(attr smd)", f"(attr smd{DNP_ATTR})")
     assert text.endswith("\n\t)")
@@ -142,7 +146,7 @@ def build() -> str:
 
     # 148 capacitor placements: dense local bypassing plus regulator input/output
     # allowance.  Counts are intended for assembly pricing, not final values.
-    additions += grid(numbered("C", 1, 32), "100nF", "C_0402", 92.0, 32.0, 8, 1.75, 1.65, 1.0, 0.5)
+    additions += grid(numbered("C", 1, 32), "100nF", "C_0402", 92.0, 33.0, 8, 1.75, 1.65, 1.0, 0.5)
     additions += grid(numbered("C", 33, 32), "100nF", "C_0402", 92.0, 68.0, 8, 1.75, 1.65, 1.0, 0.5)
     additions += grid(numbered("C", 65, 16), "100nF", "C_0402", 51.0, 37.0, 4, 1.65, 1.65, 1.0, 0.5)
     additions += grid(numbered("C", 81, 16), "100nF", "C_0402", 137.0, 75.0, 4, 1.65, 1.65, 1.0, 0.5)
@@ -212,15 +216,16 @@ def build() -> str:
     ]
     additions += grid(numbered("C", 173, 8), "100nF DNP", "C_0402", 92.0, 62.5, 4, 1.75, 1.65, 1.0, 0.5, dnp=True)
 
-    # SLI link header on the top edge: 2 x 17 pins at 1.27 mm (34 ways, the
-    # same count as the original Voodoo 2 ribbon at a quarter of the length).
+    # SLI link header on the top edge: the original Voodoo 2 form, a 2 x 17
+    # shrouded IDC box header at 2.54 mm for a 34-way ribbon between two cards.
     # Carries the slave card's scanlines to the master for scanline interleave.
-    # Populated: XKB X1322WV-2X17H-C40D30-E80, LCSC C5243658.
+    # Populated: BOOMELE 2.54-2*17P, LCSC C9042. The C1 bypass grid sits 1 mm
+    # lower than before to clear the 48 x 9 mm shroud.
     additions += [
         option_placeholder(
-            "J12", "SLI 2x17 1.27mm", 127.0, 27.5, 24.0, 5.5,
-            "Connector_PinHeader_1.27mm.3dshapes/PinHeader_2x17_P1.27mm_Vertical.step",
-            rotate_z=90, offset_x=10.16, offset_y=0.635,
+            "J12", "SLI 2x17 2.54mm", 124.0, 27.5, 48.3, 8.9,
+            "Connector_IDC.3dshapes/IDC-Header_2x17_P2.54mm_Vertical.step",
+            rotate_z=90, offset_x=20.32, offset_y=1.27, ref_y=6.4,
         ),
     ]
 

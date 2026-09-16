@@ -62,7 +62,7 @@ const parts = [
   ["MCU decoupling", expand("C", 163, 8).join(","), 8, "CL05B104KO5NNNC", "C1525", "Candidate", "C_0402", "Samsung 100 nF 16 V X7R"],
   ["MCU bulk capacitors", "C171,C172", 2, "CL21A106KAYNNNE", "C15850", "Candidate", "C_0805", "Samsung 10 uF 25 V X5R"],
   ["Manufacturing header", "J9", 1, "TBD", "", "Provisional", "Header-SMD", "Connector selection pending"],
-  ["SLI link header (34-way 1.27 mm ribbon between two cards for scanline interleave; U50 depth SRAM is footprint-only and not in this BOM)", "J12", 1, "X1322WV-2X17H-C40D30-E80", "C5243658", "Candidate", "PinHeader-2x17-1.27mm", "XKB 2x17 1.27 mm pin header"],
+  ["SLI link header (34-way 2.54 mm ribbon between two cards for scanline interleave, the original Voodoo 2 form; U50 depth SRAM is footprint-only and not in this BOM)", "J12", 1, "2.54-2*17P", "C9042", "Candidate", "IDC-2x17-2.54mm", "BOOMELE 2x17 2.54 mm shrouded IDC box header"],
   ["Status LEDs", expand("D", 20, 5).join(","), 5, "TBD", "", "Provisional", "LED_0603", "Color and current pending"],
 ];
 
@@ -93,7 +93,7 @@ const cpl = [
   ["U15", 74, 108, "Top", 0], ["U16", 98, 108, "Top", 0], ["U17", 122, 108, "Top", 0],
 ];
 
-addGrid(cpl, expand("C", 1, 32), 92, 32, 8, 1.75, 1.65);
+addGrid(cpl, expand("C", 1, 32), 92, 33, 8, 1.75, 1.65);
 addGrid(cpl, expand("C", 33, 32), 92, 68, 8, 1.75, 1.65);
 addGrid(cpl, expand("C", 65, 16), 51, 37, 4, 1.65, 1.65);
 addGrid(cpl, expand("C", 81, 16), 137, 75, 4, 1.65, 1.65);
@@ -111,7 +111,7 @@ cpl.push(
   ["U33", 43.5, 47, "Top", 0], ["U34", 43.5, 103, "Top", 0],
   ["L22", 158, 57.5, "Top", 0], ["L23", 176, 57.5, "Top", 0], ["L24", 158, 73, "Top", 0],
   ["F1", 184, 72, "Top", 0], ["D10", 188, 72, "Top", 0], ["Q10", 184, 77, "Top", 0],
-  ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0], ["J12", 127, 27.5, "Top", 0],
+  ["J8", 86, 92, "Top", 0], ["J9", 73, 96, "Top", 0], ["J12", 124, 27.5, "Top", 0],
   ["U40", 172, 100, "Top", 0], ["Y3", 165, 108, "Top", 0], ["U41", 184, 92, "Top", 0], ["L25", 172, 110, "Top", 0],
   ["J11", 190.955, 100, "Top", -90], ["U35", 186, 108, "Top", 0], ["SW1", 180, 110, "Top", 0],
   ["C171", 178, 86, "Top", 0], ["C172", 181, 86, "Top", 0],

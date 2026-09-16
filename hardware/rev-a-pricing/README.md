@@ -131,16 +131,18 @@ Two additions for the Voodoo 2 phase, both placed in the FPGA cluster:
   62 FPGA pins on a 3.3 V bank when it is used. The stock 165-ball STEP body
   is the 11.9 x 16 mm Analog Devices envelope, 0.5 mm off in each axis; the
   silkscreen outline is the correct 13 x 15 mm.
-- **J12, SLI link header, populated.** XKB `X1322WV-2X17H-C40D30-E80`
-  (`C5243658`, $0.56, 487 in stock), a 2 x 17 pin header at 1.27 mm on the top
-  edge at (127, 27.5). Thirty-four ways, the same count as the original Voodoo 2
-  ribbon, in a quarter of the length; a 1.27 mm IDC socket such as XKB
-  `X1270H-2X17-PTV01` (`C5147287`) makes the cable. It carries the slave card's
-  scanlines to the master for scanline interleave, which is how two cards reach
-  1024 x 768 with the unmodified 3dfx drivers. The link protocol is ours, not
-  3dfx's, so it pairs two of these cards and not a period Voodoo 2; budget 16
-  data, clock, three syncs, a swap handshake and grounds. Through-hole, so it
-  is a hand-solder line at JLC like J8.
+- **J12, SLI link header, populated.** BOOMELE `2.54-2*17P` (`C9042`, $0.49,
+  3,366 in stock), the original Voodoo 2 form: a 2 x 17 shrouded IDC box
+  header at 2.54 mm on the top edge at (124, 27.5), 48 x 9 mm, so a period
+  34-way SLI ribbon or any floppy-style IDC cable fits. It carries the slave
+  card's scanlines to the master for scanline interleave, which is how two
+  cards reach 1024 x 768 with the unmodified 3dfx drivers. The link protocol is
+  ours, not 3dfx's, so it pairs two of these cards and not a period Voodoo 2;
+  budget 16 data, clock, three syncs, a swap handshake and grounds.
+  Through-hole, so it is a hand-solder line at JLC like J8. The C1-C32 bypass
+  grid moved 1 mm down (y 33) to clear the shroud; the header clears U20 by
+  0.35 mm and the grid by 0.8 mm, which is placement-model spacing, not a
+  routed-board clearance.
 
 The board is now 360 footprints and the workbooks 56 groups / 347 placements
 (J3 was dropped when the bracket went to one bidirectional VGA; J12 is the
