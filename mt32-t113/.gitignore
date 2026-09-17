@@ -1,0 +1,12 @@
+# Upstream clones are read here, never committed: Munt under bench/vendor,
+# bootloaders under boot/vendor. Each workstream records the commit hash it
+# used in its own README so the reading is reproducible.
+**/vendor/
+
+# Build output
+build/
+*.o
+*.a
+*.elf
+*.bin
+*.wav
