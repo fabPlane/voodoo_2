@@ -8,6 +8,7 @@ Board-specific packages for SpinalVoodoo. The Voodoo core itself is the upstream
 |---|---|---|---|---|
 | AMD Artix-7 AC701 (XC7A200T) | `voodoo.artix` | AXI PCIe BAR0 → AXI4-Lite | two AXI4 masters into MIG | parallel RGB → ADV7511 |
 | Sipeed Tang Mega 138K Pro Dock | `voodoo.gowin` | Gowin PCIe TLP BAR0 → AXI4-Lite | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
+| Sipeed Tang Retro Console 138K | `voodoo.gowin` | USB-pad Glide SDK tests + Tomb info | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
 
 Upstream SpinalVoodoo only has the DE10-Nano (`CoreDe10`). `CoreArtix` /
 `CoreGowin` are the ports of that wrapper. The Artix board top (`AmdAc701`)
@@ -28,13 +29,17 @@ make compile      # type-check both ports
 make rtl          # Artix + Gowin Verilog
 make rtl-artix    # rtl/artix/AmdAc701.v
 make rtl-gowin    # rtl/gowin/TangMega138kPro.v
+make rtl-console  # rtl/gowin/TangConsole138k.v
 make test         # SpinalSim, including the TLP BAR target
 make artix        # Vivado bitstream (after generating IP)
 make gowin        # Gowin EDA bitstream (after generating IP)
+make gowin-console # Retro Console 138K Glide-test bitstream
 ```
 
 Program the AC701 with Vivado or `openFPGALoader`. Program the dock with the
-Gowin programmer or `openFPGALoader -c ft2232`.
+Gowin programmer or `openFPGALoader -c ft2232`. The Console demo needs Gowin
+EDA; copy the resulting `.bin` to `cores/console138k/voodootang.bin` on the
+SD card. See `hardware/tang-console-138k/README.md`.
 
 ## Gowin / Tang Mega 138K Pro
 
@@ -52,6 +57,54 @@ drove DVI RX instead; if the monitor stays dark, swap the TMDS locations in
 `hw/gowin/tang_mega_138k_pro.cst`.
 
 LEDs (active low): heartbeat, PCIe link, DDR calib, host-bridge wedged.
+
+## Gowin / Tang Retro Console 138K
+
+Device: `GW5AST-LV138PG484AC1/I0` (`GW5AST-138C`). HDMI pins from working
+Console cores. USB gamepads come from the BL616 (TangCore UART command 0x09,
+SNES-layout `hid1`/`hid2`); onboard USER/RESET are a fallback. After DDR3
+calibration a text menu offers packed Glide2x SDK traces (logo spin, test04
+gouraud, test16 splash, alphabet) plus an OTHER DEMOS submenu of publisher
+DOS Glide titles. Those captures are too big for on-chip ROM; archives are
+in `sw/glide-demos/`. Replay Tomb with `make native/sim/check/tomb` from
+`ext/SpinalVoodoo`. DOSBox-X live Tomb needs the game directory and a 32-bit
+`libglide2x` host (Linux).
+
+```
+make rtl-console
+make gowin-console   # needs gw_sh and hw/gowin/ip as in ip.md (no PCIe IP)
+```
+
+USB pad: D-pad moves, A/Start runs, B/Select back. USER cycles, RESET runs.
+
+LEDs (active low): heartbeat, info page open.
+
+HDMI debug: the menu has two amber status rows at the top (`CAL= WED= USB=`
+and `PC= BAR= N=`). That is the bring-up log when S1 does not enumerate.
+The onboard microSD is muxed to the BL616; this core does not write it.
+
+USB serial debug: the Soft-USB Type-C (silkscreen **S1**) enumerates as a
+full-speed CDC ACM gadget (`VoodooDebug`) on the analog `USB_DX` pair. Plug
+that jack into the Mac, then:
+
+```
+ls /dev/cu.usbmodem*
+screen /dev/cu.usbmodem* 115200
+```
+
+Lines look like:
+
+```
+t=00A1B2C3 cal=1 wed=0 ov=1 pl=0 inf=0 cur=0 pc=80000000 bar=0000021C:00110000 n=0002 hid=0000 usb=1
+```
+
+`cal` is DDR3 calibration, `wed` is the host BAR wedge, `pc` is the BRAM
+RV32, `bar` is the last AXI-Lite write, `n` is write count.
+
+The gadget is Gowin USB 1.1 SoftPHY + Device Controller, glued like Sipeed's
+`usb_uart_loopback` (Apache-2.0), on Console S1 `USB_DX` (J19/H19) with the
+1.5 kΩ D+ pull-up enable on M17. The analog HS SoftPHY did not route on this
+fabric. USB-A P1/P2 stay pad hosts.
 
 ## Artix-7 200T / AMD AC701
 

@@ -1,0 +1,28 @@
+Official publisher demos of DOS-era 3dfx / Glide titles.
+
+These are freely distributed demos, not the registered games. Full retail
+dumps stay off this tree.
+
+  cd sw/glide-demos && ./fetch.sh
+
+Archives land in archives/ and are gitignored. Source is archive.org
+direct /download/<id>/<file> URLs.
+
+Got
+  tomb-raider-dos-1.zip / tomb-raider-dos-2.zip   Tomb Raider DOS
+  tomb-raider-3dfx.zip                           Tomb Raider 3dfx extra
+  screamer-2.zip                                 Screamer 2
+  extreme-assault.exe                            Extreme Assault (3dfx)
+  carmageddon-splat-pack.zip                     Carmageddon Splat Pack
+  archimedean-dynasty.exe                        Archimedean Dynasty
+  toshinden-3dfx.zip                             Battle Arena Toshinden 3dfx
+  nascar-racing-2.zip                            NASCAR Racing 2
+  gta.zip                                        Grand Theft Auto
+  lords-of-the-realm-2.zip                       Lords of the Realm II
+  monster-3d-demo-disc.7z                        Diamond Monster 3D disc
+                                                 (Tomb Raider + Terracide)
+
+Skipped (no public DOS demo, or Windows-only / full game)
+  Descent II 3dfx, Blood, X-CAR, Whiplash, POD, Incoming
+  Redguard (Windows demo only)
+  GLQuake (Windows MiniGL, not DOS Glide)

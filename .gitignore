@@ -8,6 +8,28 @@ fpga/hw/gowin/ip/**/*.v
 fpga/hw/gowin/ip/**/*.vo
 __pycache__/
 
+# Official Quake shareware (pak0.pak ~18 MiB) and unpack cache
+sw/quake-riscv/id1/*
+!sw/quake-riscv/id1/DATA.txt
+
+# Official Glide/DOS publisher demos (archives only; not vendored)
+sw/glide-demos/*
+!sw/glide-demos/DATA.txt
+!sw/glide-demos/fetch.sh
+sw/quake-riscv/host_probe
+sw/quake-riscv/.cache/
+sw/quake-riscv/build/
+sw/quake-riscv/build-rv32/
+sw/quake-riscv/.toolchains/
+sw/quake-riscv/sw_last.ppm
+sw/quake-riscv/sw_last.png
+
+# Local copy of the Tang Retro Console SD card (ROMs + TangCore bitstreams)
+hardware/tang-console-138k/sd-card-backup/
+hardware/tang-console-138k/*.tar.gz
+hardware/tang-console-138k/sd-card-backup.sha256
+hardware/tang-console-138k/sd-card-diskutil.txt
+
 # OS, editor and tool leftovers
 .DS_Store
 node_modules
