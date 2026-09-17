@@ -49,8 +49,8 @@ Three consequences fall out of that, and they decide the whole design:
 
 | | Compute | MT-32 (Munt) | GM (FluidSynth) | SC-55 (Nuked-SC55) | Effort | Est. cost |
 |---|---|---|---|---|---|---|
-| **A. Stock mt32-pi** | Pi 3 A+ or Zero 2 W | yes | yes | no | a weekend, no PCB | ~$40 |
-| **B. Custom carrier** | CM4 Lite, or a socketed Zero-format board | yes | yes | CM4 only, marginal | one 4-layer board, stock image | ~$55–80 |
+| **A. Stock mt32-pi** | any supported Pi you can actually buy | yes | yes | no | a weekend, no PCB | $30–60, see § 2.1 |
+| **B. Custom carrier** | socketed 40-pin Pi; CM4 as a variant | yes | yes | CM4 / Pi 4 only, marginal | one 4-layer board, stock image | $50–110, mostly the Pi |
 | **C. T113-S3 board** | 2× A7 1.2 GHz, Linux | likely, unproven here | RAM-limited | no | you write the software platform | ~$45 |
 | **D. RP2350** | 2× M33 150 MHz | no | small SF2, reduced polyphony | no | firmware project | ~$15 |
 | **E. FPGA fabric** | Artix/Gowin | no | sample engine possible | no | large | — |
@@ -81,14 +81,35 @@ optocoupler this week and prove the thing you actually want to hear. Then spend 
 board spin turning that pile into the connector set below. Do not start at C or E.
 Which Pi, given that the Zero 2 W is hard to buy, is the next section.
 
-### 2.1 When the Zero 2 W is out of stock
+### 2.1 There is no $25 Pi on sale
 
-It usually is. As of 11 September 2026 Adafruit, CanaKit, Pimoroni and The Pi Hut
-were all sold out; PiShop had it at $17.25, one per customer. Raspberry Pi blamed
-AI-driven substrate demand in May 2026, has qualified a second substrate vendor,
-expects supply to improve in the second half of 2026, and has committed to
-producing the Zero 2 W until at least January 2030. So this is a shortage, not an
-end of life — which is cold comfort if you want to build something this month.
+List prices and street prices have come apart, and any plan built on the list
+prices is fiction. Two separate things are going on.
+
+**The shortage.** As of 11 September 2026 the Zero 2 W was sold out at Adafruit,
+CanaKit, Pimoroni and The Pi Hut; PiShop had it at $17.25, one per customer;
+Amazon listed it unavailable, with third-party sellers asking over €100.
+Raspberry Pi blamed AI-driven substrate demand in May 2026, has qualified a
+second substrate vendor, expects improvement in the second half of 2026, and has
+committed to producing the Zero 2 W until at least January 2030. The commitment
+does not put one on your bench this month.
+
+**The DRAM crisis, which is worse.** LPDDR4 has risen roughly sevenfold since
+2025. Raspberry Pi has raised prices three times in four months: February took
+$10 off 2 GB parts through to $60 off 16 GB ones, April added another $25 to $100
+depending on density, and the 16 GB Pi 5 went from $120 to $305. A new 3 GB Pi 4
+exists at $83.75 purely to have something affordable in the line. The CM4 Lite
+1 GB, which this document previously recommended at its $25 launch price, now
+lists at **$41.25**, and retail asks are far worse — $84.20 at one US shop, with
+at least one distributor marking its line discontinued even though Raspberry Pi's
+own documentation still says CM4 stays in production until at least January 2034.
+This is not a Raspberry Pi problem; DRAM pricing is squeezing the whole hobbyist
+SBC market, so the Orange Pi and Radxa alternatives are moving too.
+
+The one useful asymmetry: **the old LPDDR2 parts were spared.** Raspberry Pi has
+explicitly held prices on the Zero, Zero 2, Pi 1, Pi 3, 3 B+ and 3 A+ because it
+holds substantial inventory of the older memory. Those are exactly the parts
+mt32-pi wants. So the cheap compute is old compute — when you can find it.
 
 The rule that decides every substitution: **mt32-pi boots on Zero 2 W, Pi 3 A+,
 Pi 3 B/B+, Pi 4 B and the CM4 series, and nothing else.** Step off that list and
@@ -101,20 +122,32 @@ turned into real support.
 
 | Substitute | Runs mt32-pi | Availability | Notes |
 |---|---|---|---|
-| **CM4 Lite, 1 GB, no wireless** (CM4001000) | yes | best in the range — it sells through industrial distribution, not the hobby channel | $25. Pi 4 silicon, so Nuked-SC55 becomes thinkable later. Two Hirose DF40 100-pin connectors — the same family, and the same 100-pin size, as the module standard in `voodoo2-modular-card.md`, so the footprint and the assembly process are ones this project already uses. Needs a microSD slot on the carrier and a 5 V rail good for about 1 A of peak |
-| **Pi 3 A+** | yes | usually stocked | $25, 512 MB, 65 × 56 mm. Several commercial mt32-pi products ship exactly this. The quickest unblock for phase 1 |
-| **Pi 3 B+ / Pi 4 B** | yes | good | Bigger, hotter, more power draw; awkward as an internal daughterboard. The Pi 4 is the only one on the list that could later carry SC-55 emulation |
-| **CM3+ Lite, CM4S** | untested | good, and the DDR2 SODIMM socket is cheap | Pi 3 and Pi 4 silicon in SODIMM form. Circle supports the SoCs; mt32-pi does not list the modules. Buy one and boot it *before* you lay out a board around it |
+| **CM4 Lite, 1 GB, no wireless** (CM4001000) | yes | sells through industrial distribution, so it exists — but see the price | **$41.25 list, $84 at retail.** Pi 4 silicon, so Nuked-SC55 becomes thinkable later. Two Hirose DF40 100-pin connectors — the same family, and the same 100-pin size, as the module standard in `voodoo2-modular-card.md`, so the footprint and the assembly process are ones this project already uses. Needs a microSD slot on the carrier and a 5 V rail good for about 1 A of peak |
+| **Pi 3 A+** | yes | thin, but the price held | $25 list, LPDDR2, spared the hikes. 512 MB, 65 × 56 mm. Several commercial mt32-pi products ship exactly this |
+| **Pi 3 B/B+, new or used** | yes | **the realistic one** | Price held (LPDDR2), and millions exist second-hand at well under list. Bigger, hotter, awkward inside a case — and available today, which beats every other row |
+| **Pi 4 B** | yes | expensive now | The only supported part that could later carry SC-55 emulation, but you are paying 2026 DRAM prices for the privilege |
+| **CM3+ Lite, CM4S** | untested | CM3's published end of life was “no earlier than January 2026”, so treat CM3+ as going away | Pi 3 and Pi 4 silicon in SODIMM form, and the socket is cheap. Circle supports the SoCs; mt32-pi does not list the modules. Boot one *before* laying out a board around it, and do not design a product on the CM3+ |
 | **Zero 2 W via other channels** | yes | intermittent | rpilocator alerts, approved resellers, industrial distributors, used. Fine for a one-off, not for a batch |
 | Orange Pi Zero 2W, Radxa Zero 3W, Geniatech XPI-3566 | **no** | good | Linux only. Munt plus FluidSynth under ALSA, your own image, your own UI |
 | T113-S3, already in the rev A BOM | **no** | good | Same deal as the row above, but at least the supply risk is one you have already accepted elsewhere in this project |
 
-**What I would do:** use a **Pi 3 A+** to get sound out of it this week, and
-design the board around a **CM4 Lite** — it is the most reliably purchasable part
-on the supported list, it is Pi 4 class, and its connector is one this project is
-already committed to. Then hedge cheaply: a 40-pin GPIO header footprint costs
-nothing but board area, and it keeps the design alive for any Zero-format board,
-Pi or otherwise, if the CM4 ever goes the way of the Zero 2 W.
+**What I would do, revised for these prices:**
+
+1. **Prove the sound for nothing.** DOSBox-Staging has Munt and FluidSynth built
+   in. Point it at your ROM dump on the desktop you already own and decide
+   whether you care, before buying any silicon at a shortage price.
+2. **Buy used, not scalped.** A second-hand Pi 3 B or 3 B+ is supported, plentiful
+   and cheap, and nobody is scalping them. Paying €100 for a $15 Zero 2 W to
+   build a $40 project is the one clearly wrong move available here.
+3. **Socket, do not solder, and make the socket the 40-pin header.** Every part
+   that kept its price — Zero 2 W, 3 A+, 3 B+ — has that header, as do the
+   Orange Pi and Radxa boards you would fall back to under Linux. Make the CM4 an
+   optional variant of the carrier rather than the baseline: at $41 to $84 it is
+   now a larger line item than the entire rest of the board, and that is a bet on
+   DRAM prices coming back down.
+4. **Re-price before you commit.** Everything in § 7 assumes compute you can buy.
+   Check the day's actual asks — not list prices, not this document — at the
+   moment you order.
 
 ### 2.2 Why not port mt32-pi to a different ARM chip?
 
@@ -206,10 +239,21 @@ My expectation, stated as an expectation: an i.MX RT1170 (Cortex-M7 at 1 GHz
 with external SDRAM or HyperRAM) is the only MCU-class part I would bet on for
 Munt; an STM32H7 at 480 MHz is the interesting edge case; an RP2350 at 150 MHz
 and an ESP32-S3 are not candidates for LA synthesis, whatever you do to them.
-And a Pi 3 A+ or CM4 Lite costs $25 and runs all of it today, so the MCU route
-has to be justified by something other than money: sub-second boot, a couple of
-hundred milliwatts instead of a couple of watts, industrial supply with a
-ten-year horizon, no SD card, and no dependency on a discontinued upstream.
+The economics used to settle this argument against the MCU: a $25 Pi ran all of
+it today. At 2026 prices (§ 2.1) that is no longer obviously true, and there is a
+second-order effect worth noticing. **Munt's working set is small** — on the order
+of 1 to 2 MB including the ROMs — which is inside the on-chip SRAM of parts like
+the i.MX RT1170. A synth that needs no DRAM at all is a strategically different
+thing to build in a year when DRAM is what broke everyone's bill of materials.
+FluidSynth is the part that wants memory, and SF3 compression plus its stream
+callbacks push most of that onto the SD card.
+
+That is an argument for *running the measurement*, not for starting the port. The
+MCU route still has to be justified by something other than money — sub-second
+boot, a couple of hundred milliwatts instead of a couple of watts, industrial
+supply with a ten-year horizon, no SD card, no dependency on a discontinued
+upstream — and it still fails immediately if the real-time factor comes out
+above 1.
 
 **Where FreeRTOS does fit this project right now:** the RP2350B already on the
 Voodoo card. Give it the MIDI *control plane* — MPU-401 framing, USB MIDI host
@@ -309,12 +353,18 @@ card does not need it. What is real:
 
 ## 7. Rough cost
 
-| Build | Parts | Est. |
-|---|---|---|
-| Stock mt32-pi, off the shelf | Pi 3 A+ (or Zero 2 W) + DAC module + opto board + SD | ~$40 |
-| Daughterboard, qty 5 | CM4 Lite $25 + DF40 pair $5, PCB+assembly ~$12, DAC $3, passives $5 | ~$50 |
-| Bracket module, qty 5 | above + DIN, jacks, OLED, encoder, USB-C, bracket | ~$55–65 |
-| Socketed 40-pin variant | Pi 3 A+ or any Zero-format board $15–25, header and standoffs $2 | ~$45–60 |
+Compute is now the dominant line item and the one that moves weekly (§ 2.1), so
+it is priced separately from the board it sits on.
+
+| Build | Board parts, qty 5 | Plus compute | Est. total |
+|---|---|---|---|
+| Stock mt32-pi, off the shelf | DAC module, opto board, SD: ~$15 | used Pi 3 B/B+ $15–25, or a Zero 2 W at whatever it costs that day | $30–60 |
+| Daughterboard, 40-pin socket | PCB and assembly ~$12, DAC $3, header, level shifter, passives ~$7 | any supported Pi | $37–60 |
+| Bracket module | above plus DIN, jacks, OLED, encoder, USB-C, bracket: ~$35 | any supported Pi | $50–75 |
+| CM4 variant of the carrier | above plus 2× DF40 ~$5, microSD, extra layers | **CM4 Lite $41–84** | $80–130 |
+
+The last row is the whole argument of § 2.1 in one line: at today's prices the
+CM4 costs more than everything else on the board put together.
 
 ## 8. Phases
 
@@ -340,10 +390,11 @@ card does not need it. What is real:
   SoundFonts whose licences forbid redistribution.
 - **GPLv3.** mt32-pi is GPLv3. If you modify it for this board — a different
   GPIO map, a different display — publish the changes with the board.
-- **Pi supply.** The Zero 2 W is chronically out of stock (§ 2.1) and nothing
-  outside mt32-pi's short supported list is a drop-in. Design around the CM4
-  Lite, keep the compute socketed rather than soldered, and add the 40-pin header
-  footprint as a second escape route.
+- **Pi supply and price.** The Zero 2 W is chronically out of stock, the DRAM
+  crisis has repriced everything with modern memory on it, and nothing outside
+  mt32-pi's short supported list is a drop-in (§ 2.1). Socket the compute, make
+  the 40-pin header the primary footprint, treat the CM4 as a variant, and
+  re-quote on the day you order rather than trusting any price in this document.
 - **Analog next to digital.** Inside a PC, on a card's 5 V, beside a graphics
   card, a clean line out is work: star ground, keep the DAC's ground return away
   from the Pi's, and expect to iterate the output filter.
@@ -398,12 +449,15 @@ its archival, relicensing and end of development in September 2026; Serdaco's
 WP32 McCake as existing CM4-based WaveBlaster mt32-pi hardware; upstream
 mt32-pi's discontinuation and the `metaneutrons` fork's changes and version
 bumps; mt32-pi's submodule set (circle-stdlib, munt, fluidsynth, inih) and
-FluidSynth's `osal=cpp11` escape from glib; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
+FluidSynth's `osal=cpp11` escape from glib; the 2026 DRAM-driven price rises,
+the CM4 Lite's $41.25 list and $84 retail asks, the exemption of the older
+LPDDR2 models, and CM4 production running to at least January 2034; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
 statements and production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
 (against a real card, not a web table), the exact audio level a period sound
 card's wavetable input wants, the 5 V headroom on the host card's rail, the
-current Pi prices and stock, whether mt32-pi boots on a CM3+ Lite or a CM4S, and
+today's actual asks for whichever Pi you buy (every price here has a shelf life
+of about a week), whether mt32-pi boots on a CM3+ Lite or a CM4S, and
 whether Munt is comfortable on a single
 Cortex-A7 at 1.2 GHz if option C is ever revisited.
