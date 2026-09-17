@@ -38,10 +38,12 @@ Three consequences fall out of that, and they decide the whole design:
 2. **The hard work is done and is GPLv3.** The value you add by building a board
    is packaging, connectors and integration — not synthesis. Design so that a
    stock mt32-pi image boots on it, and treat every deviation as a cost.
-3. **Prior art is commercial.** Serdaco's WP32 "McCake" already puts mt32-pi on
-   a WaveBlaster daughterboard, and their MP32L ships an mt32-pi config. Build
-   this because you want it in *this* project's shape, not because nothing
-   exists.
+3. **Prior art is commercial, and it is all the same software.** Serdaco's WP32
+   "McCake" already puts mt32-pi on a WaveBlaster daughterboard, their MP32L and
+   TM32 ship mt32-pi configs, and half a dozen other boards do the same thing in
+   different boxes (§ 10). Build this because you want it in *this* project's
+   shape, not because nothing exists. Note also that upstream mt32-pi is no
+   longer actively developed — the live line is the `metaneutrons` fork (§ 10).
 
 ## 2. The option ladder
 
@@ -113,6 +115,48 @@ on the supported list, it is Pi 4 class, and its connector is one this project i
 already committed to. Then hedge cheaply: a 40-pin GPIO header footprint costs
 nothing but board area, and it keeps the design alive for any Zero-format board,
 Pi or otherwise, if the CM4 ever goes the way of the Zero 2 W.
+
+### 2.2 Why not port mt32-pi to a different ARM chip?
+
+Because the part that is Pi-specific is not the part you would think.
+
+mt32-pi is three things: **Munt**, **FluidSynth** and **Circle**. The two synth
+engines are ordinary portable C++ — they already build for x86, ARM Linux and
+macOS, and nothing about LA synthesis cares what silicon it runs on. Circle is a
+complete bare-metal environment for the Raspberry Pi, and mt32-pi calls its
+classes directly. There is no vendor-neutral HAL seam in the middle to
+re-implement.
+
+So "port it to another ARM chip" means writing, for the new SoC, all of:
+
+- reset and startup, MMU and cache configuration, exception vectors;
+- the interrupt controller, timers, and the clock/PLL setup that gets you an
+  exact 22.05/44.1/48 kHz I²S bit clock;
+- a DMA-driven I²S audio backend that never underruns;
+- SD/eMMC plus a FAT stack, because the ROMs, SoundFonts and `mt32-pi.cfg` live
+  on a card;
+- **a full USB host stack**, for USB MIDI — this is the big one;
+- an Ethernet driver and TCP/IP, if you want the RTP-MIDI and FTP features;
+- GPIO, I²C and SPI for the display, buttons and encoder.
+
+That is a board support package, and it is months, not a weekend. For scale:
+the community fork's jump from Circle 45.1 to 50.1 is what it takes merely to
+*follow* the Pi family, and Pi 5 support within that same family is still marked
+experimental.
+
+The cheaper move, if you are set on different silicon, is not to port mt32-pi
+but to replace it: a Buildroot image with `munt` and `fluidsynth` on ALSA. The
+engines come across for free. What you give up is what mt32-pi's bare-metal
+design buys — cold boot in seconds, no Linux audio configuration, predictable
+latency — and what you take on is RT scheduling, xruns, and writing your own
+control-surface and display layer. That is exactly option C in § 2, priced
+honestly: it is not a port, it is a new product with borrowed synth engines.
+
+The one case where a real port is defensible: a chip that already has a mature
+bare-metal BSP with a working USB host stack and I²S DMA (an i.MX RT or an
+STM32MP, say), where you are gluing rather than writing drivers. Even then you
+would be maintaining a second port of a project whose upstream has stopped
+(§ 10), on your own, forever.
 
 ## 3. How it talks to the host
 
@@ -247,14 +291,55 @@ card does not need it. What is real:
 - **Scope.** This is a side quest to the Voodoo card. Phase 1 costs $40 and a
   weekend and answers most of the question. Everything after that is packaging.
 
-## 10. What is checked, and what is not
+## 10. The field: what else exists
+
+Worth knowing before you build, because most of what looks like competition is
+not.
+
+**Almost every "MT-32 emulator" product is mt32-pi in a different box.** Serdaco's
+WP32 McCake (a CM4 on a WaveBlaster board — note that it reached the same
+conclusion about the CM4 that § 2.1 does), their MP32L and TM32, tebl's
+open-source BulkyMIDI-32, Bits und Bolts' MIDI FORGE Maestro (Zero 2 W,
+WaveBlaster, onboard screen and four buttons, files on PCBWay), the MiSTer minis
+from Ultimate MiSTer and MiSTer Addons, and a shelf of Tindie HATs. They differ
+in connectors, case and price, not in synthesis. That is also the honest read on
+what this project would be adding.
+
+**Upstream mt32-pi is discontinued.** The author has said he is unlikely to
+release further updates, citing sustained harassment, code theft and design
+plagiarism by people in the community, and the effect that had on his health.
+The software is stable and very usable; it is just not moving. The live fork is
+`metaneutrons/mt32-pi`: Circle 45.1 → 50.1, FluidSynth 2.3.1 → 2.5.3, Munt
+2.7.3, GCC 14.3, SF3 (Vorbis-compressed) SoundFonts, MIDI Thru, NEON
+vectorisation, and Pi 5 support marked experimental. Build against that fork,
+and budget for the possibility that you end up maintaining your own.
+
+Genuinely different approaches:
+
+| | What it is | Where it fits |
+|---|---|---|
+| **DreamBlaster S2 / X2 / X16** | Real wavetable silicon (SAM2695 and successors) on a WaveBlaster board | Instant on, no ROMs, no legality question, cheap. GM/GS — its "MT-32 mode" is an approximation, not emulation |
+| **Nuked-SC55** | Cycle-accurate Roland SC-55 family: SC-55mk1/mk2/st, CM-300, SCC-1, SCB-55, SC-155, JV-880 | The best Sound Canvas there is, at about one Pi 4 core. **Upstream archived 12 September 2026**, relicensed GPL2, development stopped; the README points at forks, jcmoyer's in particular. If SC-55 is part of your plan, plan on a fork |
+| **EmuSC** | SC-55 emulation driven from the ROM sample data rather than chip-level | Cheaper on CPU, less exact. The pragmatic SC-55 option for weak silicon |
+| **PicoGUS** | RP2040 ISA card: GUS, SB16/SB Pro 2 OPL3, AdLib, CMS/Game Blaster, Tandy 3-voice, and MPU-401 *intelligent mode* with real MIDI out | The complement, not the competitor — it is the host-interface half. Combo products literally pair a PicoGUS with an mt32-pi |
+| **Host-side software** | DOSBox-Staging with Munt and FluidSynth built in, Nuked-SC55 as a CLAP plugin, VirtualMIDISynth or the Munt VSTi on a modern PC, SoftMPU on the DOS machine for intelligent-mode MPU-401 | Free, and it answers "do I like this sound?" before any hardware exists |
+| **The real thing** | An MT-32, CM-32L or SC-55 on eBay | You need a ROM dump from somewhere anyway, and nothing emulates the analog output stage |
+
+And the negative result that matters for this project: **there is still no
+finished FPGA MT-32.** The MiSTer community's answer to MT-32 is to bolt a
+Raspberry Pi onto the MiSTer. That is a fair summary of the state of the art,
+and it is why § 1 says to keep LA synthesis on a CPU.
+
+## 11. What is checked, and what is not
 
 Verified from source while writing: mt32-pi's supported Pi models, engines,
 input/output options, display and control support, ROM policy and licence, from
-its README; the Nuked-SC55 CPU figures from its optimisation discussions;
-Serdaco's WP32 McCake as existing WaveBlaster-hosted mt32-pi hardware; the
-September 2026 Zero 2 W stock picture and Raspberry Pi's supply statements and
-production commitment.
+its README; the Nuked-SC55 CPU figures from its optimisation discussions, and
+its archival, relicensing and end of development in September 2026; Serdaco's
+WP32 McCake as existing CM4-based WaveBlaster mt32-pi hardware; upstream
+mt32-pi's discontinuation and the `metaneutrons` fork's changes and version
+bumps; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
+statements and production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
 (against a real card, not a web table), the exact audio level a period sound
