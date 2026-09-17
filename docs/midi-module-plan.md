@@ -47,8 +47,8 @@ Three consequences fall out of that, and they decide the whole design:
 
 | | Compute | MT-32 (Munt) | GM (FluidSynth) | SC-55 (Nuked-SC55) | Effort | Est. cost |
 |---|---|---|---|---|---|---|
-| **A. Stock mt32-pi** | Pi Zero 2 W | yes | yes | no | a weekend, no PCB | ~$40 |
-| **B. Custom carrier** | Pi Zero 2 W soldered, or CM4/CM5 | yes | yes | CM4/CM5 only, marginal | one 4-layer board, stock image | ~$55–90 |
+| **A. Stock mt32-pi** | Pi 3 A+ or Zero 2 W | yes | yes | no | a weekend, no PCB | ~$40 |
+| **B. Custom carrier** | CM4 Lite, or a socketed Zero-format board | yes | yes | CM4 only, marginal | one 4-layer board, stock image | ~$55–80 |
 | **C. T113-S3 board** | 2× A7 1.2 GHz, Linux | likely, unproven here | RAM-limited | no | you write the software platform | ~$45 |
 | **D. RP2350** | 2× M33 150 MHz | no | small SF2, reduced polyphony | no | firmware project | ~$15 |
 | **E. FPGA fabric** | Artix/Gowin | no | sample engine possible | no | large | — |
@@ -74,9 +74,45 @@ Notes behind the table:
   `opl3_fpga`, jotego's JT cores) — a sample-playback engine and a
   sample-accurate mixer and I²S master. Keep LA synthesis on a CPU.
 
-**Recommendation: A, then B.** Buy a Zero 2 W, an I²S DAC and an optocoupler
-this week and prove the thing you actually want to hear. Then spend a board spin
-turning that pile into the connector set below. Do not start at C or E.
+**Recommendation: A, then B.** Get a supported Pi, an I²S DAC and an
+optocoupler this week and prove the thing you actually want to hear. Then spend a
+board spin turning that pile into the connector set below. Do not start at C or E.
+Which Pi, given that the Zero 2 W is hard to buy, is the next section.
+
+### 2.1 When the Zero 2 W is out of stock
+
+It usually is. As of 11 September 2026 Adafruit, CanaKit, Pimoroni and The Pi Hut
+were all sold out; PiShop had it at $17.25, one per customer. Raspberry Pi blamed
+AI-driven substrate demand in May 2026, has qualified a second substrate vendor,
+expects supply to improve in the second half of 2026, and has committed to
+producing the Zero 2 W until at least January 2030. So this is a shortage, not an
+end of life — which is cold comfort if you want to build something this month.
+
+The rule that decides every substitution: **mt32-pi boots on Zero 2 W, Pi 3 A+,
+Pi 3 B/B+, Pi 4 B and the CM4 series, and nothing else.** Step off that list and
+you are not running mt32-pi at all — you are building your own Linux appliance
+around Munt and FluidSynth, and inheriting boot time, RT scheduling, xruns, and a
+control and display UI that mt32-pi otherwise gives you for free. Pi 5 and CM5 are
+not on the official list either; Circle reportedly runs on a Pi 5, and the
+actively maintained `metaneutrons/mt32-pi` fork is where to check whether that has
+turned into real support.
+
+| Substitute | Runs mt32-pi | Availability | Notes |
+|---|---|---|---|
+| **CM4 Lite, 1 GB, no wireless** (CM4001000) | yes | best in the range — it sells through industrial distribution, not the hobby channel | $25. Pi 4 silicon, so Nuked-SC55 becomes thinkable later. Two Hirose DF40 100-pin connectors — the same family, and the same 100-pin size, as the module standard in `voodoo2-modular-card.md`, so the footprint and the assembly process are ones this project already uses. Needs a microSD slot on the carrier and a 5 V rail good for about 1 A of peak |
+| **Pi 3 A+** | yes | usually stocked | $25, 512 MB, 65 × 56 mm. Several commercial mt32-pi products ship exactly this. The quickest unblock for phase 1 |
+| **Pi 3 B+ / Pi 4 B** | yes | good | Bigger, hotter, more power draw; awkward as an internal daughterboard. The Pi 4 is the only one on the list that could later carry SC-55 emulation |
+| **CM3+ Lite, CM4S** | untested | good, and the DDR2 SODIMM socket is cheap | Pi 3 and Pi 4 silicon in SODIMM form. Circle supports the SoCs; mt32-pi does not list the modules. Buy one and boot it *before* you lay out a board around it |
+| **Zero 2 W via other channels** | yes | intermittent | rpilocator alerts, approved resellers, industrial distributors, used. Fine for a one-off, not for a batch |
+| Orange Pi Zero 2W, Radxa Zero 3W, Geniatech XPI-3566 | **no** | good | Linux only. Munt plus FluidSynth under ALSA, your own image, your own UI |
+| T113-S3, already in the rev A BOM | **no** | good | Same deal as the row above, but at least the supply risk is one you have already accepted elsewhere in this project |
+
+**What I would do:** use a **Pi 3 A+** to get sound out of it this week, and
+design the board around a **CM4 Lite** — it is the most reliably purchasable part
+on the supported list, it is Pi 4 class, and its connector is one this project is
+already committed to. Then hedge cheaply: a 40-pin GPIO header footprint costs
+nothing but board area, and it keeps the design alive for any Zero-format board,
+Pi or otherwise, if the CM4 ever goes the way of the Zero 2 W.
 
 ## 3. How it talks to the host
 
@@ -116,8 +152,8 @@ Three electrical details that bite on that header:
   MIDI DIN in ──[H11L1]──┐
   WaveBlaster MIDI ──[LVC1G17]──┤
   FPGA expansion TTL ────────────┼──> UART RX ┌──────────────┐   I2S   ┌──────────┐
-                                 │            │  Pi Zero 2 W │ ──────> │ PCM5102A │
-  USB MIDI ──────────────────────┼──> USB     │  (or CM4/5)  │         └────┬─────┘
+                                 │            │   CM4 Lite   │ ──────> │ PCM5102A │
+  USB MIDI ──────────────────────┼──> USB     │ (or Pi 3 A+) │         └────┬─────┘
                                               │  mt32-pi     │              │
   microSD ────────────────────────────────────┤  bare metal  │      RC + DC block
                                               └──┬────────┬──┘         ├─> 3.5 mm TRS
@@ -172,16 +208,17 @@ card does not need it. What is real:
 
 | Build | Parts | Est. |
 |---|---|---|
-| Stock mt32-pi, off the shelf | Zero 2 W + DAC module + opto board + SD | ~$40 |
-| Daughterboard, qty 5 | Zero 2 W $15, PCB+assembly ~$12, DAC $3, header/passives $5 | ~$35–40 |
+| Stock mt32-pi, off the shelf | Pi 3 A+ (or Zero 2 W) + DAC module + opto board + SD | ~$40 |
+| Daughterboard, qty 5 | CM4 Lite $25 + DF40 pair $5, PCB+assembly ~$12, DAC $3, passives $5 | ~$50 |
 | Bracket module, qty 5 | above + DIN, jacks, OLED, encoder, USB-C, bracket | ~$55–65 |
-| CM4/CM5 variant | module $25–45, DF40 or the CM connector, more layers | ~$80–110 |
+| Socketed 40-pin variant | Pi 3 A+ or any Zero-format board $15–25, header and standoffs $2 | ~$45–60 |
 
 ## 8. Phases
 
-1. **Prove the sound.** Stock Zero 2 W, mt32-pi, your own MT-32 ROM dump, a
-   game-port MIDI cable into a real DOS machine. — *exit: Sierra and LucasArts
-   titles sound right, and you know the latency you can live with.*
+1. **Prove the sound.** Whatever supported Pi you can actually buy (§ 2.1),
+   mt32-pi, your own MT-32 ROM dump, a game-port MIDI cable into a real DOS
+   machine. — *exit: Sierra and LucasArts titles sound right, and you know the
+   latency you can live with.*
 2. **Daughterboard spin.** 4-layer, WaveBlaster header, TTL level shift, DAC and
    output attenuator, no display. Stock mt32-pi image, unmodified. — *exit: it
    plays through an SB16's mixer with the lid on.*
@@ -200,9 +237,10 @@ card does not need it. What is real:
   SoundFonts whose licences forbid redistribution.
 - **GPLv3.** mt32-pi is GPLv3. If you modify it for this board — a different
   GPIO map, a different display — publish the changes with the board.
-- **Pi supply and lifetime.** Designing a soldered-down Zero 2 W in is a bet on
-  Broadcom availability. A socketed module (Zero header or CM4/CM5 connector) is
-  a few dollars and keeps the board alive if the part moves.
+- **Pi supply.** The Zero 2 W is chronically out of stock (§ 2.1) and nothing
+  outside mt32-pi's short supported list is a drop-in. Design around the CM4
+  Lite, keep the compute socketed rather than soldered, and add the 40-pin header
+  footprint as a second escape route.
 - **Analog next to digital.** Inside a PC, on a card's 5 V, beside a graphics
   card, a clean line out is work: star ground, keep the DAC's ground return away
   from the Pi's, and expect to iterate the output filter.
@@ -214,10 +252,13 @@ card does not need it. What is real:
 Verified from source while writing: mt32-pi's supported Pi models, engines,
 input/output options, display and control support, ROM policy and licence, from
 its README; the Nuked-SC55 CPU figures from its optimisation discussions;
-Serdaco's WP32 McCake as existing WaveBlaster-hosted mt32-pi hardware.
+Serdaco's WP32 McCake as existing WaveBlaster-hosted mt32-pi hardware; the
+September 2026 Zero 2 W stock picture and Raspberry Pi's supply statements and
+production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
 (against a real card, not a web table), the exact audio level a period sound
 card's wavetable input wants, the 5 V headroom on the host card's rail, the
-current Zero 2 W price and stock, and whether Munt is comfortable on a single
+current Pi prices and stock, whether mt32-pi boots on a CM3+ Lite or a CM4S, and
+whether Munt is comfortable on a single
 Cortex-A7 at 1.2 GHz if option C is ever revisited.
