@@ -54,11 +54,13 @@ assemble the LFBGA and at what setup cost, and what the board comes to at qty 5.
 
 ### C. `boot/` — bring-up path
 What actually boots a T113-i with *external* DDR3: mainline U-Boot (T113 support
-landed in v2024.01), awboot, xboot, and the vendor route. Establish where the DRAM
-parameters come from for an external-DDR3 part, since awboot's are for the
-T113-S3's in-package memory. Then: SD card boot flow and image header, FEL
-recovery, toolchain, and how to load a bare-metal or RTOS payload instead of a
-kernel.
+landed in v2024.01), awboot, xboot, and the vendor route. **Answered** in `boot/BRINGUP.md`: mainline U-Boot
+v2024.01 or later, payload wrapped with `mkimage` and started with `bootm` rather
+than `go` (only `bootm` runs `cleanup_before_linux()`, so only `bootm` hands over
+with the MMU and D-cache off), developed over `xfel` without touching an SD card.
+Bare metal on day one, taking the FreeRTOS T113 port's GIC, timer, MMU and SMHC
+scaffolding, which already runs on this silicon under a clean licence, and
+writing the one driver nobody has: I²S with DMA.
 
 ### D. `port/` — the platform layer
 What `mt32emu` needs from a platform: C++ runtime, allocator, float, and nothing
@@ -83,9 +85,20 @@ builds against the host, so `port/` can be exercised before silicon exists.
 - **Munt is too slow on an A7.** The gate. Nothing else matters first.
 - **DDR3 on a 4-layer board.** Length matching and impedance on a cheap stack-up
   is the classic way to lose a month. Copy a reference layout; do not invent.
-- **External-DDR3 T113-i has thinner community ground truth than the T113-S3**,
-  whose in-package memory is what every hobbyist board uses. The DRAM parameter
-  set is the specific unknown.
+- ~~**External-DDR3 T113-i has thinner community ground truth than the T113-S3.**~~
+  **Resolved, 2026-09-17, by workstream C.** The DRAM init is GPL source in
+  mainline U-Boot (`drivers/ram/sunxi/dram_sun20i_d1.c`, T113 landed in v2024.01),
+  not an Allwinner blob. Density and geometry are auto-detected at training time,
+  so a 2 Gbit and a 4 Gbit part share one defconfig, and the external-DDR3 delta
+  against the in-package part is four Kconfig numbers. Two published external-DDR3
+  T113-i boards use *different* values and both work, which means these are board
+  trim rather than part constants. See `boot/BRINGUP.md`.
+- **AC remapping now gates the PCB, and replaces the risk above.** `dram_tpr13`
+  bit 18 selects which address/command swizzle table the PHY uses, overriding an
+  efuse that only describes bond wiring on a co-packaged part. Our DDR3
+  address/command routing must match whatever table we program. That is a
+  schematic decision taken before fab, not a software tune, and it needs either a
+  published T113-i board schematic or a part in hand to read the efuse.
 - **No USB host means no USB MIDI, ever, on this design.** That is a deliberate
   trade (§ 2.6 of the parent document) and it must stay deliberate.
 - **Licensing.** `mt32emu` is LGPL 2.1; static linking carries obligations, so

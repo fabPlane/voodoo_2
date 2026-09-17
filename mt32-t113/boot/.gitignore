@@ -2,9 +2,14 @@
 # See BRINGUP.md "Reference tree" for what each one is and how to re-fetch it.
 vendor/
 
+# Generated: DDR-init payloads lifted out of xfel's source and stamped with our
+# DRAM parameters. Derived from an Allwinner boot0 image, so not ours to
+# redistribute. Regenerate in one command:
+#   ./scripts/fel-ddr-t113i.sh
+payloads/
+
 # Build products
 *.bin
 *.elf
 *.img
 *.o
-!payloads/*.bin
