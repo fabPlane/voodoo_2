@@ -158,6 +158,65 @@ STM32MP, say), where you are gluing rather than writing drivers. Even then you
 would be maintaining a second port of a project whose upstream has stopped
 (§ 10), on your own, forever.
 
+### 2.3 Would FreeRTOS be better?
+
+It is the right shape for a from-scratch MCU synth, and it is not a shortcut for
+this one. The reason is that **FreeRTOS is a scheduler, not a BSP.**
+
+Look again at the list in § 2.2 and ask which lines FreeRTOS supplies. Tasks,
+queues, timers, notifications, and that is the end of it. Startup, MMU and cache,
+the interrupt controller, clock trees, I²S DMA, SD/eMMC, FAT, USB host, TCP/IP
+— none of that is in FreeRTOS. You get it from the vendor SDK (MCUXpresso,
+STM32Cube, pico-sdk) or from TinyUSB and FatFs. That is real leverage and worth
+having, but it means swapping Circle for FreeRTOS removes the easy tenth of the
+port and leaves the other nine tenths exactly where they were. Circle also
+already has a cooperative scheduler, so you are not gaining a concurrency model
+you currently lack.
+
+For audio specifically, an RTOS can be a step backwards. A MIDI sound module is
+one hard-real-time render loop feeding a DMA ring, plus a UART or USB interrupt
+dropping events into a queue. A superloop with interrupts is the lowest-jitter
+way to express that; preemption adds context-switch jitter, priority inversion
+and a stack per task. Where FreeRTOS earns its keep is the *other* half of
+mt32-pi — USB enumeration, the network stack, FTP, the display and encoder UI,
+SD access — all of which want to run without stalling the renderer.
+
+What a FreeRTOS port would actually cost, beyond the drivers:
+
+| Piece | Cost on an MCU |
+|---|---|
+| C and C++ runtime | mt32-pi gets this from `circle-stdlib` (newlib plus the STL on bare metal). Under FreeRTOS you need newlib with FreeRTOS lock hooks and a libstdc++ with a gthread shim |
+| Munt | The easy one. Plain C++, no OS dependencies. But the ROMs — roughly 64 KB control plus 512 KB PCM for an MT-32, about 1 MB for a CM-32L — must be resident and randomly addressed, so they want PSRAM or memory-mapped QSPI with a cache you have thought about |
+| FluidSynth | Historically needed glib. Modern versions build with `-Dosal=cpp11 -Denable-libinstpatch=0`, and glib is deprecated for removal in 2.6.0 — so the requirement becomes working C++11 threads and mutexes on your RTOS. SoundFont loading can go through custom open/read/seek/tell/close callbacks, which is what lets you stream an SF2 off SD instead of holding it in RAM |
+| USB MIDI | TinyUSB host is the realistic answer, and it is a different stack from the one mt32-pi's USB code is written against |
+
+**But none of that is what decides it.** The decision is cycles and memory, and
+the OS question is downstream of it. So settle it with a measurement, not an
+architecture:
+
+> Build `mt32emu` (Munt's library) for the candidate part with full optimisation
+> and no drivers at all. Feed it a captured busy passage from a real game, render
+> to a RAM buffer, and measure the real-time factor at 44.1 kHz. You want
+> something like 0.5–0.6 or better on the *worst* passage, not the average, to
+> leave room for USB, display and MIDI. Repeat for FluidSynth at the polyphony
+> you want, with and without reverb and chorus — the effects are a large share of
+> its cost. A day's work, on a dev board, before anyone routes a PCB.
+
+My expectation, stated as an expectation: an i.MX RT1170 (Cortex-M7 at 1 GHz
+with external SDRAM or HyperRAM) is the only MCU-class part I would bet on for
+Munt; an STM32H7 at 480 MHz is the interesting edge case; an RP2350 at 150 MHz
+and an ESP32-S3 are not candidates for LA synthesis, whatever you do to them.
+And a Pi 3 A+ or CM4 Lite costs $25 and runs all of it today, so the MCU route
+has to be justified by something other than money: sub-second boot, a couple of
+hundred milliwatts instead of a couple of watts, industrial supply with a
+ten-year horizon, no SD card, and no dependency on a discontinued upstream.
+
+**Where FreeRTOS does fit this project right now:** the RP2350B already on the
+Voodoo card. Give it the MIDI *control plane* — MPU-401 framing, USB MIDI host
+and device, routing, configuration, display and encoder — and leave synthesis to
+whatever makes the sound. That split is worth building. Porting Munt to it is
+not.
+
 ## 3. How it talks to the host
 
 Five paths, and the last one is the interesting one for this project.
@@ -338,7 +397,8 @@ its README; the Nuked-SC55 CPU figures from its optimisation discussions, and
 its archival, relicensing and end of development in September 2026; Serdaco's
 WP32 McCake as existing CM4-based WaveBlaster mt32-pi hardware; upstream
 mt32-pi's discontinuation and the `metaneutrons` fork's changes and version
-bumps; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
+bumps; mt32-pi's submodule set (circle-stdlib, munt, fluidsynth, inih) and
+FluidSynth's `osal=cpp11` escape from glib; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
 statements and production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
