@@ -1,0 +1,10 @@
+# Reference sources cloned for reading only. Never committed.
+# See BRINGUP.md "Reference tree" for what each one is and how to re-fetch it.
+vendor/
+
+# Build products
+*.bin
+*.elf
+*.img
+*.o
+!payloads/*.bin

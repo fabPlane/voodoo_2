@@ -1,0 +1,73 @@
+# U-Boot defconfig sketch for an mt32-t113 board: Allwinner T113-i with
+# EXTERNAL DDR3.  Drop into u-boot/configs/ and build with
+#   make CROSS_COMPILE=arm-linux-gnueabihf- t113i_mt32_defconfig
+#   make CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
+# Output: u-boot-sunxi-with-spl.bin
+#
+# UNVERIFIED ON HARDWARE.  Provenance for every non-obvious line is below.
+# Generate the DRAM block yourself with:
+#   scripts/ddrpara.py kconfig --preset mt32-t113
+#
+# Baseline: u-boot configs/mangopi_mq_r_defconfig (the mainline T113-S3 board,
+# added in v2024.01), with the DRAM block swapped for the external-DDR3 values
+# read out of SyterKit's 100ask T113-i board.dts.  See ../BRINGUP.md section 2.
+
+CONFIG_ARM=y
+CONFIG_ARCH_SUNXI=y
+
+# T113-i, T113-S3, T113-S4, R528, D1 and D1s are all the same die family in
+# mainline; there is no separate T113 symbol.  MACH_SUN8I_R528 selects
+# SUNXI_GEN_NCAT2, SUNXI_NEW_PINCTRL and DRAM_SUN20I_D1.
+CONFIG_MACH_SUN8I_R528=y
+
+# Our own devicetree. Start by copying
+#   arch/arm/dts/sun8i-t113s-mangopi-mq-r-t113.dts
+# or the Tronlong one from nickfox-taterli/t113-uboot
+#   arch/arm/dts/sun8i-t113i-minievm.dts
+# and fixing the console UART pinmux, MMC0 pins and regulators for our board.
+CONFIG_DEFAULT_DEVICE_TREE="allwinner/sun8i-t113i-mt32"
+
+CONFIG_SPL=y
+
+# --- DRAM: EXTERNAL DDR3, 512 MB (one x16 4 Gbit part) -----------------------
+# The driver auto-detects rank count, DQ width, row/bank/page size, so the
+# DENSITY IS NOT CONFIGURED HERE - 256 MB or 1 GB would use the same lines.
+# What is configured is electrical trim, and it is board specific.
+CONFIG_DRAM_CLK=792
+CONFIG_SUNXI_DRAM_TYPE_DDR3=y
+CONFIG_DRAM_ZQ=8092667
+
+# ODT_EN=1: the 100ask T113-i external-DDR3 board enables on-die termination.
+# The co-packaged T113-S3 uses 0.  The Tronlong T113-i MiniEVM also uses 0 on
+# external DDR3, so this is a board call, not a part call.  Try 1 first.
+CONFIG_DRAM_SUNXI_ODT_EN=0x1
+
+# TPR11/TPR12: per-byte-lane read and write delay trim, applied in
+# eye_delay_compensation().  This is the PCB trace-delay knob.  These two lines
+# are what you sweep if DRAM is flaky on our own layout.
+CONFIG_DRAM_SUNXI_TPR11=0x770000
+CONFIG_DRAM_SUNXI_TPR12=0x2
+
+# TPR13 feature bits.  0x34050100 vs the T113-S3's 0x34000100 adds:
+#   bit 16 - internal ZQ only
+#   bit 18 - force AC remapping table 7 instead of the efuse-selected table
+# Bit 18 matters most: on the co-packaged parts an efuse at SID+0x28[11:8]
+# selects the address/command pin swizzle that matches the internal bond wires.
+# On a part with external DDR3 that efuse means nothing useful, so the
+# external-DDR3 board forces a known table.  OUR PCB MUST BE ROUTED TO MATCH
+# WHICHEVER TABLE WE SET HERE - see ../BRINGUP.md section 2, "AC remapping".
+CONFIG_DRAM_SUNXI_TPR13=0x34050100
+
+# Minimum DRAM the SPL will accept before declaring failure.
+CONFIG_SUNXI_MINIMUM_DRAM_MB=128
+
+# --- Console ----------------------------------------------------------------
+# CONS_INDEX is 1-based: 1=UART0 ... 4=UART3.  mangopi_mq_r uses UART3
+# (CONS_INDEX=4).  The 100ask T113-i devkit brings the console out on UART0;
+# the Tronlong T113i MiniEVM uses UART0 on PG17/PG18 and needs the extra
+# UART0_PORT_PG symbol that only exists in the taterli fork.
+# Pick this to match our schematic before the first build.
+CONFIG_CONS_INDEX=1
+
+# --- Misc -------------------------------------------------------------------
+# CONFIG_SYS_MALLOC_CLEAR_ON_INIT is not set
