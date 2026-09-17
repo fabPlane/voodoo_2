@@ -261,6 +261,54 @@ and device, routing, configuration, display and encoder — and leave synthesis 
 whatever makes the sound. That split is worth building. Porting Munt to it is
 not.
 
+### 2.4 It does not need 1 GB
+
+Nothing in this workload wants a gigabyte. The CM4 simply has no smaller SKU —
+it ships in 1, 2, 4 and 8 GB, and there is no 512 MB part — so the 1 GB in § 2.1
+is a floor imposed by the product line, not a requirement. In 2026 that is
+exactly the wrong thing to be forced into buying (§ 2.1): you are paying the DRAM
+premium for memory the synth will never touch.
+
+Where the memory actually goes:
+
+| Consumer | Size |
+|---|---|
+| Munt control ROM | 64 KB, resident |
+| Munt PCM ROM | 512 KB for an MT-32, about 1 MB for a CM-32L, resident and randomly addressed |
+| Munt internal state and tables | single-digit MB (my estimate, not measured) |
+| Circle kernel, heap, stacks | small. No operating system, no page cache, no swap |
+| Audio DMA ring | hundreds of KB |
+| **The SoundFont** | **everything else.** FluidSynth loads SF2 sample data into RAM, so the file size *is* the requirement |
+
+So an MT-32-only box would be comfortable in about 16 MB. Everything above that
+is General MIDI, and it scales with the SoundFont you choose, not with the
+emulation:
+
+- GeneralUser GS, the one mt32-pi ships, is about 30 MB.
+- UGM and OmegaGMGS2 run fine on a 512 MB Pi.
+- Timbres of Heaven 4.0 at 419 MB is the documented failure case: it does *not*
+  load on a 512 MB Zero 2 W, because the SoundFont plus the system does not fit.
+
+That is the whole story of the RAM axis. 512 MB — what the Zero 2 W and the
+Pi 3 A+ have — covers every SoundFont people actually use bar the giants. A
+gigabyte buys you Timbres-of-Heaven-class fonts and nothing else.
+
+And the pressure is being solved in software anyway: the `metaneutrons` fork
+supports SF3, which is the same SoundFont with Vorbis-compressed samples at five
+to ten times smaller, and FluidSynth's stream callbacks allow loading through
+custom I/O rather than slurping the file. A 400 MB font becomes a 40–80 MB one.
+
+Two consequences for this design:
+
+1. **Buy the 512 MB parts.** They are the ones whose price held (§ 2.1), and they
+   are not the compromise they look like. The part this project would actually
+   want — Pi 4-class CPU with 256 MB — does not exist in the Pi line.
+2. **It sharpens option C.** The T113-S3's 128 MB of in-package DDR3 is poorly
+   matched to a big SF2 but perfectly adequate for MT-32 plus a compressed SF3,
+   and it is old, cheap DRAM rather than the LPDDR4 that repriced everything. It
+   still fails the "runs mt32-pi" test in § 2.1 — but on memory, it is closer to
+   right-sized than a CM4 is.
+
 ## 3. How it talks to the host
 
 Five paths, and the last one is the interesting one for this project.
@@ -451,7 +499,9 @@ mt32-pi's discontinuation and the `metaneutrons` fork's changes and version
 bumps; mt32-pi's submodule set (circle-stdlib, munt, fluidsynth, inih) and
 FluidSynth's `osal=cpp11` escape from glib; the 2026 DRAM-driven price rises,
 the CM4 Lite's $41.25 list and $84 retail asks, the exemption of the older
-LPDDR2 models, and CM4 production running to at least January 2034; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
+LPDDR2 models, CM4 production running to at least January 2034 and its 1 GB
+memory floor, and the SoundFont-in-RAM behaviour including the 419 MB font that
+will not load on a 512 MB Pi; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
 statements and production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
