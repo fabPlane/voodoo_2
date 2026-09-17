@@ -333,6 +333,65 @@ Two consequences for this design:
    still fails the "runs mt32-pi" test in § 2.1 — but on memory, it is closer to
    right-sized than a CM4 is.
 
+### 2.5 Cheapest ARM that takes 512 MB of external DRAM
+
+If the answer to § 2.1 is "then build the compute too", this is the shopping
+list. Everything below is an LCSC quantity-one list price read from search
+results in September 2026 — LCSC and JLCPCB are both unreachable from where this
+was written, so **none of it is verified on the vendor's own page**. Re-quote
+before believing any of it.
+
+| SoC | Cores | Memory | LCSC qty 1 | Notes |
+|---|---|---|---:|---|
+| **Rockchip RK3308B** | 4× Cortex-A35 @ 1.3 GHz | external DDR3/DDR3L/LPDDR2/3 | **$4.08** | An audio SoC: several I2S ports, on-chip codec on some variants. Radxa's Rock Pi S is a published reference design with 512 MB on it |
+| **Allwinner T113-i** | 2× Cortex-A7 @ 1.2 GHz, HiFi4 DSP, RISC-V core | external DDR3, up to 2 GB | **$4.84** | Same family as the T113-S3 already in the rev A BOM, so the sunxi work, the power sequencing and the reference designs carry over. LFBGA, industrial temperature |
+| RK3308B-S / RK3308H | as above | as above | $4.43 / $5.64 | Variants worth a look when checking stock |
+| **Allwinner H616** | 4× Cortex-A53 @ 1.5 GHz | external DDR3 | $6.73 | The most CPU per dollar in the list |
+| **Allwinner H3** | 4× Cortex-A7 @ 1.2 GHz | external DDR3 | $7.08 | The best-trodden mainline path (Orange Pi Zero), if documentation matters more than price |
+| Rockchip RK3328 | 4× A53 @ 1.5 GHz | DDR3/DDR4 | $7.38 | |
+| NXP i.MX6ULL | 1× A7 | external DDR3 | ~$10.80–16.30 | Western support and documentation, single core, and the price of two Allwinners |
+| *for contrast:* Allwinner T113-S3 | 2× A7 @ 1.2 GHz | **128 MB in package, fixed** | $18.39 | |
+
+The DRAM, 512 MB being one 4 Gbit x16 DDR3L part:
+
+| Part | LCSC qty 1 |
+|---|---:|
+| Micron MT41K256M16HA-125 IT:E | **$6.53** |
+| Micron MT41K256M16TW-107:P | $17.55 |
+| Nanya NT5CC256M16ER-EK / EKI | $19.56–$30.12 |
+
+So the cheapest ARM-plus-512 MB pairing on this evidence is **RK3308B plus one
+Micron 4 Gbit DDR3L, about $10.60 of silicon**, with **T113-i at about $11.40**
+the one I would actually pick here, because its family is already in this
+project's BOM.
+
+**The finding that matters beyond this document:** the T113-S3 costs $18.39 with
+128 MB soldered inside it, while the T113-i costs $4.84 and takes 512 MB beside
+it for $6.53. You are paying roughly $13.50 for 128 MB of in-package DRAM, and
+getting four times the memory for less by putting it outside. That is worth
+re-checking against the rev A BOM's T113-S3 line for the Voodoo card itself, not
+just for this side quest.
+
+Five caveats, and they are not small:
+
+1. **None of these run mt32-pi.** This is option C in § 2, with all of its
+   software work: Buildroot, Munt, FluidSynth, ALSA, RT tuning, and your own
+   control surface.
+2. **Chips are not a board.** DDR3 means length-matched, impedance-controlled
+   routing, six layers or a very careful four, a PMIC or three sequenced rails,
+   eMMC or SD, and BGA assembly. That is a month and a respin risk, against
+   soldering a 40-pin header and plugging in a Pi.
+3. **Being on LCSC is not being assemblable at JLCPCB.** Check that the part is
+   in the assembly library, and what the extended-part and feeder fees are,
+   before designing around it.
+4. **Nobody has shown Munt running well on any of these.** A quad A35 at 1.3 GHz
+   and a dual A7 at 1.2 GHz are in the neighbourhood of a Pi 3, not obviously
+   past it. Run the real-time-factor measurement from § 2.3 on a $20 Rock Pi S or
+   a T113 board first.
+5. **512 MB may be the wrong target anyway** (§ 2.4). MT-32 alone wants about
+   16 MB; 256 MB covers a decent General MIDI font. A 2 Gbit chip is cheaper, and
+   in this market that matters more than it used to.
+
 ## 3. How it talks to the host
 
 Five paths, and the last one is the interesting one for this project.
@@ -527,7 +586,9 @@ LPDDR2 models, CM4 production running to at least January 2034 and its 1 GB
 memory floor, and the SoundFont-in-RAM behaviour including the 419 MB font that
 will not load on a 512 MB Pi; FluidSynth's `dynamic-sample-loading` semantics and
 its caching of decompressed SF3 samples; mt32-pi's FluidSynth configuration
-surface; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
+surface; September 2026 LCSC list prices for the RK3308/T113/H3/H616/RK3328/
+i.MX6ULL families and for 4 Gbit DDR3L parts, read from search results rather
+than from LCSC itself, which is unreachable here; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
 statements and production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
