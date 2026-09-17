@@ -3,6 +3,23 @@
 Status: 2026-09-17, start of work. Nothing below is measured yet; the first
 milestone exists to make one number true or false.
 
+## State, 2026-09-17
+
+All four workstreams have reported once. What is settled and what is not:
+
+| | |
+|---|---|
+| **The gate is open.** No real-time factor has been measured, because MT-32 ROMs are copyrighted and absent here. `bench/` builds for host and Cortex-A7 and is ready to run | **blocking everything** |
+| DRAM parameters: resolved. GPL source in mainline U-Boot, density auto-detected, four Kconfig numbers separate external from co-packaged DDR3 | closed |
+| DDR3 address/command routing: straight through, no swizzle, with the reasoning and the one-command efuse check in `hw/HARDWARE.md` § 5.4 | closed, pending that check |
+| Power-up sequencing: **unread**. The vendor warns wrong timing destroys the part. Four PDFs to fetch, none reachable from this session | **gates copper** |
+| Platform layer: designed, and its host harness builds and passes its own tests | closed for now |
+| Board versus module: **buy a vendor SoM first**. Within noise of our own board at qty 5, and the module vendor has already answered the routing and sequencing questions we cannot read | decided |
+
+Next three actions, in order: get ROM dumps and a T113 board and run `bench/rtf`;
+read the efuse at SID+0x28 over FEL on whatever board arrives; fetch the four
+hardware PDFs from a network that can reach them.
+
 ## 0. The gate
 
 **Does `mt32emu` render MT-32 audio faster than real time on one Cortex-A7 at

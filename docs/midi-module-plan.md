@@ -241,10 +241,15 @@ Munt; an STM32H7 at 480 MHz is the interesting edge case; an RP2350 at 150 MHz
 and an ESP32-S3 are not candidates for LA synthesis, whatever you do to them.
 The economics used to settle this argument against the MCU: a $25 Pi ran all of
 it today. At 2026 prices (§ 2.1) that is no longer obviously true, and there is a
-second-order effect worth noticing. **Munt's working set is small** — on the order
-of 1 to 2 MB including the ROMs — which is inside the on-chip SRAM of parts like
-the i.MX RT1170. A synth that needs no DRAM at all is a strategically different
-thing to build in a year when DRAM is what broke everyone's bill of materials.
+second-order effect worth noticing. **Munt's working set is small**, though not as
+small as this document first claimed. Measured since, by instrumenting
+`operator new` on a real build: an MT-32 in the integer renderer with reverb
+preallocated is 949 KiB of synth state plus 576 KiB of ROM buffers, **1.49 MiB**;
+a CM-32L is **2.49 MiB**. So an i.MX RT1170's 2 MB of on-chip SRAM holds an
+MT-32 and does *not* hold a CM-32L, and the T113-i's 128 KB holds neither — that
+part needs its DDR3. A synth that needs no DRAM at all is still a strategically
+different thing to build in a year when DRAM is what broke everyone's bill of
+materials, but it is an MT-32-only proposition on the biggest MCU in the list.
 FluidSynth is the part that wants memory, and on an MCU it would have to run with
 dynamic sample loading and a small font (§ 2.4) — or not at all, leaving General
 MIDI to a wavetable chip.
