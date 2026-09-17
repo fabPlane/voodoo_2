@@ -1,0 +1,19 @@
+# Munt is cloned here, never committed. It is LGPL 2.1 and upstream is the
+# only source of truth; the commit this bench was written against is recorded
+# in bench/README.md. (The repo-root .gitignore already has **/vendor/; this
+# line is here so bench/ is self-explanatory when read on its own.)
+vendor/
+
+# Build trees
+build-host/
+build-armv7/
+build-*/
+
+# Never commit ROM dumps. MT-32 and CM-32L ROMs are Roland's.
+roms/
+*.ROM
+*.rom
+
+# Harness output
+*.csv
+*.wav
