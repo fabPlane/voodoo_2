@@ -220,7 +220,7 @@ What a FreeRTOS port would actually cost, beyond the drivers:
 |---|---|
 | C and C++ runtime | mt32-pi gets this from `circle-stdlib` (newlib plus the STL on bare metal). Under FreeRTOS you need newlib with FreeRTOS lock hooks and a libstdc++ with a gthread shim |
 | Munt | The easy one. Plain C++, no OS dependencies. But the ROMs — roughly 64 KB control plus 512 KB PCM for an MT-32, about 1 MB for a CM-32L — must be resident and randomly addressed, so they want PSRAM or memory-mapped QSPI with a cache you have thought about |
-| FluidSynth | Historically needed glib. Modern versions build with `-Dosal=cpp11 -Denable-libinstpatch=0`, and glib is deprecated for removal in 2.6.0 — so the requirement becomes working C++11 threads and mutexes on your RTOS. SoundFont loading can go through custom open/read/seek/tell/close callbacks, which is what lets you stream an SF2 off SD instead of holding it in RAM |
+| FluidSynth | Historically needed glib. Modern versions build with `-Dosal=cpp11 -Denable-libinstpatch=0`, and glib is deprecated for removal in 2.6.0 — so the requirement becomes working C++11 threads and mutexes on your RTOS. SoundFont loading can go through custom open/read/seek/tell/close callbacks, so the font can live on SD or in flash — but note those callbacks abstract the I/O, they do not reduce residency; that needs `synth.dynamic-sample-loading` (§ 2.4) |
 | USB MIDI | TinyUSB host is the realistic answer, and it is a different stack from the one mt32-pi's USB code is written against |
 
 **But none of that is what decides it.** The decision is cycles and memory, and
@@ -245,8 +245,9 @@ second-order effect worth noticing. **Munt's working set is small** — on the o
 of 1 to 2 MB including the ROMs — which is inside the on-chip SRAM of parts like
 the i.MX RT1170. A synth that needs no DRAM at all is a strategically different
 thing to build in a year when DRAM is what broke everyone's bill of materials.
-FluidSynth is the part that wants memory, and SF3 compression plus its stream
-callbacks push most of that onto the SD card.
+FluidSynth is the part that wants memory, and on an MCU it would have to run with
+dynamic sample loading and a small font (§ 2.4) — or not at all, leaving General
+MIDI to a wavetable chip.
 
 That is an argument for *running the measurement*, not for starting the port. The
 MCU route still has to be justified by something other than money — sub-second
@@ -293,10 +294,33 @@ That is the whole story of the RAM axis. 512 MB — what the Zero 2 W and the
 Pi 3 A+ have — covers every SoundFont people actually use bar the giants. A
 gigabyte buys you Timbres-of-Heaven-class fonts and nothing else.
 
-And the pressure is being solved in software anyway: the `metaneutrons` fork
-supports SF3, which is the same SoundFont with Vorbis-compressed samples at five
-to ten times smaller, and FluidSynth's stream callbacks allow loading through
-custom I/O rather than slurping the file. A 400 MB font becomes a 40–80 MB one.
+**Does the whole font have to be resident?** As mt32-pi ships, yes: FluidSynth
+reads the sample chunk in at load time and keeps it. The configuration file
+exposes the SoundFont choice, polyphony (default 200 voices), gain, reverb and
+chorus — there is no memory-residency knob.
+
+FluidSynth itself can do better, with `synth.dynamic-sample-loading`. With it on,
+samples are loaded when a preset is selected on a channel and unloaded when it is
+deselected and no other channel uses it, so the resident set becomes the presets
+actually in play rather than the whole font. It is off by default, mt32-pi does
+not expose it, and there is a decent engineering reason: a program change would
+then trigger an SD read mid-performance. On bare metal, with no page cache and a
+renderer that must not miss a DMA deadline, that is a dropout waiting for the
+worst possible moment — a game switching instruments during a cue. Residency is
+how mt32-pi buys predictable latency.
+
+**And a correction to what an earlier revision of this document implied about
+SF3:** Vorbis compression shrinks the *file*, not the footprint. FluidSynth
+decompresses each sample and caches the decompressed data in memory, so a 400 MB
+font stored as a 50 MB SF3 still wants roughly 400 MB of RAM once loaded. SF3
+buys SD card space and load time. It only buys RAM in combination with dynamic
+sample loading — and then what you are really buying is partial residency, with
+the latency risk above attached.
+
+So if you want the RAM number down, the levers in order of honesty are: pick a
+smaller SoundFont; or enable dynamic sample loading and accept load-time
+glitches on program change; or accept that General MIDI on this architecture
+costs what the font costs.
 
 Two consequences for this design:
 
@@ -501,7 +525,9 @@ FluidSynth's `osal=cpp11` escape from glib; the 2026 DRAM-driven price rises,
 the CM4 Lite's $41.25 list and $84 retail asks, the exemption of the older
 LPDDR2 models, CM4 production running to at least January 2034 and its 1 GB
 memory floor, and the SoundFont-in-RAM behaviour including the 419 MB font that
-will not load on a 512 MB Pi; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
+will not load on a 512 MB Pi; FluidSynth's `dynamic-sample-loading` semantics and
+its caching of decompressed SF3 samples; mt32-pi's FluidSynth configuration
+surface; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
 statements and production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
