@@ -1,0 +1,38 @@
+# mt32-t113 minimum test board BOM, rev 0 (paper only, nothing routed)
+# Prices: LCSC qty-1 list, read from search-engine extraction on 2026-09-17.
+# LCSC and JLCPCB are unreachable from the authoring environment - see hw/HARDWARE.md section 0.
+# confidence: V = vendor/reseller listing, GUESS = invented placeholder, I = engineering judgement
+ref,function,part,lcsc,package,qty,unit_usd,ext_usd,confidence,note
+U1,SoC,Allwinner T113-i,C7545092,LFBGA-337 13x13mm,1,4.8421,4.84,V,308 in stock; has a jlcpcb.com partdetail page
+U2,DRAM,DDR3L 4Gbit x16 512MB (MT41K256M16HA-125 IT:E),C20463642,FBGA-96 9x14mm,1,6.5295,6.53,V,DigiKey marks this SKU obsolete - see alternates below
+U2-alt1,DRAM alt,MT41K256M16TW-107:P,C253882,FBGA-96,1,13.7727,13.77,V,933MHz grade
+U2-alt2,DRAM alt,MT41K256M16TW-107 XIT:P,C1349259,FBGA-96,1,3.0329,3.03,V,suspiciously cheap - verify before trusting
+U2-alt3,DRAM alt,NT5CC256M16ER-EK (Nanya),C428584,FBGA-96,1,30.1211,30.12,V,321 in stock
+U2-alt4,DRAM alt 2Gbit,MT41K128M16JT-125 XIT:K,C598780,FBGA-96,1,10.46,10.46,V,256MB and MORE expensive than the 4Gbit part - do not use
+U3,Audio DAC,PCM5102APWR,C107671,TSSOP-20,1,0.8379,0.84,V,internal PLL - no MCLK needed; BCK/LRCK/DIN only
+U4,MIDI optocoupler,H11L1S(TA) Everlight,C78589,SMD-6,1,0.1563,0.16,V,17045 in stock; Schmitt output; spec'd from 3.0V
+U4-alt,MIDI opto alt,H11L1 (through-hole),C78588,DIP-6,1,0.1611,0.16,V,hand-solder step
+U4-alt2,MIDI opto alt,H11L1SM onsemi,C899473,SMD-6,1,,,V,SMD onsemi equivalent
+U5,Buck 3.3V,SY8089AAAC,C78988,SOT-23-5,1,0.0776,0.08,V,2A; 62105 in stock
+U6,Buck VCC-DRAM 1.5V,SY8089AAAC,C78988,SOT-23-5,1,0.0776,0.08,V,Allwinner guide: external DC-DC for VCC-DRAM
+U7,Buck VDD-CPU,SY8089AAAC,C78988,SOT-23-5,1,0.0776,0.08,V,fixed voltage - no DVFS on the test board
+U8,LDO 1.8V,XC6206 / ME6211 class,,SOT-23-3,1,0.05,0.05,GUESS,not priced
+U9,Boot flash (DNP),W25Q128JVSIQ,C97521,SOIC-8,0,1.6873,0.00,V,footprint only - BROM checks SD first then SPI then FEL
+U10,USB-UART (not fitted),CH340N,C506813,MSOP-8,0,0.2692,0.00,V,using a 4-pin header and an external dongle instead
+J1,microSD,TF-01A push-pull,C91145,SMD,1,0.1048,0.11,V,
+J2,USB-C for FEL and 5V in,USB-C 16P receptacle,,SMD,1,0.15,0.15,GUESS,device mode only - 2x 5.1k CC pulldowns
+J3,MIDI in,DIN-5 180deg PCB jack,,THT,1,0.40,0.40,GUESS,
+J4,Console,4-pin 2.54 header,,THT,1,0.05,0.05,GUESS,GND/TX/RX/3V3 for a USB-TTL dongle
+J5,Line out,3.5mm jack or 2-pin,,,1,0.15,0.15,GUESS,DC-blocked and attenuated for a WaveBlaster mixer input
+Y1,Main clock,24MHz SMD3225 X322524MSB4SI,C15643,3225,1,0.0492,0.05,V,31250 baud = 24MHz/16/48 exactly
+Y2,RTC clock,32.768kHz SC-20S,C97603,cylinder,1,0.1254,0.13,V,DT-38 (C93228) at 0.0689 is the cheaper alternative
+L1-L3,Buck inductors,2.2uH / 1uH shielded 2A,,0806-1210,3,0.06,0.18,GUESS,
+RC,Passives,~45 decoupling + ~12 bulk caps + ~50 resistors + ferrites,,0402/0603,~120,,1.60,GUESS,includes DDR3 VREF 1% divider
+MISC,Misc,ESD diodes / reset button / strap jumpers / test points,,,,,0.60,GUESS,
+,,,,,,PARTS TOTAL PER BOARD,18.92,,
+,,,,,,of which SoC,4.84,,
+,,,,,,of which DRAM,~10.00,,volatile - see HARDWARE.md section 3.2
+,,,,,,of which everything else,~4.08,,
+# NOT on this board, by design: USB host, eMMC, Ethernet, display, Wi-Fi, VTT termination rail.
+# VTT is omitted because the T113-i DRAM controller is single-channel 16-bit, so the bus is
+# one point-to-point x16 device with on-die termination and no fly-by topology.

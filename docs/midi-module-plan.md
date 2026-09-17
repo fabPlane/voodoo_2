@@ -388,9 +388,11 @@ Five caveats, and they are not small:
    and a dual A7 at 1.2 GHz are in the neighbourhood of a Pi 3, not obviously
    past it. Run the real-time-factor measurement from § 2.3 on a $20 Rock Pi S or
    a T113 board first.
-5. **512 MB may be the wrong target anyway** (§ 2.4). MT-32 alone wants about
-   16 MB; 256 MB covers a decent General MIDI font. A 2 Gbit chip is cheaper, and
-   in this market that matters more than it used to.
+5. **512 MB may be more than the workload needs** (§ 2.4) — MT-32 alone wants
+   about 16 MB and 256 MB covers a decent General MIDI font — but buy it anyway.
+   Checked September 2026: the 2 Gbit part (MT41K128M16JT-125, 256 MB) is
+   **$10.46–12.19**, against $6.53 for the 4 Gbit part. Half the memory costs
+   more than twice the memory. Do not design for 256 MB to save money.
 
 ### 2.6 RTOS support on those parts, and what actually bootstraps you
 
