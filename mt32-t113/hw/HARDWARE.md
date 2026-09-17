@@ -31,11 +31,18 @@ It is tagged accordingly:
 - **[I]** — my inference or engineering judgement, not a citation
 - **[GUESS]** — a number I made up because I could not find one
 
-Three whole sections of this document (power sequencing, DDR3 length-matching
-tolerances, T113-i ball pitch) are **blocked on getting four PDFs**. They are
-listed in § 7 as the first action items. Under the project rule "copy a
-known-good sequence, do not derive it", no power tree gets drawn until those
-PDFs are in `hw/ref/`.
+Four parts of this document (power sequencing, DDR3 length-matching tolerances,
+T113-i ball pitch, and the DDR3 address/command mapping of § 5.4) are **blocked
+on getting four PDFs**. They are listed in § 7 as the first action items. Under
+the project rule "copy a known-good sequence, do not derive it", no power tree
+and no DDR3 net assignment gets drawn until those PDFs are in `hw/ref/`.
+
+**Two pre-layout gates** are called out explicitly rather than buried:
+
+| Gate | Where | Why it cannot wait |
+|---|---|---|
+| Power-up sequence and reset timing | § 2.1 | Forlinx's own manual says wrong timing can *irreversibly damage the processor* |
+| **DDR3 address/command remapping** | **§ 5.4** | The PHY swizzle table must match the PCB net assignment. Wrong routing is a respin, not a patch. Cross-reference `boot/BRINGUP.md` § 2.5 |
 
 ---
 
@@ -464,6 +471,15 @@ With 0.1 mm dielectric, "3H" is 0.3 mm and "5H" is 0.5 mm — comfortable. The
 tight-coupling requirement on DQS and CK pairs is the one that fights the escape
 region; plan to break out of the BGA first and pair up afterwards.
 
+**Before any of this matters, read § 5.4.** Which SoC ball connects to which
+DRAM address pin is constrained by the PHY's address/command remapping table and
+is not a free choice; length matching is the second-order problem.
+
+**Total DDR3 signal count [I]:** 16 DQ + 2 DQS pairs + 2 DM + 16 A + 3 BA +
+RAS#/CAS#/WE#/CS#/CKE/ODT/RESET# + 1 CK pair = about 50 nets, of which the
+22 address/command lines are the ones § 5.4 pins down and the 16 DQ are the ones
+you may reorder freely within their lane.
+
 **Termination [I]:** with a single point-to-point x16 device there is no fly-by
 topology and no series-stub problem. DDR3 on-die termination handles DQ/DQS.
 Address/command on a one-load bus is normally left unterminated — **no VTT rail,
@@ -481,7 +497,180 @@ Decoupling **[I]**: one 100 nF 0402 per power ball cluster on the SoC (budget
 on VDD-CPU close to the inductor, ferrite-isolated 3.3 V for the PCM5102A analog
 supply with its own 10 µF + 100 nF.
 
-### 5.4 Will JLCPCB assemble it?
+### 5.4 DDR3 address/command remapping — **the pre-layout gate**
+
+**This is the hardest constraint in the document, it is a schematic decision,
+and it cannot be fixed after fab.** It comes from workstream C — see
+`boot/BRINGUP.md` § 2.5 for the software side. What follows is the hardware
+consequence, with the driver source read directly from
+`boot/vendor/u-boot/drivers/ram/sunxi/dram_sun20i_d1.c`.
+
+#### What the silicon does
+
+The DRAM PHY contains a **swizzle of the address and command lines** — the
+sunxi wiki calls it the CA pad swizzle — programmed at boot into registers
+`0x3102500`–`0x310250c` as twenty-two 5-bit fields. The driver picks one of
+eight hardcoded permutation tables in `mctl_phy_ac_remapping()`:
+
+```c
+fuse = (readl(SUNXI_SID_BASE + 0x28) & 0xf00) >> 8;   /* SID base 0x3006200 */
+
+/* No remapping needed on T113-s4 with 256MB co-packaged DRAM */
+if (sid_read_soc_chipid() == SUNXI_CHIPID_T113M4020DC0)
+        return;                                        /* writes nothing */
+
+if (config->dram_tpr13 & 0xc0000) {                    /* bit 18 (or 19) */
+        cfg = ac_remapping_tables[7];                  /* forced */
+} else {
+        switch (fuse) {                                /* efuse-selected */
+        case  8: cfg = ac_remapping_tables[2]; break;
+        case  9: cfg = ac_remapping_tables[3]; break;
+        case 10: cfg = ac_remapping_tables[5]; break;
+        case 11: cfg = ac_remapping_tables[4]; break;
+        default:
+        case 12: cfg = ac_remapping_tables[1]; break;
+        case 13:
+        case 14: cfg = ac_remapping_tables[0]; break;  /* table 0 = all zeros */
+        }
+}
+```
+**[V — read from the vendored mainline source.]**
+
+The exact tables, also read from source:
+
+| # | Permutation (22 entries) | Reading |
+|---:|---|---|
+| 0 | all zeros | no permutation programmed |
+| 1 | `1 9 3 7 8 18 4 13 5 6 10 2 14 12 0 0 21 17 20 19 11 22` | two zero entries → **two AC lines unused** |
+| 2 | `4 9 3 7 8 18 1 13 2 6 10 5 14 12 0 0 21 17 20 19 11 22` | two unused |
+| 3 | `1 7 8 12 10 18 4 13 5 6 3 2 9 0 0 0 21 17 20 19 11 22` | three unused |
+| 4 | `4 12 10 7 8 18 1 13 2 6 3 5 9 0 0 0 21 17 20 19 11 22` | three unused |
+| 5 | `13 2 7 9 12 19 5 1 6 3 4 8 10 0 0 0 21 22 18 17 11 20` | three unused |
+| 6 | `3 10 7 13 9 11 1 2 4 6 8 5 12 0 0 0 20 1 0 21 22 17` | DDR2 only |
+| **7** | `3 2 4 7 9 1 17 12 18 14 13 8 15 6 10 5 19 22 16 21 20 11` | **a full permutation of 1…22 — no unused lines** |
+
+**[I], and I think it is a strong reading:** twenty-two AC signals is exactly
+A0–A15 (16) + BA0–BA2 (3) + RAS/CAS/WE (3). Tables 1–6 leave two or three of
+them dead, which is what you would expect of a *co-packaged* part bonded to a
+small fixed die — you do not bond out address lines the internal DRAM does not
+have. **Table 7 is the only table that maps all twenty-two**, which is what an
+*external* DDR3 bus needs if it is ever to address a large part. That is
+consistent with it being the table the one known external-DDR3 board forces.
+
+#### Why it is a hardware decision and not a software tune
+
+An address permutation is harmless for the storage array — a bijection applied
+identically to writes and reads cancels out. It is **not** harmless for the
+lines that carry meaning rather than address bits:
+
+- **A10** is AP / precharge-all
+- **A12** is burst-chop
+- **BA0–BA2** select which mode register an MRS command writes
+- **A0–A13 during an MRS** are the mode-register *contents* — CAS latency, drive
+  strength, Rtt_Nom, write recovery
+
+Get the permutation wrong and the part never leaves initialisation: the mode
+registers receive garbage and training fails. So the PHY table has to be the
+exact inverse of whatever permutation the PCB implements. **[I]**
+
+The flip side, and it is the reason the feature exists at all: **you are free to
+route A/BA/RAS/CAS/WE in whatever order makes the BGA escape tidy**, provided
+you then program the matching table. That freedom is worth real layout effort on
+a 337-ball part. We are not going to use it, for the reason below.
+
+#### The evidence, and what it implies about two real boards
+
+Two published external-DDR3 T113-i boards disagree (`boot/BRINGUP.md` § 2.4, § 2.6):
+
+| Board | `dram_tpr13` | bit 18 | Table used |
+|---|---|---|---|
+| **100ask T113i-Industrial DevKit** | `0x34050100` | **set** | **forced table 7** |
+| **Tronlong T113-i MiniEVM** | `0x34000100` | clear | whatever the efuse selects |
+
+**[V]** for both defconfigs. The inference workstream C draws, and I agree with:
+**these two boards route DDR3 address and command differently from each other.**
+There is no other reason for one to force a table and the other not to.
+
+#### Could I get the mapping from a schematic? No.
+
+I tried. **None of the four candidate schematics is reachable from this
+environment.** Specifically:
+
+| Document | Status |
+|---|---|
+| T113-i EVB v1.0 schematic (whycan mirror) | `file.whycan.com` — **DNS does not resolve**; `whycan.com` — **403 at the gateway** |
+| 100ask T113i-Industrial hardware docs | `docs.100ask.net`, `dl.100ask.net` — **403** |
+| Forlinx FET113i-S | `forlinx.net` — **403**; SoM internals are not published in any case |
+| MYIR MYC-YT113i | `myir.cn`, `myirtech.com`, `mouser.com` — **403**; SoM internals not published |
+
+I also checked what *is* reachable: `DongshanPI/T113i_DevKitF_Tina5SDK` on GitHub
+is SDK source only — `brandy`, `buildroot`, `device/config/chips/t113_i`,
+`kernel/linux-5.4`, `openwrt` — **no hardware directory, no schematic, no pin
+map**. The vendored SyterKit `boards/100ask-t113i/` tree carries `board.c`,
+`board.dts` and the DRAM parameter array but **no DDR3 net assignment**. There
+is nothing to recover the 100ask routing from without the PDF.
+
+**So: no published T113-i DDR3 address-line mapping was obtained. I am not going
+to guess a routing table.**
+
+#### The layout rule, therefore
+
+**Route DDR3 A0–A15, BA0–BA2, RAS#, CAS#, WE# straight through, pin-for-pin,
+with no swizzle.** SoC ball `DRAM_A0` to DRAM `A0`, and so on down the list.
+Accept the harder escape.
+
+The reasoning, all **[I]** but each step evidenced:
+
+1. **Straight-through is the only mapping we can define without a schematic we
+   cannot read.** Any other choice would mean inventing a permutation and hoping
+   a table matches it. That is exactly the thing this project's rules forbid.
+2. **The no-write state of the PHY is straight-through.** The driver returns
+   early for the T113-S4 with the comment *"No remapping needed on T113-s4 with
+   256MB co-packaged DRAM"* — i.e. a part whose internal bonding is
+   straight — and writes nothing at all. **[V for the code and comment, I for
+   the conclusion.]** Table 0 (all zeros) is the same idea expressed as a table.
+3. **It is recoverable in software, cheaply, in exactly one place.** If our
+   part's efuse selects a table that is not 0, the fix is a one-line patch to
+   `mctl_phy_ac_remapping()` in a GPL driver workstream C already vendors — make
+   it return early, as it already does for the S4. No respin. By contrast, a
+   wrong *routing* is a respin.
+4. **It keeps the escape honest.** A swizzle would make the BGA fanout easier,
+   but we are choosing 6 layers (§ 5.1) partly so that we do not need that
+   favour.
+
+Two corollaries for the layout:
+
+- **DQ bit swapping within a byte lane is still permitted**, and should be used
+  freely to tidy the escape. DQ bits are written and read through the same
+  wiring, and this driver does not enable the DDR3 Multi-Purpose Register
+  (`mr3 = 0` in the DDR3 branch, **[V]**), so no fixed training pattern is read
+  back through a permuted byte. **Do not swap DQ bits between lanes, and keep
+  DQS/DM with their own lane.** **[I]**
+- **Address/command must not be swapped even though it "looks like" data.** This
+  is the asymmetry that catches people: DQ is free, AC is not.
+
+#### The measurement that would settle it — do this before layout
+
+`SUNXI_SID_BASE` is `0x3006200`, the selector is at **`0x03006228`, bits
+[11:8]** **[V]**. With any T113-i in FEL mode:
+
+```
+xfel read32 0x03006228        # bits [11:8] select the AC remapping table
+```
+
+- **13 or 14** → table 0 → straight-through routing works with *stock* mainline
+  U-Boot and no patch at all. Best case.
+- **8–12** → a permuted table → straight-through routing needs the one-line
+  early-return patch from point 3 above.
+- Reading it on two or three parts from different lots would tell us whether the
+  value is a part constant or varies, which is the thing Tronlong is implicitly
+  betting on.
+
+This costs one T113-i in FEL mode and one command. It should happen on the first
+dev board or SoM that arrives, and it is a **hard gate on releasing our own
+layout** (§ 7).
+
+### 5.5 Will JLCPCB assemble it?
 
 **Almost certainly yes, and the evidence is decent, but I could not read their
 page myself.**
@@ -545,8 +734,18 @@ respin.
    one thing nobody in public has documented — the DRAM parameter sets in
    awboot and mainline U-Boot are all for the *in-package* S3/S4. Buying a SoM
    means buying a validated DDR3 layout *and* a vendor U-Boot with working DRAM
-   parameters, which is the other half of the problem and the half that
-   `boot/` currently has no answer for.
+   parameters.
+
+   **§ 5.4 sharpens this considerably.** The DDR3 address/command remapping is
+   a matched pair — a PCB net assignment and a PHY swizzle table that have to
+   agree — and it is decided in the schematic, not tuned afterwards. **A SoM
+   vendor has already made that decision and shipped thousands of boards
+   proving it.** Forlinx and MYIR each hold a routing they know works and a
+   `tpr13` that matches it; we would hold neither, and no published T113-i
+   schematic is reachable to copy one from (§ 5.4 lists the four I tried). The
+   difference between the two routes is not "they saved us some layout time" —
+   it is that they are shipping an answer to a question we cannot currently
+   even read, let alone verify.
 2. **It deletes the power-sequencing question**, which is the item this document
    is honestly blocked on, and which Forlinx's own manual says can
    *irreversibly damage the processor* if you get it wrong [V].
@@ -587,16 +786,33 @@ has no form-factor constraint at all.
    properly without them.
 2. From those: the **exact rail list, the power-up order, the RC-delay values on
    the buck enables, and the reset release timing**. Write them into this file
-   as [DS] facts and delete the [V] paraphrases in § 2.1.
+   as [DS] facts and delete the [V] paraphrases in § 2.1. **Pre-layout gate.**
 3. From those: the **ball pitch** (§ 1.4) and the **DDR3 length-matching and
    impedance rules** (§ 5.3), replacing the generic DDR3 numbers.
-4. Re-quote on an unblocked network: T113-i at LCSC **and** JLCPCB assembly
+4. From the T113-i EVB schematic, and/or the 100ask T113i-Industrial hardware
+   pack if anyone can reach `dl.100ask.net`: the **DDR3 A / BA / RAS# / CAS# /
+   WE# net assignment** (§ 5.4). If it can be recovered we get a routing with a
+   known-matching `tpr13`; if it cannot, § 5.4's straight-through rule stands.
+   **Pre-layout gate.**
+5. **`xfel read32 0x03006228`** on the first T113-i that reaches the bench —
+   bits [11:8] are the AC remapping efuse. It decides whether straight-through
+   routing needs a one-line driver patch or none at all (§ 5.4). One command,
+   on the dev board or SoM from item 7, long before our own board exists.
+   Report the value back to `boot/` so `configs/t113i_mt32_defconfig` can be
+   settled. Read it on two or three parts if you can — whether it is constant
+   across lots is itself the question.
+6. Re-quote on an unblocked network: T113-i at LCSC **and** JLCPCB assembly
    availability; the chosen DDR3 SKU likewise; the JLCPCB X-ray fee on a real
    quote with a BGA in the BOM. § 4.2 is the weakest part of this document.
-5. **Price and order one SoM dev board** (Forlinx OK113i-S or MYIR MYD-YT113i)
+7. **Price and order one SoM dev board** (Forlinx OK113i-S or MYIR MYD-YT113i)
    and one cheap T113-S3 board (MangoPi MQ-R / 100ask DongshanPI) — the latter
-   is the RTF measurement proxy `bench/` needs, the former is the real target.
-6. Only after `bench/` reports RTF under 0.6: draw the carrier schematic.
+   is the RTF measurement proxy `bench/` needs, the former is the real target
+   and the thing item 5 runs on.
+8. Only after `bench/` reports RTF under 0.6: draw the carrier schematic.
+
+Items 2, 4 and 5 are the ones that gate copper. Items 1 and 7 unblock all three,
+and neither needs a decision from anyone — they need a person on an open network
+and a purchase order.
 
 ## 8. Sources
 
@@ -653,7 +869,11 @@ Process and manufacturing:
 - JLCPCB cost optimising (third-party) — https://highway.hackclub.com/guides/JLC-cost-optimizing
 
 Software / bring-up context:
+- **`boot/BRINGUP.md` § 2.4–2.6 — workstream C, the software side of § 5.4**
+- **`boot/vendor/u-boot/drivers/ram/sunxi/dram_sun20i_d1.c` (read directly)** — `ac_remapping_tables[]` and `mctl_phy_ac_remapping()`
 - u-boot `arch/arm/mach-sunxi/Kconfig` (**read directly**) — https://github.com/u-boot/u-boot/blob/master/arch/arm/mach-sunxi/Kconfig
+- linux-sunxi DRAM Controller / A133 DRAMC (CA pad swizzle) — https://linux-sunxi.org/DRAM_Controller · https://linux-sunxi.org/A133/DRAMC
+- DongshanPI T113i DevKitF Tina5 SDK (checked for hardware docs — **none**) — https://github.com/DongshanPI/T113i_DevKitF_Tina5SDK
 - sunxi DRAM init for R528/T113-s3/D1 — https://lists.denx.de/pipermail/u-boot/2023-October/534801.html
 - U-Boot sunxi board docs — https://docs.u-boot.org/en/v2026.04/board/allwinner/sunxi.html
 - linux-sunxi Boot Process / FEL — https://linux-sunxi.org/Boot_Process · https://linux-sunxi.org/FEL/USBBoot

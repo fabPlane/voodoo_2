@@ -36,3 +36,10 @@ MISC,Misc,ESD diodes / reset button / strap jumpers / test points,,,,,0.60,GUESS
 # NOT on this board, by design: USB host, eMMC, Ethernet, display, Wi-Fi, VTT termination rail.
 # VTT is omitted because the T113-i DRAM controller is single-channel 16-bit, so the bus is
 # one point-to-point x16 device with on-die termination and no fly-by topology.
+# LAYOUT RULE (see HARDWARE.md section 5.4 and boot/BRINGUP.md section 2.5):
+# DDR3 A0-A15 / BA0-BA2 / RAS# / CAS# / WE# are routed STRAIGHT THROUGH, no swizzle.
+# The DRAM PHY applies an address/command remapping table selected by an efuse at
+# SID+0x28 bits [11:8], or forced to table 7 by dram_tpr13 bit 18. The table must be
+# the inverse of the PCB permutation, so the net assignment is a schematic decision
+# and a wrong one is a respin. DQ bit swapping WITHIN a byte lane is permitted and
+# encouraged; DQ swapping between lanes is not, and DQS/DM stay with their lane.
