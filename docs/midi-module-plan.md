@@ -392,6 +392,65 @@ Five caveats, and they are not small:
    16 MB; 256 MB covers a decent General MIDI font. A 2 Gbit chip is cheaper, and
    in this market that matters more than it used to.
 
+### 2.6 RTOS support on those parts, and what actually bootstraps you
+
+Yes, all of them have an RTOS story — but separate three layers first, because
+only one of them is the hard part and it is not the kernel.
+
+**Layer 1, silicon bring-up: you do not write this, and it is free either way.**
+DDR training, clocks, PLLs, PMIC sequencing and boot media are the chip-specific
+work, and on both candidate families it already exists as something you consume:
+
+- **Rockchip RK3308.** U-Boot's TPL stage loads a prebuilt DDR init binary from
+  Rockchip's `rkbin` repository (`rk3308_ddr_589MHz_*.bin`) plus an ATF BL31.
+  Closed blobs, but they mean DDR comes up without you understanding it.
+- **Allwinner T113.** Mainline U-Boot has supported it since v2024.01, and there
+  are small purpose-built loaders — `awboot` and `xboot` — that do DRAM init and
+  load a payload off SD or SPI flash in a fraction of a second.
+
+**The pattern that follows:** let U-Boot or awboot bring the chip up, then have
+it load *your* payload — RTOS or plain bare metal — instead of a kernel. You
+inherit the worst of § 2.2's list for free and still do not run Linux. That is
+the real answer to "give us some of the bootstrapping".
+
+**Layer 2, the kernel.** FreeRTOS, RT-Thread or Zephyr. Worth little on its own,
+for the reasons in § 2.3.
+
+**Layer 3, drivers and middleware — where the actual work is:**
+
+| Stack | On these parts | Verdict |
+|---|---|---|
+| **RT-Thread** | The strongest fit. Allwinner's own **Melis** RTOS is built on it, there are D1 and T113 ports, and its package ecosystem covers filesystems, audio and USB | The one I would start from on a T113 |
+| **Melis** (Allwinner) | Vendor RTOS with a HAL for Allwinner peripherals, RT-Thread underneath | Useful as a driver source; documentation is mostly Chinese |
+| **FreeRTOS** | A community bare-metal T113 port exists (`robots/allwinner_t113`) | A starting point, not a BSP. You would be writing the drivers |
+| **Zephyr** | Good driver model, but Cortex-A support is thin and neither of these SoCs is a supported target | Do not plan on it |
+| **Rockchip RTOS SDK** | Exists for the audio parts, vendor-gated | The public RK3308 path is U-Boot plus Linux |
+
+**The decision rule, which is sharper than it first looks.** After U-Boot has
+bootstrapped you, what remains is: I²S with DMA, SD and FAT, a UART, and — only
+if you want it — **a USB host stack**. USB is the expensive one, and Linux is the
+only place you get it for free.
+
+- **Drop USB MIDI and the RTOS path is genuinely tractable.** A WaveBlaster
+  daughterboard fed by this project's own MPU-401 decode over TTL serial (§ 3)
+  does not need USB at all. I²S plus DMA, FAT on SD, one UART, and a render loop
+  is a weekend-scale driver list on top of RT-Thread, not a month.
+- **Keep USB MIDI, RTP-MIDI or the FTP upload, and take Linux.** A stripped
+  Buildroot image on a T113 boots in a second or two, and you spend your time on
+  audio instead of on enumeration.
+
+Two part-specific notes worth having before either path:
+
+- The **RK3308 has an embedded audio codec** — 8× ADC, 2× DAC, two 8-channel
+  I²S/TDM ports, PDM and S/PDIF in and out. That can remove the external DAC
+  from the BOM entirely, or keep a PCM5102A for the line output and use the
+  on-chip path for monitoring. Its DDR controller is 16-bit DDR2/DDR3/DDR3L or
+  LPDDR2 at 1066, so one x16 4 Gbit part is exactly the right shape (§ 2.5).
+- The **T113-i carries a RISC-V core and a HiFi4 DSP** beside the two A7s. The
+  tidy split is the control plane (MIDI parsing, UI, display) on the small core
+  under RT-Thread while the A7s render — tidy, and almost certainly more
+  complexity than this project needs on day one.
+
 ## 3. How it talks to the host
 
 Five paths, and the last one is the interesting one for this project.
@@ -588,7 +647,10 @@ will not load on a 512 MB Pi; FluidSynth's `dynamic-sample-loading` semantics an
 its caching of decompressed SF3 samples; mt32-pi's FluidSynth configuration
 surface; September 2026 LCSC list prices for the RK3308/T113/H3/H616/RK3328/
 i.MX6ULL families and for 4 Gbit DDR3L parts, read from search results rather
-than from LCSC itself, which is unreachable here; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
+than from LCSC itself, which is unreachable here; the RTOS and bootloader
+situation on both families — Melis on RT-Thread, the community FreeRTOS T113
+port, mainline U-Boot since v2024.01, awboot and xboot, and Rockchip's rkbin DDR
+blob and BL31 requirement — and the RK3308's on-chip codec and memory support; the September 2026 Zero 2 W stock picture and Raspberry Pi's supply
 statements and production commitment.
 
 Not verified, and to be checked before any layout: the WaveBlaster pinout above
