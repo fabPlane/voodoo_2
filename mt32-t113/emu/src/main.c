@@ -37,6 +37,11 @@ void emu_midi_select(const char *name, int paced);
 const char *emu_midi_name(void);
 uint32_t emu_midi_length(void);
 void emu_audio_set_wav(const char *path);
+void emu_audio_set_sink(const char *name);
+const char *emu_audio_sink_name(void);
+uint32_t emu_audio_virtio_completed(void);
+uint32_t emu_audio_virtio_max_burst(void);
+uint32_t emu_audio_dma_used(void);
 void emu_storage_set_root(const char *r);
 uint32_t emu_audio_checksum(void);
 uint32_t emu_audio_played(void);
@@ -98,8 +103,10 @@ static uint32_t atomilli(const char *s)
 static void print_entry_state(void)
 {
     static const char *const MODE[32] = {
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        "USR",0,"FIQ","IRQ","SVC",0,"MON","ABT","HYP",0,0,"UND",0,0,0,"SYS"
+        /* 0x00..0x0F unused */
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        /* 0x10 */ "USR", "FIQ", "IRQ", "SVC", 0, 0, "MON", "ABT",
+        /* 0x18 */ 0, 0, "HYP", "UND", 0, 0, 0, "SYS"
     };
     uint32_t cpsr = emu_entry_state[0];
     const char *m = MODE[cpsr & 0x1Fu];
@@ -117,8 +124,8 @@ static void print_entry_state(void)
            (emu_entry_state[1] >> 1) & 1u);
     printf("entry actlr/vbar    0x%08x / 0x%08x\n",
            emu_entry_state[2], emu_entry_state[3]);
-    printf("midr                0x%08x  (Cortex-A%u r%up%u)\n",
-           emu_entry_state[4], (emu_entry_state[4] >> 4) & 0xFFFu ? 7u : 0u,
+    printf("midr                0x%08x  part 0x%03x r%up%u\n",
+           emu_entry_state[4], (emu_entry_state[4] >> 4) & 0xFFFu,
            (emu_entry_state[4] >> 20) & 0xFu, emu_entry_state[4] & 0xFu);
     printf("id_pfr1             0x%08x  security=%u virt=%u genTimer=%u\n",
            emu_entry_state[5], (emu_entry_state[5] >> 4) & 0xFu,
@@ -134,7 +141,7 @@ static void print_entry_state(void)
 int main(void)
 {
     const char *midi_name = "demo";
-    const char *wav_path = NULL, *root = ".";
+    const char *wav_path = NULL, *root = ".", *sink = "timer";
     const char *engine_name = "fake";
     const char *control_rom = NULL, *pcm_rom = NULL;
     uint32_t rate = 48000u, block = 128u, ring = 3u, lookahead = 0u;
@@ -160,6 +167,7 @@ int main(void)
         const char *a = g_argv[i];
         if      (!strcmp(a, "--midi")   && i + 1 < g_argc) midi_name = g_argv[++i];
         else if (!strcmp(a, "--wav")    && i + 1 < g_argc) wav_path = g_argv[++i];
+        else if (!strcmp(a, "--sink")   && i + 1 < g_argc) sink = g_argv[++i];
         else if (!strcmp(a, "--root")   && i + 1 < g_argc) root = g_argv[++i];
         else if (!strcmp(a, "--engine") && i + 1 < g_argc) engine_name = g_argv[++i];
         else if (!strcmp(a, "--control-rom") && i + 1 < g_argc) control_rom = g_argv[++i];
@@ -185,7 +193,10 @@ int main(void)
           );
     printf("timebase            %u Hz generic timer (CNTPCT)\n",
            emu_timer_frequency());
-    printf("image               0x%08x..0x%08x  %u KiB\n",
+    printf("loaded image        0x%08x..0x%08x  %u KiB (text+rodata+data)\n",
+           (unsigned)(uintptr_t)__image_start, (unsigned)(uintptr_t)__data_end,
+           (unsigned)((__data_end - __image_start) / 1024));
+    printf("reserved footprint  0x%08x..0x%08x  %u KiB (image+bss+stacks+heap+dma)\n",
            (unsigned)(uintptr_t)__image_start, (unsigned)(uintptr_t)__image_end,
            (unsigned)((__image_end - __image_start) / 1024));
     printf("  .data/.bss        %u B / %u B\n",
@@ -222,6 +233,7 @@ int main(void)
         emu_exit(2);
     }
     if (wav_path) emu_audio_set_wav(wav_path);
+    emu_audio_set_sink(sink);
 
     ecfg.control_rom_path = control_rom;
     ecfg.pcm_rom_path     = pcm_rom;
@@ -304,7 +316,11 @@ int main(void)
         /* ---- and what only the bare-metal run can say ---- */
         printf("stream              %s, %u bytes%s\n", emu_midi_name(),
                emu_midi_length(), realtime ? ", paced at 31250 baud" : "");
+        printf("sink                %s\n", emu_audio_sink_name());
         printf("sink blocks played  %u\n", emu_audio_played());
+        printf("virtio periods done %u  (max %u completed per irq)\n",
+               emu_audio_virtio_completed(), emu_audio_virtio_max_burst());
+        printf("uncached used       %u B\n", emu_audio_dma_used());
         printf("sink checksum       0x%08x\n", emu_audio_checksum());
         printf("timer ticks         %u  (worst tick latency %u us)\n",
                emu_tick_count(), emu_tick_late_max_us());

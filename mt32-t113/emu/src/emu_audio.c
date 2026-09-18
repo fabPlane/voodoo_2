@@ -52,6 +52,18 @@
 #include "semihost.h"
 
 extern char __dma_start[], __dma_end[];
+void *dma_alloc(size_t n, size_t align);
+uint32_t dma_used(void);
+
+/* virtio_snd.c */
+int      vsnd_open(uint32_t rate, uint16_t channels, uint32_t period_bytes,
+                   uint32_t blocks, void (*on_complete)(void));
+void     vsnd_close(void);
+int      vsnd_submit(unsigned slot, const void *block, uint32_t bytes);
+int      vsnd_ready(void);
+uint32_t vsnd_completed(void);
+unsigned vsnd_outstanding(void);
+uint32_t vsnd_max_burst(void);
 
 #define MAX_BLOCKS 8u
 
@@ -67,6 +79,27 @@ static volatile uint32_t g_underruns;    /* ISR only      */
 
 static uint32_t g_checksum;              /* ISR only      */
 static int      g_open;
+static int      g_started;               /* tick running?                   */
+static uint32_t g_period_us;
+
+/* Which sink. "timer" is the default and is the one whose underrun count is
+ * the conformance contract; "virtio" hands the same blocks to a real device
+ * model and lets the device be the clock. */
+typedef enum { SINK_TIMER = 0, SINK_VIRTIO } sink_kind;
+static sink_kind g_sink = SINK_TIMER;
+static int       g_sink_requested_virtio;
+
+int strcmp(const char *a, const char *b);
+
+void emu_audio_set_sink(const char *name)
+{
+    g_sink_requested_virtio = (name && strcmp(name, "virtio") == 0);
+}
+
+const char *emu_audio_sink_name(void)
+{
+    return g_sink == SINK_VIRTIO ? "virtio-sound" : "timer/discard";
+}
 
 /* --- the wav tap ------------------------------------------------------- */
 static const char *g_wav_path;
@@ -79,28 +112,44 @@ void emu_audio_set_wav(const char *path) { g_wav_path = path; }
 
 /* --- the "DMA" ---------------------------------------------------------- */
 
+/* Touch every sample of the block the consumer just took. A sink that ignored
+ * its data would not catch a renderer that committed a block it had not
+ * finished writing. FNV-1a over the int16s; cheap, and order-sensitive. */
+static void checksum_block(uint32_t slot)
+{
+    const int16_t *b = g_ring + slot * g_block_samples;
+    uint32_t i, h = g_checksum;
+    __asm__ volatile("dmb" ::: "memory");
+    for (i = 0; i < g_block_samples; i++)
+        h = (h ^ (uint32_t)(uint16_t)b[i]) * 16777619u;
+    g_checksum = h;
+}
+
+/* SINK_TIMER: runs in the generic timer interrupt. This is where the I2S DMA
+ * engine's block-completion interrupt lands on the board. */
 static void block_consumed(void)
 {
-    /* Runs in the timer interrupt. This is where the I2S DMA engine's
-     * half/full completion interrupt lands on the board. */
     if (g_committed == g_played) {
         g_underruns++;                  /* the DMA played silence           */
         return;
     }
-    {
-        const int16_t *b = g_ring + (g_played % g_cfg.block_count) * g_block_samples;
-        uint32_t i, h = g_checksum;
-        __asm__ volatile("dmb" ::: "memory");
-        /* Touch every sample, so the block really is read at the deadline --
-         * a sink that ignored its data would not catch a renderer that
-         * committed a block it had not finished writing. FNV-1a over the
-         * int16s; cheap, and order-sensitive. */
-        for (i = 0; i < g_block_samples; i++)
-            h = (h ^ (uint32_t)(uint16_t)b[i]) * 16777619u;
-        g_checksum = h;
-    }
+    checksum_block(g_played % g_cfg.block_count);
     __asm__ volatile("dmb" ::: "memory");
     g_played++;
+}
+
+/* SINK_VIRTIO: runs in the virtio-mmio used-buffer interrupt. The device has
+ * finished a period and the block is free again -- the same event, from a
+ * device with its own clock instead of from ours. An underrun here is the
+ * device draining the last period we gave it with nothing behind it, which is
+ * precisely the condition that makes an I2S DMA ring click. */
+static void virtio_block_done(void)
+{
+    if (g_committed == g_played) { g_underruns++; return; }
+    checksum_block(g_played % g_cfg.block_count);
+    __asm__ volatile("dmb" ::: "memory");
+    g_played++;
+    if (g_committed == g_played) g_underruns++;
 }
 
 /* --- mtp_audio.h -------------------------------------------------------- */
@@ -124,7 +173,12 @@ mtp_status mtp_audio_open(const mtp_audio_config *cfg)
         return MTP_ERR_NOMEM;
     }
 
-    g_ring = (int16_t *)(void *)__dma_start;
+    g_ring = (int16_t *)dma_alloc(bytes, 64u);
+    if (!g_ring) {
+        MTP_LOGE("audio: no room in the %u B uncached window",
+                 (unsigned)(__dma_end - __dma_start));
+        return MTP_ERR_NOMEM;
+    }
     memset(g_ring, 0, bytes);
     g_committed = 0u;
     g_played    = 0u;
@@ -149,12 +203,35 @@ mtp_status mtp_audio_open(const mtp_audio_config *cfg)
                            / cfg->sample_rate);
     if (period_us == 0u) period_us = 1u;
 
+    g_sink = SINK_TIMER;
+    if (g_sink_requested_virtio) {
+        if (vsnd_open(cfg->sample_rate, cfg->channels,
+                      g_block_samples * 2u, cfg->block_count,
+                      virtio_block_done) == 0) {
+            g_sink = SINK_VIRTIO;
+        } else {
+            /* A documented dead end is better than a silent one: say so and
+             * carry on with the sink that always works. */
+            MTP_LOGW("audio: virtio-sound unavailable, falling back to the "
+                     "timer sink");
+        }
+    }
+
     g_open = 1;
-    emu_tick_start(period_us, block_consumed);
+    g_started = 0;
+    g_period_us = period_us;
+    /* The tick -- the "DMA" -- does NOT start here. On the board the DMA is
+     * started once the ring has been primed, because a DMA engine that begins
+     * on an empty ring plays a block of silence and reports an underrun for
+     * it, and that underrun is an artefact of the start-up order rather than
+     * a rendering failure. mtp_audio.h promises open() is safe to call early;
+     * this is how that promise is kept. The clock starts on the first commit,
+     * and every deadline after it is absolute. */
 
     MTP_LOGI("audio: %u Hz, %u frames/block, ring %u, block period %u us%s",
              cfg->sample_rate, cfg->frames_per_block, cfg->block_count,
              period_us, g_wav_path ? ", wav tap on" : "");
+    MTP_LOGI("audio: sink = %s", emu_audio_sink_name());
     MTP_LOGI("audio: ring at %p, %u B, Normal Non-cacheable",
              (void *)g_ring, bytes);
     return MTP_OK;
@@ -209,7 +286,9 @@ static void wav_flush(void)
 void mtp_audio_close(void)
 {
     if (!g_open) return;
-    emu_tick_stop();
+    if (g_started) emu_tick_stop();
+    g_started = 0;
+    if (g_sink == SINK_VIRTIO) vsnd_close();
     g_open = 0;
     wav_flush();
     g_wav_buf = NULL;
@@ -245,7 +324,26 @@ void mtp_audio_commit(void)
      * as if the consumer were another core, and on the T113 the consumer is a
      * DMA engine, which is worse. */
     __asm__ volatile("dmb" ::: "memory");
+
+    if (g_sink == SINK_VIRTIO) {
+        /* Hand the block itself to the device -- no copy. It stays untouched
+         * until its completion arrives, because acquire() will not return it
+         * again until g_played has passed it. */
+        unsigned slot = g_committed % g_cfg.block_count;
+        if (vsnd_submit(slot, g_ring + slot * g_block_samples,
+                        g_block_samples * 2u) < 0) {
+            MTP_LOGW("audio: virtio tx queue refused a period");
+            return;                     /* do not advance: the block is ours */
+        }
+        g_committed++;
+        return;
+    }
+
     g_committed++;
+    if (!g_started) {
+        g_started = 1;
+        emu_tick_start(g_period_us, block_consumed);
+    }
 }
 
 unsigned mtp_audio_queued(void)
@@ -276,3 +374,8 @@ uint32_t mtp_audio_underruns(void) { return g_underruns; }
  * read at the deadline. main() prints it. */
 uint32_t emu_audio_checksum(void) { return g_checksum; }
 uint32_t emu_audio_played(void)   { return g_played; }
+uint32_t emu_audio_dma_used(void) { return dma_used(); }
+uint32_t emu_audio_virtio_completed(void)
+{ return g_sink == SINK_VIRTIO ? vsnd_completed() : 0u; }
+uint32_t emu_audio_virtio_max_burst(void)
+{ return g_sink == SINK_VIRTIO ? vsnd_max_burst() : 0u; }

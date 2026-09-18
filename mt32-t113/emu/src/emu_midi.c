@@ -41,12 +41,14 @@ static uint64_t g_t0;
 static int      g_paced;
 static const char *g_name = "(none)";
 
+int strcmp(const char *a, const char *b);
+
 void emu_midi_select(const char *name, int paced)
 {
     const midi_vector *v;
     g_paced = paced;
     for (v = midi_vectors; v->name; v++) {
-        if (name && name[0] == v->name[0] && name[1] == v->name[1]) {
+        if (name && strcmp(name, v->name) == 0) {
             g_data = v->bytes;
             g_len  = v->len;
             g_name = v->name;

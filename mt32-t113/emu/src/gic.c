@@ -38,7 +38,7 @@
 #define GICC_IAR        0x00C
 #define GICC_EOIR       0x010
 
-#define MAX_INTID       64u    /* SGIs + PPIs + the first 32 SPIs: plenty */
+#define MAX_INTID       96u    /* SGIs + PPIs + the first 64 SPIs: covers all 32 virtio-mmio slots */
 
 static volatile uint32_t *gicd(uint32_t o) { return (volatile uint32_t *)(uintptr_t)(GICD_BASE + o); }
 static volatile uint32_t *gicc(uint32_t o) { return (volatile uint32_t *)(uintptr_t)(GICC_BASE + o); }
@@ -92,10 +92,19 @@ void emu_gic_enable(unsigned intid, unsigned priority)
 /* Called from the IRQ vector in start.S, in SVC mode, on the SVC stack. */
 void emu_irq_dispatch(void)
 {
+    unsigned handled = 0;
+
     for (;;) {
         uint32_t iar = *gicc(GICC_IAR);
         uint32_t id  = iar & 0x3FFu;
-        if (id >= 1020u) { g_spurious++; return; }   /* 1023 = no pending */
+        if (id >= 1020u) {
+            /* 1023 means "nothing pending". Reading it once at the end of the
+             * drain loop is normal and is not a spurious interrupt; only an
+             * entry to the vector that finds nothing at all is. */
+            if (handled == 0u) g_spurious++;
+            return;
+        }
+        handled++;
         g_irqs++;
         if (id < MAX_INTID && g_handlers[id]) g_handlers[id]();
         *gicc(GICC_EOIR) = iar;

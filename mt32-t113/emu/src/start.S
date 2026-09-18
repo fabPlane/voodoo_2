@@ -132,6 +132,15 @@ _start:
     isb
     bl      v7_dcache_invalidate_all
 
+    /* 7a. The TLS block. .tdata is loaded from the image; everything after it
+     *     is .tbss and must be zero before libm touches errno. */
+    ldr     r0, =__tdata_end
+    ldr     r1, =__tls_end
+    mov     r2, #0
+5:  cmp     r0, r1
+    strlo   r2, [r0], #4
+    blo     5b
+
     /* 7. BSS. */
     ldr     r0, =__bss_start
     ldr     r1, =__bss_end
@@ -275,6 +284,20 @@ FATAL vec_hyp,   5, 4
 FATAL vec_fiq,   6, 4
 
 /* ---------------------------------------------------------------- helpers */
+/* __aeabi_read_tp: the thread pointer.
+ *
+ * AEABI requires this to preserve r1-r3 and the flags, which is why it is
+ * assembly and not C. One thread, one statically allocated TLS block; the
+ * 8-byte TCB in front of it is never read by anything, it only fixes the
+ * offset the linker bakes into every TPOFF relocation. */
+    .global __aeabi_read_tp
+    .type __aeabi_read_tp, %function
+__aeabi_read_tp:
+    ldr     r0, =__tls_start
+    sub     r0, r0, #8
+    bx      lr
+    .size __aeabi_read_tp, . - __aeabi_read_tp
+
     .global emu_wfi
     .type emu_wfi, %function
 emu_wfi:
@@ -298,3 +321,5 @@ emu_irq_disable:
     .global emu_entry_state
 emu_entry_state:
     .space 48, 0
+
+    .section .note.GNU-stack,"",%progbits

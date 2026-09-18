@@ -73,6 +73,38 @@ SECTIONS
         __data_end = .;
     } > RAM
 
+    /* Thread-local storage, for one "thread".
+     *
+     * This exists because glibc's libm.a declares errno as __thread: link it
+     * without a TLS segment and ld fails with "TLS reference ... mismatches
+     * non-TLS definition", which is the first hard thing this toolchain choice
+     * costs (see FINDINGS.md). There is exactly one thread here, so the
+     * statically linked TLS block *is* the thread's block, and
+     * __aeabi_read_tp in start.S returns __tls_start - 8 (ARM variant 1: the
+     * thread pointer points at an 8-byte TCB that precedes the data). */
+    .tdata : ALIGN(8)
+    {
+        __tls_start = .;
+        *(.tdata .tdata.*)
+        . = ALIGN(8);
+        __tdata_end = .;
+    } > RAM
+
+    .tbss (NOLOAD) : ALIGN(8)
+    {
+        *(.tbss .tbss.*)
+        *(.tcommon)
+    } > RAM
+
+    /* .tbss does not advance the location counter, so reserve the storage it
+     * needs explicitly. 512 bytes is far more than errno; ASSERT below keeps
+     * it honest if something larger ever appears. */
+    .tls_reserve (NOLOAD) : ALIGN(8)
+    {
+        . = __tdata_end + 512;
+        __tls_end = .;
+    } > RAM
+
     .bss (NOLOAD) : ALIGN(8)
     {
         __bss_start = .;
@@ -117,6 +149,9 @@ SECTIONS
     } > RAM
 
     __image_end = .;
+
+    ASSERT(__tls_end - __tls_start <= 1024,
+           "TLS block outgrew its reservation in link.ld")
 
     /DISCARD/ : { *(.comment) *(.note.*) *(.ARM.attributes) }
 }

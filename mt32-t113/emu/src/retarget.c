@@ -32,6 +32,8 @@
 #include <stdint.h>
 #include "emu.h"
 
+int printf(const char *fmt, ...);
+
 extern char __heap_start[], __heap_end[];
 
 static char    *g_brk;
@@ -203,9 +205,19 @@ int rand(void)
 void srand(unsigned s) { g_rand_state = s ? (uint32_t)s : 1u; }
 
 /* ---------------------------------------------- errno and friends ------- */
-static int g_errno;
-int *__errno_location(void) { return &g_errno; }
-int  __errno;
+/* glibc's libm.a sets errno through __errno_location in the reentrant build
+ * and through the plain `errno` object in the static one; both appear in the
+ * undefined-symbol dump of this link, so both exist. Nothing reads them. */
+/* __thread, not a plain int: glibc's libm.a was compiled against a TLS errno
+ * and the link fails outright against a non-TLS one. link.ld carries the
+ * matching segment and start.S the thread pointer. */
+__thread int errno;
+int *__errno_location(void) { return &errno; }
+
+/* libm's error paths call raise(SIGFPE) on some routes. There are no signals
+ * here; swallow it, because an FP domain error in mt32emu's tables is a bug to
+ * find with a debugger, not a reason to stop the audio. */
+int raise(int sig) { (void)sig; return 0; }
 
 /* glibc's libm.a is built with the stack protector on some configurations. */
 uintptr_t __stack_chk_guard = 0xDEADBEEFu;
