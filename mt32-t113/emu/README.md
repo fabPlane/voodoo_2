@@ -46,6 +46,12 @@ make run ARGS="--midi bank --seconds 4 --block 64 --ring 2 --realtime"
 They reach the image through ARM semihosting `SYS_GET_CMDLINE`, so one image
 serves every case and `make test` never rebuilds.
 
+`make test` runs QEMU with `-icount shift=2`, which derives guest time from
+instruction count instead of the host's wall clock, so the audio-deadline
+assertions are reproducible on a loaded machine. `make run` deliberately does
+not, so an interactive run shows real elapsed time. Neither tells you anything
+about how fast a Cortex-A7 is — see [FINDINGS.md](FINDINGS.md) § 2.
+
 | Flag | |
 |---|---|
 | `--midi demo\|bank\|bad` | which compiled-in stream to play |

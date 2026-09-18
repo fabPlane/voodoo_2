@@ -19,17 +19,17 @@ from `port/host/test.sh`, against the same MIDI vectors, plus nine more that
 only a bare-metal run can make:
 
 ```
-$ cd emu && make && make test
+$ cd emu && make mt32emu && make test
 ok   boots into SVC with MMU off, caches off, interrupts masked
 ok   generic timer is present and running
-ok   demo short msgs (8)          ok   bank sysex count (64)
-ok   demo sysex (1)               ok   bank short msgs (12)
-ok   demo underruns (0)           ok   bank underruns (0)
-ok   demo wav written             ok   bank parsed cleanly
-ok   bad sysex emitted (0)        ok   3 orphan data bytes counted
-ok   bad short msgs (2)           ok   oversize sysex refused
-ok   bad underruns (0)            ok   unterminated sysex aborted
-ok   realtime underruns (0)       ok   no spurious interrupts
+ok   demo short msgs (8)             ok   bank sysex count (64)
+ok   demo sysex (1)                  ok   bank short msgs (12)
+ok   demo underruns (0)              ok   bank parsed cleanly
+ok   demo wav written                ok   bank underruns (ring 3) (0)
+ok   bad sysex emitted (0)           ok   3 orphan data bytes counted
+ok   bad short msgs (2)              ok   oversize sysex refused
+ok   bad underruns (0)               ok   unterminated sysex aborted
+ok   realtime underruns (0)          ok   no spurious interrupts
 ok   audio ring is in the non-cacheable window
 ok   sink actually read every block it played
 ok   deadline-driven sink consumed blocks
@@ -40,10 +40,16 @@ ok   virtio and timer sinks carried identical PCM (192000 bytes)
 ok   QEMU wrote the device's audio to a host wav
 ok   missing ROMs are named and the image still exits cleanly
 ok   mt32emu opens a Synth bare metal
-ok   mt32emu bank sysex (64)      ok   mt32emu bank short (12)
-ok   mt32emu underruns (0)        ok   mt32emu render allocates nothing (0 B)
+ok   mt32emu bank sysex (64)         ok   mt32emu bank short (12)
+ok   mt32emu underruns (0)           ok   mt32emu render allocates nothing (0 B)
 all tests passed
 ```
+
+Thirty-three assertions, six consecutive clean runs. The suite runs under
+`-icount shift=2`, which derives guest time from instruction count rather than
+from the host's wall clock; without it a busy container reads as a missed audio
+deadline. See § 8.7 for the one place where that is still not enough, and what
+the suite does about it.
 
 **The real `mt32emu` links, opens a `Synth`, and renders — bare metal.** Not
 "links and fails cleanly on missing ROMs", which is what the brief asked for as
@@ -363,8 +369,12 @@ DMAC (an RTOS driver with a work queue, say, or a USB isochronous endpoint).
 
 ## 8. Things in `port/` and `boot/` that want changing
 
-Nothing outside `emu/` was modified. These are the changes this work says are
-needed.
+Nothing outside `emu/` was modified — with one caveat worth stating: running
+`port/host`'s own suite for the PCM comparison in § 1 regenerated
+`port/host/build/`, which is build output and is already in `.gitignore`. No
+source file outside `emu/` was touched.
+
+These are the changes this work says are needed.
 
 ### 8.1 `port/include/mtp_audio.h`: the start-of-stream underrun
 
@@ -431,7 +441,58 @@ hang, always be debuggable". It did not fire in any `emu/` run; flagging it as a
 design question, not a bug. `worst_block_us` is also collected and never printed
 by any harness.
 
-### 8.6 `boot/BRINGUP.md` § 4.4's open question is now half-answered
+### 8.6 `port/host`'s underrun assertions are structurally vacuous
+
+`port/host/host_audio_wav.c:107`: outside `--realtime`, `advance()` sets
+`g_queued = 0` unconditionally, so the ring can never be found empty and
+`mtp_audio_underruns()` can never be non-zero. Three of `port/host/test.sh`'s
+four "underruns (0)" assertions — cases 1, 2 and 3 — are therefore checking
+nothing. Only case 4, with `--realtime`, tests anything, and even there the
+"clock" is `clock_gettime` polled by the same thread that renders, so a late
+render cannot be observed by an independent observer.
+
+That is not a criticism of the harness: it was built to exercise structure
+before silicon existed, and it does. But it means **`emu/` is the first place
+the underrun counter is a measurement**, because here the consumer is an
+interrupt from a free-running timer that fires whether or not the renderer is
+ready. `emu/test.sh` says so in its own comments so that nobody reads the two
+suites' matching "underruns (0)" lines as equally strong.
+
+**Proposed change:** either make the host's non-realtime sink advance the
+virtual cursor at the block rate against `mtp_time_us()` (a few lines, and it
+would make the assertions mean something), or say in `test.sh` that those three
+lines are structural checks rather than timing ones.
+
+### 8.7 A real deadline test needs a way to tell jitter from failure
+
+Running `emu/test.sh` repeatedly on a loaded container fails perhaps one run in
+five, on whichever case has the least audio in flight. The cause is always the
+same: the host descheduled QEMU for longer than the ring covers, the guest's
+generic timer interrupt arrived late, and the sink correctly reported that it
+had nothing to play. The render loop did nothing wrong.
+
+Two things were needed to make the suite deterministic, and both are worth
+carrying into whatever tests the T113 build one day has.
+
+1. **`-icount shift=2`**, so that guest time is derived from instruction count.
+   This removes most of the jitter and makes the numbers repeatable. It also
+   makes the reported render times obviously fictional, which is a feature: at
+   shift 0, 1 and 2 the real engine's worst render came out as 838, 1676 and
+   3352 µs — exactly doubling — which is as clear a demonstration as one could
+   want that these are instruction counts and not microseconds.
+2. **A test that distinguishes the two failures.** `expect_no_underruns()` in
+   `emu/test.sh` fails on an underrun only when the sink interrupt was *on
+   time*; if the interrupt itself was later than `(ring − 1) × block_period`,
+   it says so and passes, because the deadline was moved rather than missed.
+   The image prints the worst tick-to-service latency for exactly this purpose.
+
+The bank case is also split in two as a result: the parser contract is asserted
+at `port/host`'s own `--block 64 --ring 2` (2.67 ms of audio in flight), and the
+underrun contract at the 128-frame, ring-3 numbers `port/DESIGN.md` § 2.2
+actually specifies (5.3 ms). Asserting a 2.67 ms deadline inside a container is
+asserting how busy the container is.
+
+### 8.8 `boot/BRINGUP.md` § 4.4's open question is now half-answered
 
 The § 3 dump above is the "10-line test" that section asks for, written and
 working. It answers the question for QEMU (no Security Extensions at all) and
@@ -452,6 +513,11 @@ describing a test to be written.
 - **A second core.** `src/start.S` parks every core but MPIDR.Aff0 == 0, and
   `-M virt` is started with one CPU, so the parking loop has never actually
   executed. It is four instructions.
+- **`-icount shift=N,sleep=off`**, which would have made guest time fully
+  independent of the host, **hangs**: with the render loop in `WFI` no
+  instructions retire, so the virtual clock stops and the timer deadline never
+  arrives. Killed after two minutes with no output. `sleep=on` (the default)
+  works and is what `make test` uses.
 
 ---
 
