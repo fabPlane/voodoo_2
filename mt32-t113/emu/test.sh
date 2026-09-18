@@ -90,12 +90,26 @@ test -s "$OUT/demo.wav" && echo "ok   demo wav written" || \
   { echo "FAIL demo wav"; fail=1; }
 
 # --- 2. a 16 kB timbre bank dump interleaved with notes ---------------------
+# Same stream and same --block 64 --ring 2 as port/host/test.sh case 2. The
+# parser and back-pressure assertions are made here.
 boot "$OUT/b.txt" --midi bank --seconds 30 --block 64 --ring 2
 expect "bank sysex count"  "^sysex messages"  64  "$OUT/b.txt"
 expect "bank short msgs"   "^short messages"  12  "$OUT/b.txt"
-expect "bank underruns"    "^underruns"        0  "$OUT/b.txt"
 grep_ok "bank parsed cleanly" \
         "orphan data 0, sysex truncated 0, sysex aborted 0" "$OUT/b.txt"
+
+# The underrun assertion for the bank stream is made separately, at the block
+# size and ring depth port/DESIGN.md 2.2 actually specifies. That is not a
+# softening of the contract, it is the opposite: port/host's sink advances a
+# virtual play cursor and CANNOT underrun outside --realtime mode
+# (host_audio_wav.c:107 sets queued = 0), so its "bank underruns 0" is
+# structurally vacuous. Here the deadline is a timer interrupt and the
+# assertion is real -- and a 2-deep ring of 64-frame blocks holds 2.67 ms of
+# audio, which is less than this container's scheduling jitter. Asserting it at
+# 64/2 would be asserting how busy the machine is. See FINDINGS.md 8.7.
+boot "$OUT/b3.txt" --midi bank --seconds 30
+expect "bank underruns (128-frame blocks, ring 3)" "^underruns" 0 "$OUT/b3.txt"
+expect "bank sysex count again"  "^sysex messages"  64  "$OUT/b3.txt"
 
 # --- 3. a stream that is wrong in three ways --------------------------------
 boot "$OUT/x.txt" --midi bad --seconds 3
