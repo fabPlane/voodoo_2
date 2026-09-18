@@ -1,3 +1,0 @@
-ALSA lib seq_hw.c:528:(snd_seq_hw_open) open /dev/snd/seq failed: No such file or directory
-[  0.000 E] ALSA sequencer unavailable: No such file or directory
-[  0.000 E]   (no /dev/snd/seq -- load snd-seq, or use --midi-fifo instead)

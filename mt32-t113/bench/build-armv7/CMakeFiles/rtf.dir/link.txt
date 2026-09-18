@@ -1,1 +1,0 @@
-/usr/bin/arm-linux-gnueabihf-g++ -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -mthumb -O2 -DNDEBUG -O3 -DNDEBUG CMakeFiles/rtf.dir/rtf.cpp.o -o rtf  mt32emu/libmt32emu.a -lrt 
