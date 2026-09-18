@@ -39,6 +39,39 @@ Measure on real silicon as soon as one is on the desk — a $15 to $25 T113 boar
 is a perfectly good proxy for this measurement, because the question is cycles,
 not the OS.
 
+## 0.5 The method: emulate everything above the seam
+
+Decided 2026-09-18. The project is built as two layers with a narrow interface
+between them, and **only the lower layer requires hardware to test.**
+
+| | Where it runs | How it is tested |
+|---|---|---|
+| **Above the seam** — `mt32emu`, the render loop, the MIDI parser, sysex reassembly, ROM and config loading, the ring and its underrun accounting, the control logic | Anywhere | Host build, armv7 under `qemu-user` (`port/host/test-armv7.sh`), bare-metal Cortex-A7 under `qemu-system-arm -M virt` (`emu/`) |
+| **Below the seam** — DRAM init, I²S with DMA, the SMHC/SD controller, UART, the generic timer, GIC wiring, pinmux, clocks | T113 only | Real silicon. QEMU has no model of this SoC and never will |
+
+The interface is `port/include`: nine headers, about forty functions, with two
+implementations — one for QEMU `virt` (PL011, generic timer, a timer-driven
+audio sink) and one for the T113. The RTOS-shaped part of it is a single
+function, `mtp_audio_wait()`.
+
+Three rules follow, and they are what make this work rather than merely sound
+tidy:
+
+1. **Nothing above the seam may know which platform it is on.** No `#ifdef T113`
+   above the line. If something needs to know, the seam is in the wrong place.
+2. **Both implementations pass the same conformance tests** — the counter
+   contract in `port/host/test.sh`: messages parsed, sysexes reassembled,
+   underruns, orphan bytes, oversize sysex refused. A platform that passes those
+   in QEMU and fails them on silicon has a driver bug, and the test says which.
+3. **Keep the lower layer thin, because it is the expensive one.** Every function
+   added below the seam is a function that can only be debugged with a scope and
+   a board in hand. When there is a choice, push logic upward.
+
+What this buys: by the time hardware arrives, everything except the drivers and
+the speed has already been wrong once and fixed. What it does not buy: QEMU's
+TCG models neither the A7 pipeline nor its caches, so **no timing evidence comes
+out of emulation at all**, and § 0's gate still needs a real board and real ROMs.
+
 ## 1. What we are building
 
 | | |
