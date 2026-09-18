@@ -15,7 +15,7 @@ board is designed. See `docs/PLAN.md`.
 ## Why this exists
 
 Background and the full option analysis live in the parent project's
-`docs/midi-module-plan.md`: why MT-32 emulation is a CPU problem rather than an
+`docs/background.md`: why MT-32 emulation is a CPU problem rather than an
 FPGA one, what mt32-pi is and why its upstream is discontinued, what a Pi costs
 in the 2026 DRAM market, how much RAM a SoundFont actually needs, and the
 shortlist that ended on this part.
