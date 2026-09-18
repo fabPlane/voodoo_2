@@ -1,0 +1,37 @@
+[  0.000 I] midi in: stdin
+[  0.000 I] engine: fake, 8 voices, internal 32000 Hz, output 48000 Hz
+[  0.000 I] audio: Null, 48000 Hz, 128 frames x 8 ring blocks (21.33 ms), device period 128 x 3
+[  0.000 I] source 0: stdin
+[  0.000 I] running. Ctrl-C to stop.
+[  0.001 I] midi source ended: stdin
+
+--- run ---
+engine               fake
+output               48000 Hz, 128 frames/block (2.67 ms), ring 8
+audio produced       2.021 s in 758 blocks
+wall time            2.004 s
+
+underruns            0
+min ring occupancy   1 of 8
+worst block render   46 us of a 2666 us budget (0.02 of one block)
+
+device requests      754, up to 128 frames each
+worst request gap    13479 us (nominal 2666 us, ring holds 21328 us)
+render loop slept    197 times, 590 woke on the timer, worst 13517 us
+
+midi bytes           40116
+messages             2 short, 0 sysex, 0 realtime
+midi fifo peak       39988 bytes
+midi fifo overruns   0
+parse: orphan data   3
+parse: sysex > 32 kB 1
+parse: sysex aborted 1
+engine back-pressure 0
+
+real-time factor     0.0009 average, 0.0000 peak over a 500 ms window
+  This is CPU time inside the render loop divided by the audio it
+  produced, measured on THIS machine. It is not the number in
+  docs/PLAN.md section 0. That gate is 0.5-0.6 on one Cortex-A7 at
+  1.2 GHz with the PCM ROM in DDR3, and nothing measured on an x86
+  or Apple-silicon desktop predicts it: different ISA, different
+  cache, different memory system. Use bench/rtf on real silicon.

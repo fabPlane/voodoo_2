@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/rtf.dir/rtf.cpp.o -o rtf  mt32emu/libmt32emu.a -lrt 

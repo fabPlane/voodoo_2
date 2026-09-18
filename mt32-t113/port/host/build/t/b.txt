@@ -1,0 +1,20 @@
+[I] engine: fake, 8 voices, internal 32000 Hz, output 48000 Hz
+[I] audio: bank.wav, 48000 Hz, 64 frames x 2 blocks
+[I] midi: bank.syx, 16418 bytes, 31250 baud (320 us/byte), unpaced
+
+--- run ---
+engine              fake
+output              48000 Hz, 64 frames/block, ring 2
+blocks committed    752  (1.003 s of audio)
+wall time           0.001 s
+real-time factor    0.001
+midi bytes          16418
+short messages      12
+sysex messages      64
+parser: short 12 sysex 64 realtime 8
+parser: orphan data 0, sysex truncated 0, sysex aborted 0
+engine back-pressure 1
+underruns           0
+worst render        18 us  (block period 1333 us)
+min ring occupancy  0 of 2
+wav                 bank.wav

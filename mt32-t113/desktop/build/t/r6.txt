@@ -1,0 +1,7 @@
+[  0.000 W] no MIDI source given. Nothing will play; --help lists them.
+[  0.000 W]   the usual one:  --midi-seq
+[  0.000 E] control ROM '/nonexistent/MT32_CONTROL.ROM': no such file
+[  0.000 E] engine 'mt32emu' did not open: I/O error
+[  0.000 E]   ROMs are Roland's and are not in this repository. Dump your
+[  0.000 E]   own from hardware, put them in /nonexistent/, and try again;
+[  0.000 E]   or run with --engine fake to exercise everything but the sound.

@@ -1,0 +1,9 @@
+[  0.000 W] no MIDI source given. Nothing will play; --help lists them.
+[  0.000 W]   the usual one:  --midi-seq
+[  0.000 I] control ROM 'CTRL.ROM': 65536 bytes
+[  0.000 I] PCM ROM 'PCM.ROM': 524288 bytes
+[  0.001 E] control ROM not recognised (wrong file, or a half image)
+[  0.001 E] engine 'mt32emu' did not open: I/O error
+[  0.001 E]   ROMs are Roland's and are not in this repository. Dump your
+[  0.001 E]   own from hardware, put them in roms/, and try again;
+[  0.001 E]   or run with --engine fake to exercise everything but the sound.
