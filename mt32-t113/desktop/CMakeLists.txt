@@ -128,11 +128,8 @@ endif()
 # ------------------------------------------------------------------- tests ---
 
 enable_testing()
-# Everything here runs with no sound card, no MIDI hardware and no ROMs.
-add_test(NAME help COMMAND mt32-desktop --help)
-add_test(NAME null_sink_fake_engine
-         COMMAND mt32-desktop --audio null --engine fake --seconds 2
-                              --status-ms 0)
-add_test(NAME no_roms_fails_cleanly
-         COMMAND mt32-desktop --audio null --engine fake --roms /nonexistent
-                              --seconds 1 --status-ms 0)
+# test.sh is the real suite: 27 assertions, none of which need a sound card,
+# MIDI hardware or ROMs. ctest just runs it, so there is one set of tests and
+# not two that drift.
+add_test(NAME suite
+         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/test.sh)

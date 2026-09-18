@@ -31,7 +31,19 @@ fail=0
 # QEMU flags. -M virt -cpu cortex-a7 because QEMU has no T113/R528/D1 machine
 # and never will (boot/BRINGUP.md 6.4); see FINDINGS.md for what that does and
 # does not prove.
-QFLAGS="-M virt -cpu cortex-a7 -m 256 -nographic -nodefaults -serial mon:stdio -no-reboot"
+#
+# -icount shift=2 is load-bearing for the underrun assertions. Without it the
+# guest's generic timer runs on the host's wall clock, so a busy container
+# shows up as a missed audio deadline and "underruns 0" becomes a statement
+# about how loaded the machine is. With it, guest time is derived from
+# instruction count -- a deterministic, fictional 250 MIPS machine -- and
+# "underruns 0" is reproducible. It is still not a statement about a Cortex-A7:
+# the emulated speed is an arbitrary constant, chosen because the tightest case
+# in this suite (64-frame blocks, ring 2, 2.67 ms of audio in flight) passes
+# at it with margin. make run deliberately does NOT use it, so an interactive
+# run still shows real elapsed time.
+ICOUNT=${ICOUNT:--icount shift=2}
+QFLAGS="-M virt -cpu cortex-a7 -m 256 -nographic -nodefaults -serial mon:stdio -no-reboot $ICOUNT"
 
 # boot <logfile> <args...>  -- arguments reach the image through semihosting
 # SYS_GET_CMDLINE, so one image serves every case.
@@ -165,6 +177,35 @@ elif grep -q "no such file" "$OUT/rom.txt" 2>/dev/null && \
     echo "ok   missing ROMs are named and the image still exits cleanly"
 else
     echo "FAIL missing-ROM path"; fail=1
+fi
+
+# --- 7. the real mt32emu, if this image has it -----------------------------
+# Built with `make mt32emu`. The engine is the actual library on fabricated
+# ROMs (src/engine_mt32emu_fake_roms.cpp), so what is asserted here is that the
+# C++ runtime, the arena, the static constructors and the LA32 render path all
+# work bare metal -- NOT that the audio is right, which needs Roland's ROMs.
+# Not via boot(): an image built without the engine exits before printing a
+# run block, and that is a skip, not a failure.
+timeout "$TIMEOUT" $QEMU $QFLAGS \
+    -semihosting-config "enable=on,target=native,arg=x,arg=--engine,arg=mt32emu-fakerom,arg=--midi,arg=bank,arg=--seconds,arg=2" \
+    -kernel "$ELF" 2>&1 | tr -d '\r' > "$OUT/m.txt" || true
+if grep -q "this image has: fake)" "$OUT/m.txt"; then
+    echo "skip mt32emu engine (image built without it; use: make mt32emu)"
+else
+    grep -q -- "--- end ---" "$OUT/m.txt" || { echo "FAIL mt32emu run did not finish"; fail=1; }
+    grep_ok "mt32emu opens a Synth bare metal" "engine: mt32emu 2\." "$OUT/m.txt"
+    expect "mt32emu bank sysex"   "^sysex messages"  64 "$OUT/m.txt"
+    expect "mt32emu bank short"   "^short messages"  12 "$OUT/m.txt"
+    expect "mt32emu underruns"    "^underruns"        0 "$OUT/m.txt"
+    # port/PORTING.md 3: zero heap operations on the render path, given
+    # preallocateReverbMemory(true) + configureMIDIEventQueueSysexStorage().
+    # Measured there on x86-64; asserted here on ARM with a bump allocator.
+    grown=$(grep -E "^heap grown by run" "$OUT/m.txt" | awk '{print $(NF-1)}')
+    if [ "$grown" = "0" ]; then
+        echo "ok   mt32emu render allocates nothing (0 B)"
+    else
+        echo "FAIL mt32emu render allocated $grown B"; fail=1
+    fi
 fi
 
 echo

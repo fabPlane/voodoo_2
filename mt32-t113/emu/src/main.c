@@ -29,6 +29,10 @@
 #include "semihost.h"
 #include "midi_vectors.h"
 
+#ifdef MTP_WITH_MT32EMU
+extern const mtp_engine_vtable mtp_engine_mt32emu_fakerom;
+#endif
+
 int printf(const char *fmt, ...);
 size_t strlen(const char *s);
 int strcmp(const char *a, const char *b);
@@ -147,6 +151,7 @@ int main(void)
     uint32_t rate = 48000u, block = 128u, ring = 3u, lookahead = 0u;
     uint32_t seconds_x1000 = 4000u;
     int realtime = 0, verbose = 0, i;
+    uint32_t heap_after_open = 0u;
 
     const mtp_engine_vtable *vt = &mtp_engine_fake;
     mtp_engine *inst = NULL;
@@ -214,11 +219,15 @@ int main(void)
 #ifdef MTP_WITH_MT32EMU
     } else if (!strcmp(engine_name, "mt32emu")) {
         vt = &mtp_engine_mt32emu;
+    } else if (!strcmp(engine_name, "mt32emu-fakerom")) {
+        /* The real library on fabricated ROMs: no Roland data, but every line
+         * of the emulator actually runs. See src/engine_mt32emu_fake_roms.c++ */
+        vt = &mtp_engine_mt32emu_fakerom;
 #endif
     } else {
         MTP_LOGE("unknown engine '%s' (this image has: fake"
 #ifdef MTP_WITH_MT32EMU
-                 ", mt32emu"
+                 ", mt32emu, mt32emu-fakerom"
 #endif
                  ")", engine_name);
         emu_exit(2);
@@ -267,6 +276,13 @@ int main(void)
 
     s = mtp_render_init(&g_ctx, vt, inst, block, rate, ring - 1u, lookahead);
     if (s != MTP_OK) { MTP_LOGE("render init: %s", mtp_strerror(s)); emu_exit(1); }
+
+    /* port/PORTING.md section 3 measured, on x86-64, that the render path
+     * performs zero heap operations once preallocateReverbMemory(true) and
+     * configureMIDIEventQueueSysexStorage() have been called. Capture the
+     * arena after everything is open, so "heap grown by run" below is
+     * render-path allocation and nothing else. */
+    heap_after_open = emu_heap_used();
 
     {
         uint32_t max_blocks = (uint32_t)(((uint64_t)seconds_x1000 * rate)
@@ -326,8 +342,11 @@ int main(void)
                emu_tick_count(), emu_tick_late_max_us());
         printf("irqs taken          %u  (spurious %u)\n",
                emu_irq_count(), emu_spurious_count());
+        printf("heap after setup    %u B\n", heap_after_open);
         printf("heap high water     %u B of %u B\n",
                emu_heap_high_water(), emu_heap_size());
+        printf("heap grown by run   %u B\n",
+               emu_heap_high_water() - heap_after_open);
         printf("wav                 %s\n", wav_path ? wav_path : "(none)");
         printf("--- end ---\n");
     }

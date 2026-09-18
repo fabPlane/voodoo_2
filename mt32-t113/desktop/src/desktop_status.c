@@ -104,6 +104,29 @@ void desktop_status_summary(const desktop_status_sample *s,
     printf("worst block render   %u us of a %u us budget (%.2f of one block)\n",
            s->worst_render_us, s->block_period_us, worst_block_rtf);
     printf("\n");
+    printf("device requests      %u, up to %u frames each\n",
+           s->dev_calls, s->dev_max_frames);
+    printf("worst request gap    %u us (nominal %u us, ring holds %u us)\n",
+           s->dev_worst_gap_us, s->block_period_us,
+           s->block_period_us * ring_blocks);
+    printf("render loop slept    %u times, %u woke on the timer, worst %u us\n",
+           s->waits, s->wait_timeouts, s->wait_worst_us);
+
+    if (s->underruns > 0u &&
+        s->dev_worst_gap_us > s->block_period_us * ring_blocks) {
+        printf("\n"
+        "  Read the two lines above before blaming the render loop. The device\n"
+        "  went %u us between requests, and a ring of %u x %u frame blocks only\n"
+        "  holds %u us of audio, so it ran dry however fast we rendered. That is\n"
+        "  this OS's scheduling granularity, not the T113's: there the DMA\n"
+        "  completion interrupt arrives every %u us because the hardware says so.\n"
+        "  Deepen the ring (--ring 8) or lengthen the block (--block 256) to make\n"
+        "  the desktop comfortable; neither number has to change on the target.\n",
+        s->dev_worst_gap_us, ring_blocks, frames_per_block,
+        s->block_period_us * ring_blocks, s->block_period_us);
+    }
+
+    printf("\n");
     printf("midi bytes           %u\n", s->midi_bytes);
     printf("messages             %u short, %u sysex, %u realtime\n",
            s->short_msgs, s->sysex_msgs, s->realtime_msgs);

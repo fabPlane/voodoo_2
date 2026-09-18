@@ -62,6 +62,8 @@ static atomic_uint       g_wait_timeouts;    /* ... that woke on the timer, not 
                                               * scheduler, and the difference
                                               * between the two is visible here */
 static atomic_uint       g_wait_worst_us;
+static atomic_uint       g_cb_worst_gap_us;  /* longest silence between asks */
+static uint64_t          g_cb_last_us;
 static unsigned          g_read_off;      /* frames consumed of block[tail] */
 
 static pthread_mutex_t   g_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -160,6 +162,15 @@ static void data_callback(ma_device *dev, void *out, const void *in,
 
     (void)dev; (void)in;
 
+    {
+        uint64_t now = mtp_time_us64();
+        if (g_cb_last_us) {
+            uint32_t gap = (uint32_t)(now - g_cb_last_us);
+            if (gap > atomic_load_explicit(&g_cb_worst_gap_us, memory_order_relaxed))
+                atomic_store_explicit(&g_cb_worst_gap_us, gap, memory_order_relaxed);
+        }
+        g_cb_last_us = now;
+    }
     atomic_fetch_add_explicit(&g_cb_calls, 1u, memory_order_relaxed);
     if (frame_count > atomic_load_explicit(&g_cb_max_frames, memory_order_relaxed))
         atomic_store_explicit(&g_cb_max_frames, frame_count, memory_order_relaxed);
@@ -172,10 +183,19 @@ static void data_callback(ma_device *dev, void *out, const void *in,
         if (head == tail) {
             /* The ring ran dry. On the T113 this is the DMA engine replaying a
              * stale descriptor and it is audible. Emit silence for one block's
-             * worth and count it exactly as the target would. */
+             * worth and count it exactly as the target would.
+             *
+             * Except before the first commit: the device starts inside
+             * mtp_audio_open(), a few hundred microseconds before the render
+             * loop exists, and the silence it plays until then is the same
+             * silence the target's ring holds at start-up (mtp_audio.h:
+             * "opening early is safe"). Counting that would put two or three
+             * phantom underruns on every run and teach the reader to ignore
+             * the number that matters most. */
             n = remaining < fpb ? remaining : fpb;
             memset(dst, 0, (size_t)n * g_cfg.channels * sizeof(int16_t));
-            atomic_fetch_add_explicit(&g_underruns, 1u, memory_order_relaxed);
+            if (head != 0u)
+                atomic_fetch_add_explicit(&g_underruns, 1u, memory_order_relaxed);
             dst += (size_t)n * g_cfg.channels;
             remaining -= n;
             continue;
@@ -417,10 +437,12 @@ mtp_status mtp_audio_wait(uint32_t timeout_us)
     return rc;
 }
 
-void desktop_audio_callback_stats(uint32_t *calls, uint32_t *max_frames)
+void desktop_audio_callback_stats(uint32_t *calls, uint32_t *max_frames,
+                                  uint32_t *worst_gap_us)
 {
-    if (calls)      *calls      = atomic_load(&g_cb_calls);
-    if (max_frames) *max_frames = atomic_load(&g_cb_max_frames);
+    if (calls)        *calls        = atomic_load(&g_cb_calls);
+    if (max_frames)   *max_frames   = atomic_load(&g_cb_max_frames);
+    if (worst_gap_us) *worst_gap_us = atomic_load(&g_cb_worst_gap_us);
 }
 
 void desktop_audio_wait_stats(uint32_t *waits, uint32_t *timeouts,

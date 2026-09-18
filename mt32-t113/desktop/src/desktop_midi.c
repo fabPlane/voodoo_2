@@ -33,7 +33,15 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#define RING_CAP   16384u        /* stamped bytes; 5 s of wire at 31250 baud */
+/* Stamped bytes. DESIGN.md 3.3 sizes the target's FIFO at 256 entries, which
+ * is 82 ms of wire and plenty when the producer is a 31250-baud UART that
+ * physically cannot go faster. A desktop producer can: a FIFO or a redirected
+ * file hands over tens of kilobytes in one read(), which is minutes of wire
+ * time arriving at memcpy speed. 64 Ki entries is 512 kB, nothing here, and it
+ * means a 32 kB sysex replayed from a capture is parsed rather than shredded
+ * into a parse error that blames the wrong component. The overrun counter
+ * still tells the truth when even this is not enough. */
+#define RING_CAP   65536u
 #define MAX_FDS    8
 #define MAX_DESC   8
 

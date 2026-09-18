@@ -345,16 +345,9 @@ int main(int argc, char **argv)
         }
     }
 
-    {
-        uint32_t calls = 0, maxf = 0;
-        desktop_audio_callback_stats(&calls, &maxf);
-        uint32_t waits = 0, tmo = 0, worst = 0;
-        desktop_audio_wait_stats(&waits, &tmo, &worst);
-        MTP_LOGI("device asked for audio %u times, at most %u frames at once",
-                 calls, maxf);
-        MTP_LOGI("render loop slept %u times, %u woke on the timer, worst %u us",
-                 waits, tmo, worst);
-    }
+    desktop_audio_callback_stats(&st.dev_calls, &st.dev_max_frames,
+                                 &st.dev_worst_gap_us);
+    desktop_audio_wait_stats(&st.waits, &st.wait_timeouts, &st.wait_worst_us);
     desktop_status_summary(&st, vt->name, rate, block, ring);
 
     mtp_midi_close();

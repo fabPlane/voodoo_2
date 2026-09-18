@@ -1,0 +1,13 @@
+# The root .gitignore has `**/vendor/`, because bench/vendor and boot/vendor are
+# upstream clones that are read and never committed. desktop/vendor is the
+# opposite: miniaudio is vendored *so that* this builds on a clean machine with
+# no package manager involved, which only works if it is actually committed.
+# Un-ignore the directory here; a nested .gitignore takes precedence over the
+# root one for paths beneath it.
+!vendor/
+!vendor/**
+
+# ... but not the WAV files a run leaves behind. The root .gitignore's *.wav
+# rule is still what we want; this line is only here so that the vendor
+# negation above cannot accidentally resurrect one.
+*.wav

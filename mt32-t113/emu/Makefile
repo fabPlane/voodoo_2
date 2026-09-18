@@ -41,12 +41,25 @@ MMU     ?= 1
 ARCHFLAGS := -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -marm
 
 WARN    := -Wall -Wextra -Wshadow -Wundef
-COMMON  := $(ARCHFLAGS) -O2 -g -ffreestanding -fno-builtin -fno-common \
+# -U_FORTIFY_SOURCE matters more than it looks. Ubuntu's GCC enables
+# _FORTIFY_SOURCE=2 by default at -O2, which rewrites every printf/sprintf call
+# into glibc's __printf_chk/__sprintf_chk family. Those symbols exist only in
+# glibc, so a bare-metal link against mt32emu fails on four of them with no
+# hint as to why. See FINDINGS.md.
+COMMON  := $(ARCHFLAGS) -O2 -g -fno-builtin -fno-common \
            -ffunction-sections -fdata-sections -fno-stack-protector \
+           -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
            -DEMU_MMU=$(MMU)
-CFLAGS  := $(COMMON) $(WARN) -std=gnu99
+# -ffreestanding on the C side only. It must NOT be passed to C++: libstdc++'s
+# <cstdlib> is guarded by _GLIBCXX_HOSTED, and -ffreestanding makes it hide
+# std::div/std::div_t, which mt32emu's Display.cpp uses (Display.cpp:227, and
+# port/PORTING.md 4.1 lists div as a symbol to retarget). See FINDINGS.md.
+CFLAGS  := $(COMMON) $(WARN) -ffreestanding -std=gnu99
+# port/PORTING.md 4.2, exactly. -fno-threadsafe-statics is the one that must
+# not be dropped: it removes __cxa_guard_acquire/release, which is correct here
+# because the only function-local static is Tables::getInstance().
 CXXFLAGS:= $(COMMON) -Wall -Wextra -std=c++98 -fno-exceptions -fno-rtti \
-           -fno-threadsafe-statics -fno-use-cxa-atexit
+           -fno-threadsafe-statics
 ASFLAGS := $(ARCHFLAGS) -g -DEMU_MMU=$(MMU)
 INC     := -Isrc -I$(PORT)/include
 
@@ -71,18 +84,31 @@ SRC_C   := src/mmu.c src/console.c src/gic.c src/timer.c src/semihost.c \
 OBJ := $(addprefix $(BUILD)/,$(notdir $(SRC_ASM:.S=.o)) $(notdir $(SRC_C:.c=.o)))
 
 # ---- the real engine, optional ------------------------------------------
-# bench/vendor/munt is read only; mt32emu is configured and built entirely
-# inside build/mt32emu/.
+# bench/vendor/munt is read only: headers are staged and objects are built
+# entirely inside build/mt32emu/. See tools/prepare-mt32emu.sh for why we do
+# not drive upstream's CMakeLists.
 MT32EMU_SRC ?= $(ROOT)/bench/vendor/munt/mt32emu
 MT32EMU_BUILD := $(BUILD)/mt32emu
 MT32EMU_LIB   := $(MT32EMU_BUILD)/libmt32emu.a
+MT32EMU_INC   := $(MT32EMU_BUILD)/include
+MT32EMU_CFG   := $(MT32EMU_INC)/mt32emu/config.h
+
+# Upstream's libmt32emu_CPP_SOURCES (CMakeLists.txt:148) minus two files:
+#   FileStream.cpp         port/PORTING.md 4.5 -- the only <fstream> user
+#   SampleRateConverter.cpp  4.6 -- not needed, and it wants RTTI and iostream
+MT32EMU_CPP := Analog BReverbModel Display File LA32FloatWaveGenerator \
+               LA32Ramp LA32WaveGenerator MidiStreamParser Part Partial \
+               PartialManager Poly ROMInfo Synth Tables TVA TVF TVP
+MT32EMU_OBJ := $(addprefix $(MT32EMU_BUILD)/,$(addsuffix .o,$(MT32EMU_CPP))) \
+               $(MT32EMU_BUILD)/sha1.o
 
 ifdef WITH_MT32EMU
 CFLAGS   += -DMTP_WITH_MT32EMU
 CXXFLAGS += -DMTP_WITH_MT32EMU
-OBJ      += $(BUILD)/engine_mt32emu.o $(BUILD)/cxxrt.o
+OBJ      += $(BUILD)/engine_mt32emu.o $(BUILD)/engine_mt32emu_fake_roms.o \
+            $(BUILD)/cxxrt.o
 LDLIBS   := $(MT32EMU_LIB) $(LDLIBS)
-INC      += -I$(MT32EMU_BUILD)/include -I$(MT32EMU_SRC)/..
+INC      += -I$(MT32EMU_INC)
 endif
 
 .PHONY: all run test wav virtio size dump clean vectors mt32emu uimage help
@@ -107,6 +133,9 @@ $(BUILD)/%.o: $(PORT)/host/%.c | $(BUILD)
 $(BUILD)/engine_mt32emu.o: $(PORT)/host/engine_mt32emu.cpp $(MT32EMU_LIB) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INC) -c -o $@ $<
 
+$(BUILD)/engine_mt32emu_fake_roms.o: src/engine_mt32emu_fake_roms.cpp $(MT32EMU_LIB) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INC) -c -o $@ $<
+
 $(BUILD)/cxxrt.o: src/cxxrt.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INC) -c -o $@ $<
 
@@ -126,18 +155,26 @@ vectors:
 # and FileStream.cpp is excluded there (4.5) by the toolchain file.
 mt32emu:
 	$(MAKE) $(MT32EMU_LIB)
+	@rm -f $(BUILD)/*.o $(TARGET).elf   # the app objects need -DMTP_WITH_MT32EMU
 	$(MAKE) WITH_MT32EMU=1 all
 
-$(MT32EMU_LIB):
-	@test -d $(MT32EMU_SRC) || { echo "no $(MT32EMU_SRC); clone munt into bench/vendor first"; exit 2; }
-	cmake -S $(MT32EMU_SRC) -B $(MT32EMU_BUILD) \
-	      -DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/cmake/baremetal-a7.cmake \
-	      -DCMAKE_BUILD_TYPE=Release \
-	      -DBUILD_SHARED_LIBS=OFF -Dlibmt32emu_SHARED=OFF \
-	      -Dlibmt32emu_C_INTERFACE=OFF \
-	      -Dlibmt32emu_WITH_INTERNAL_RESAMPLER=OFF \
-	      -DBUILD_TESTING=OFF
-	cmake --build $(MT32EMU_BUILD) -j
+$(MT32EMU_CFG):
+	@test -d $(MT32EMU_SRC)/src || { echo "no $(MT32EMU_SRC); clone munt into bench/vendor first"; exit 2; }
+	@mkdir -p $(MT32EMU_BUILD)
+	./tools/prepare-mt32emu.sh $(MT32EMU_SRC) $(MT32EMU_BUILD)
+
+# -DMT32EMU_WITH_TESTING exports MT32Emu::Test::getControlROMMap
+# (Synth.cpp:2912-2922). src/engine_mt32emu_fake_roms.cpp needs it to fabricate
+# a control ROM the synth will open; see that file for why.
+$(MT32EMU_BUILD)/%.o: $(MT32EMU_SRC)/src/%.cpp $(MT32EMU_CFG)
+	$(CXX) $(CXXFLAGS) -DMT32EMU_WITH_TESTING -I$(MT32EMU_INC) -I$(MT32EMU_INC)/mt32emu -c -o $@ $<
+
+$(MT32EMU_BUILD)/sha1.o: $(MT32EMU_SRC)/src/sha1/sha1.cpp $(MT32EMU_CFG)
+	$(CXX) $(CXXFLAGS) -I$(MT32EMU_INC) -I$(MT32EMU_INC)/mt32emu -c -o $@ $<
+
+$(MT32EMU_LIB): $(MT32EMU_OBJ)
+	$(CROSS)ar rcs $@ $(MT32EMU_OBJ)
+	@$(SIZE) -t $(MT32EMU_OBJ) | tail -1
 
 # ---- running -------------------------------------------------------------
 # -M virt -cpu cortex-a7: QEMU has no T113/R528/D1 model and never will

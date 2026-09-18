@@ -29,7 +29,8 @@ mtp_status desktop_audio_set_tap(const char *path);
 /* How the device actually asked for its samples: the number of callbacks and
  * the largest single request. A device that asks for 1024 frames at a time
  * cannot be served by a 3 x 128 frame ring, and the number says so. */
-void desktop_audio_callback_stats(uint32_t *calls, uint32_t *max_frames);
+void desktop_audio_callback_stats(uint32_t *calls, uint32_t *max_frames,
+                                  uint32_t *worst_gap_us);
 
 /* How long the render loop spent asleep waiting for the device, and how often
  * it woke on its own timer rather than on the device's callback. On the T113

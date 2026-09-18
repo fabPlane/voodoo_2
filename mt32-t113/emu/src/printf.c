@@ -249,6 +249,19 @@ int fputc(int c, void *stream) { (void)stream; emu_console_putc((char)c); return
 int fputs(const char *s, void *stream) { (void)stream; while (*s) emu_console_putc(*s++); return 0; }
 int fflush(void *stream) { (void)stream; emu_console_flush(); return 0; }
 
+int vfprintf(void *stream, const char *fmt, va_list ap)
+{
+    (void)stream;
+    return vprintf(fmt, ap);
+}
+
+int fwrite_stub(const void *p, size_t sz, size_t n, void *stream)
+{
+    (void)stream;
+    emu_console_write((const char *)p, (unsigned)(sz * n));
+    return (int)n;
+}
+
 int fprintf(void *stream, const char *fmt, ...)
 {
     va_list ap; int n;

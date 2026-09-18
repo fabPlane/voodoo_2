@@ -40,6 +40,15 @@ typedef struct {
     uint32_t parse_aborted;    /* sysex interrupted by a status byte     */
     uint32_t backpressure;     /* engine refused an event                */
     uint32_t ring_peak;        /* peak MIDI FIFO occupancy, in bytes     */
+    /* How the audio device behaved. On the T113 these describe the I2S DMA
+     * completion interrupt; here they describe the OS, and the difference is
+     * the single biggest way this build is not the target. */
+    uint32_t dev_calls;
+    uint32_t dev_max_frames;   /* largest single request                  */
+    uint32_t dev_worst_gap_us; /* longest interval between requests       */
+    uint32_t waits;            /* times the render loop slept             */
+    uint32_t wait_timeouts;    /* ... and woke on its own timer           */
+    uint32_t wait_worst_us;
 } desktop_status_sample;
 
 void desktop_status_init(unsigned interval_ms, int enabled);

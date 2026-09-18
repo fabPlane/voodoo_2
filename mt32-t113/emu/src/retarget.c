@@ -112,6 +112,30 @@ void *realloc(void *old, size_t n)
     return p;
 }
 
+/* ------------------------------------------------ stdio and stdlib odds -- */
+/* mt32emu's default ReportHandler writes to stdout (Synth.cpp:391-398). We
+ * override it with our own ReportHandler, but the default implementations are
+ * compiled in regardless -- port/PORTING.md 4.7 predicted exactly this -- so
+ * the symbol has to exist. It is never dereferenced: our vfprintf ignores the
+ * stream and writes to the console. */
+struct _IO_FILE;
+struct _IO_FILE *stdout;
+struct _IO_FILE *stderr;
+struct _IO_FILE *stdin;
+
+/* port/PORTING.md 4.1 lists div (Display.cpp:227). abs comes from TVP.cpp:88,
+ * which that table missed -- one symbol more than the twenty it counted. */
+typedef struct { int quot; int rem; } emu_div_t;
+emu_div_t div(int num, int den)
+{
+    emu_div_t r;
+    r.quot = num / den;
+    r.rem  = num % den;
+    return r;
+}
+int  abs(int v)        { return v < 0 ? -v : v; }
+long labs(long v)      { return v < 0 ? -v : v; }
+
 /* ------------------------------------------------- string.h essentials -- */
 void *memcpy(void *d, const void *s, size_t n)
 {
