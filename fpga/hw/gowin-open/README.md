@@ -12,9 +12,11 @@ from this flow is reserved the SD-card name
 `cores/console138k/voodootang-open.bin`. The Gowin EDA core keeps the existing
 name `voodootang.bin`; do not overwrite it with an open-flow experiment.
 
-Use SRAM loading for early experiments. An Apicula `.fs` file must not merely
-be renamed to `.bin` for the TangCore SD loader; add an explicit binary export
-step once the complete open Voodoo target is ready.
+Use SRAM loading for the first hardware check. `make bin` then packs each
+textual Apicula `.fs` bitstream into the binary representation used by the
+TangCore SD loader. The demo filenames remain distinct (`blinky-open.bin`,
+`bram_test-open.bin`, and `uart_hello-open.bin`); none claims the reserved
+complete-core name.
 
 ## Current demos
 
@@ -64,6 +66,12 @@ make -j3
 Open-flow outputs are written to `build/*-open.fs`. Programming is intentionally not
 automatic: these are experimental bitstreams and should first be loaded into
 SRAM using the board's MODE-button procedure.
+
+After SRAM testing, generate separately named SD-card images with:
+
+```sh
+make bin
+```
 
 With the Console connected to the Mac, hold its MODE button and run, for
 example:

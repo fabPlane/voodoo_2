@@ -78,8 +78,9 @@ Open-source builds are deliberately kept separate. Artifacts from
 `fpga/hw/gowin-open` use the `-open` suffix, and the reserved SD-card filename
 for a complete open Voodoo core is `cores/console138k/voodootang-open.bin`.
 Keep `voodootang.bin` for the Gowin EDA build. Until an explicit TangCore
-binary export exists, test the open `.fs` artifacts through SRAM rather than
-renaming them to `.bin`.
+binary has passed an SRAM smoke test, keep the open demo names separate rather
+than replacing `voodootang.bin`. The open flow's `make bin` target performs the
+required bit-packing; renaming a textual `.fs` file is not sufficient.
 
 ### Isolated diagnostic mode
 

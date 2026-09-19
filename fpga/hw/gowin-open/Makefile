@@ -11,15 +11,18 @@ DEMOS        := blinky bram_test uart_hello
 BUILD_DIR    := build
 CST          := tang_console_138k_open.cst
 OPEN_SUFFIX  := -open
+OPEN_BINS    := $(addprefix $(BUILD_DIR)/,$(addsuffix $(OPEN_SUFFIX).bin,$(DEMOS)))
 # Reserved SD-card name for a future complete open-source Voodoo core.
 # The Gowin EDA build remains voodootang.bin.
 OPEN_VOODOO_SD_NAME := voodootang-open.bin
 
 .DEFAULT_GOAL := all
-.PHONY: all clean print-open-core-name $(DEMOS) hdmi_colorbars hdmi_colorbars-synth
+.PHONY: all bin clean print-open-core-name $(DEMOS) hdmi_colorbars hdmi_colorbars-synth
 .SECONDARY:
 
 all: $(DEMOS)
+
+bin: $(OPEN_BINS)
 
 $(DEMOS): %: $(BUILD_DIR)/%$(OPEN_SUFFIX).fs
 
@@ -43,6 +46,9 @@ $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).fs: $(BUILD_DIR)/%-pnr.json
 	$(GOWIN_PACK) --cpu_as_gpio -d $(PACK_DEVICE) -o $@ $<
+
+$(BUILD_DIR)/%$(OPEN_SUFFIX).bin: $(BUILD_DIR)/%$(OPEN_SUFFIX).fs fs_to_bin.py
+	python3 fs_to_bin.py $< $@
 
 clean:
 	rm -rf $(BUILD_DIR)
