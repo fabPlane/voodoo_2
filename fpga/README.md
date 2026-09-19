@@ -39,7 +39,10 @@ make gowin-console # Retro Console 138K Glide-test bitstream
 Program the AC701 with Vivado or `openFPGALoader`. Program the dock with the
 Gowin programmer or `openFPGALoader -c ft2232`. The Console demo needs Gowin
 EDA; copy the resulting `.bin` to `cores/console138k/voodootang.bin` on the
-SD card. See `hardware/tang-console-138k/README.md`.
+SD card. Open-source experiments from `hw/gowin-open` use distinct `*-open`
+build artifacts; a future complete open core is reserved
+`cores/console138k/voodootang-open.bin` and must not overwrite the vendor-built
+core. See `hardware/tang-console-138k/README.md`.
 
 ## Gowin / Tang Mega 138K Pro
 

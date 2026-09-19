@@ -74,6 +74,13 @@ or commercial):
    case-button/HID state, BAR traffic, and BL616 UART counters). USB serial on Soft-USB S1 is optional; the onboard
    microSD is muxed to the BL616 and is not a core log.
 
+Open-source builds are deliberately kept separate. Artifacts from
+`fpga/hw/gowin-open` use the `-open` suffix, and the reserved SD-card filename
+for a complete open Voodoo core is `cores/console138k/voodootang-open.bin`.
+Keep `voodootang.bin` for the Gowin EDA build. Until an explicit TangCore
+binary export exists, test the open `.fs` artifacts through SRAM rather than
+renaming them to `.bin`.
+
 ### Isolated diagnostic mode
 
 Hold the case **MODE** button while the Voodoo core is loaded. The FPGA samples
