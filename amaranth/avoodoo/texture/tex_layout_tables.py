@@ -8,11 +8,9 @@ The Scala object is a *combinational* table computation shared by the write
 path (Core drain) and the read path (TMU via ``PerTriangleConfig``).  It has
 no state and no handshake, so the port is pure Python: :func:`compute` takes a
 :class:`TexConfig` and returns :class:`Tables`, with the same field names and
-the same 22-bit wrapping the Scala ``resize(22 bits)`` calls impose.  The
-hardware twin is :func:`compute_tables` at the bottom of this file: the same
-nine unrolled stages as Amaranth combinational logic on a
-:class:`TexConfigLayout` view, checked against the model in
-``tests/test_texture_mem.py``.
+the same 22-bit wrapping the Scala ``resize(22 bits)`` calls impose.  When the
+hardware module lands (plan Phase 5), it elaborates the same nine unrolled
+stages and can be diffed against this model.
 
 Notes on fidelity, each matching a line of the Scala:
 
@@ -30,9 +28,6 @@ Notes on fidelity, each matching a line of the Scala:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-from amaranth.hdl import Cat, Const, Mux, Signal, unsigned
-from amaranth.lib import data
 
 __all__ = [
     "LOD_COUNT",
@@ -134,109 +129,5 @@ def compute(cfg: TexConfig) -> Tables:
         offset = (offset + lod_size) & ADDR_MASK
         if lod >= 3:
             multibase_tail_offset = (multibase_tail_offset + lod_size) & ADDR_MASK
-
-    return tables
-
-
-# ---------------------------------------------------------------------------
-# The hardware `compute` (appended by the TextureMem port, plan Phase 5).
-#
-# The model above is pure Python; this is the same nine unrolled stages as
-# Amaranth combinational logic, so `TextureMem.WriteCmd.fromPciDrain`
-# (texture/texture_mem.py) and `RegisterBank.tmuConfig.texTables`
-# (RegisterBank.scala:1193) can elaborate it.  `tests/test_texture_mem.py`
-# checks it against `compute` above for random configurations.
-# ---------------------------------------------------------------------------
-
-__all__ += ["TexConfigLayout", "compute_tables"]
-
-
-class TexConfigLayout(data.StructLayout):
-    """``TexLayoutTables.TexConfig()`` -- the wire shape of :class:`TexConfig`.
-
-    Field names are ``camel_to_snake`` of the Scala's (``tLOD_aspect`` ->
-    ``t_lod_aspect``), declaration order is the Scala's.
-    """
-
-    def __init__(self) -> None:
-        super().__init__({
-            "tex_base_addr": unsigned(19),    # register 0x30C bits [18:0]
-            "tex_base_addr1": unsigned(19),
-            "tex_base_addr2": unsigned(19),
-            "tex_base_addr38": unsigned(19),
-            "tformat": unsigned(4),           # textureMode bits [11:8]
-            "t_lod_aspect": unsigned(2),      # tLOD bits [22:21]
-            "t_lod_s_is_wider": unsigned(1),  # tLOD bit [20]
-            "t_lod_multibase": unsigned(1),   # tLOD bit [24]
-        })
-
-
-def compute_tables(m, cfg, *, name: str = "tables"):
-    """``TexLayoutTables.compute(cfg)`` in hardware.
-
-    ``cfg`` is a :class:`TexConfigLayout` view; the result is a fresh
-    ``Signal`` of :func:`avoodoo.core.core_types.tex_layout_tables_layout`
-    driven combinationally.  Widths follow the Scala line by line:
-
-    * ``base* = (texBaseAddr* << 3).resize(22)`` -- 19 << 3 is exactly 22 bits;
-    * ``lodBase = base0 + offset`` wraps in 22 bits (``UInt + UInt`` keeps the
-      wider width);
-    * ``shiftAmount = (wide +^ narrow +^ is16bit.resize(5)).resize(5)``;
-    * ``lodSize = (U(1, 22) |<< shiftAmount).resize(22)``;
-    * ``texEnd`` and both running offsets are ``resize(22)`` sums.
-    """
-    from avoodoo.core.core_types import tex_layout_tables_layout
-
-    tables = Signal(tex_layout_tables_layout(), name=name)
-
-    # val is16bit = cfg.tformat >= Tmu.TextureFormat.ARGB8332
-    is_16bit = cfg.tformat >= ARGB8332
-
-    # Base address in bytes: texBaseAddr << 3
-    base0 = Cat(Const(0, 3), cfg.tex_base_addr)
-    base1 = Cat(Const(0, 3), cfg.tex_base_addr1)
-    base2 = Cat(Const(0, 3), cfg.tex_base_addr2)
-    base38 = Cat(Const(0, 3), cfg.tex_base_addr38)
-
-    offset_expr = Const(0, ADDR_BITS)
-    multibase_tail_offset = Const(0, ADDR_BITS)
-    for lod in range(LOD_COUNT):
-        wide = Const(wide_bits(lod), 4)
-        narrow = Signal(4, name=f"narrowBits_{lod}")
-        with m.Switch(cfg.t_lod_aspect):
-            with m.Case(0):
-                m.d.comb += narrow.eq(wide)
-            with m.Case(1):
-                m.d.comb += narrow.eq(Const(max(7 - lod, 0), 4))
-            with m.Case(2):
-                m.d.comb += narrow.eq(Const(max(6 - lod, 0), 4))
-            with m.Default():
-                m.d.comb += narrow.eq(Const(max(5 - lod, 0), 4))
-
-        lod_base = Signal(ADDR_BITS, name=f"lodBase_{lod}")
-        m.d.comb += lod_base.eq((base0 + offset_expr)[:ADDR_BITS])
-        if lod == 1:
-            with m.If(cfg.t_lod_multibase):
-                m.d.comb += lod_base.eq(base1)
-        if lod == 2:
-            with m.If(cfg.t_lod_multibase):
-                m.d.comb += lod_base.eq(base2)
-        if lod >= 3:
-            with m.If(cfg.t_lod_multibase):
-                m.d.comb += lod_base.eq((base38 + multibase_tail_offset)[:ADDR_BITS])
-        m.d.comb += [
-            tables.tex_base[lod].eq(lod_base),
-            tables.tex_shift[lod].eq(Mux(cfg.t_lod_s_is_wider, wide, narrow)),
-        ]
-
-        # shiftAmount = (wideBits +^ narrowBits +^ is16bit.asUInt.resize(5 bits)).resize(5 bits)
-        shift_amount = ((wide + narrow) + Cat(is_16bit, Const(0, 4)))[:5]
-        # lodSize = (U(1, 22 bits) |<< shiftAmount).resize(22 bits)
-        lod_size = Signal(ADDR_BITS, name=f"lodSize_{lod}")
-        m.d.comb += lod_size.eq((Const(1, ADDR_BITS) << shift_amount)[:ADDR_BITS])
-        m.d.comb += tables.tex_end[lod].eq((lod_base + lod_size)[:ADDR_BITS])
-        offset_expr = (offset_expr + lod_size)[:ADDR_BITS]
-        if lod >= 3:
-            multibase_tail_offset = (multibase_tail_offset + lod_size)[:ADDR_BITS]
 
     return tables

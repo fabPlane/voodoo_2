@@ -25,7 +25,6 @@ __all__ = [
     "fb_mem_bmb_params",
     "tex_mem_bmb_params",
     "cpu_tex_bmb_params",
-    "tmu_bmb_params",
     "register_bank_params",
     "register_bank_external_params",
     "plane_buffer_params",
@@ -73,20 +72,6 @@ def cpu_tex_bmb_params() -> MemBusParameter:
     """``Core.cpuTexBmbParams`` (Core.scala:51)."""
     return MemBusParameter.simple(address_width=26, data_width=32, source_width=4,
                                   context_width=0, length_width=6,
-                                  alignment=BurstAlignment.BYTE)
-
-
-def tmu_bmb_params(c: Config) -> MemBusParameter:
-    """``Tmu.bmbParams(c)`` (Tmu.scala:627) -- the TMU's read-only texture port.
-
-    ``sourceWidth = 1``, ``canWrite = false``: the command fragment carries no
-    ``data``/``mask`` (``cmd_fragment_layout`` omits them, and so does the
-    Spinal Verilog).  ``TextureMemSubsystem`` is its only slave.
-    """
-    return MemBusParameter.simple(address_width=c.address_width, data_width=32,
-                                  source_width=1, context_width=0,
-                                  length_width=c.mem_burst_length_width,
-                                  can_read=True, can_write=False,
                                   alignment=BurstAlignment.BYTE)
 
 

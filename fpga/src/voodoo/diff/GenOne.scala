@@ -78,6 +78,17 @@ object GenOne {
   /** `CoreSimGen` default memory timing (SimBmbMemory.scala defaults). */
   val simTiming: SimMemoryTiming = SimMemoryTiming()
 
+  /** `test/FramebufferPlaneBufferThroughputTest.scala`'s `mkConfig`: the smallest write combiner. */
+  val planeBufferSmallConfig: Config = c.copy(
+    addressWidth = 12 bits,
+    memBurstLengthWidth = 4,
+    fbWriteBufferLineWords = 2,
+    fbWriteBufferCount = 2,
+    useFbWriteBuffer = true,
+    useTexFillCache = false
+  )
+
+
   // ------------------------------------------------------------------------------------------
   // Registry
   // ------------------------------------------------------------------------------------------
@@ -259,8 +270,28 @@ object GenOne {
 
     // ---- framebuffer --------------------------------------------------------------------------
     "FramebufferPlaneBuffer" -> ok(
-      "FramebufferMemSubsystem.scala:86 — FramebufferPlaneBuffer(c) (formalStrong defaults true)"
+      "FramebufferMemSubsystem.scala:86 — FramebufferPlaneBuffer(c) (formalStrong defaults true). " +
+        "Config.voodoo1() has useFbWriteBuffer = false (what CoreSim and TangConsole138k build), " +
+        "so this is the 8-deep direct write queue only; the combiner is the two Wb entries"
     )(FramebufferPlaneBuffer(c)),
+    "FramebufferPlaneBufferWb" -> ok(
+      "CoreGowinGen.scala:28 / CoreArtixGen.scala:29 — FramebufferPlaneBuffer(c.copy(" +
+        "useFbWriteBuffer = true, fbWriteBufferLineWords = 256)): the write-combiner branch " +
+        "the Dock / Mega / Artix cores ship (two 255-deep slot FIFOs)"
+    )(FramebufferPlaneBuffer(c.copy(useFbWriteBuffer = true, fbWriteBufferLineWords = 256))),
+    "FramebufferPlaneBufferWbSmall" -> ok(
+      "test/FramebufferPlaneBufferThroughputTest.scala config — addressWidth 12, " +
+        "memBurstLengthWidth 4, fbWriteBufferLineWords 2, useFbWriteBuffer: the smallest " +
+        "combiner, so random stimulus reaches sequential-append and full-line drains"
+    )(FramebufferPlaneBuffer(planeBufferSmallConfig)),
+    // Aliases for the amaranth registry rows that attach a locality-biased write
+    // responder (the harness names the Spinal module after the row, like Fpxx/FpxxDiffWrap).
+    "FramebufferPlaneBufferWbLocal" -> ok("alias of FramebufferPlaneBufferWb")(
+      FramebufferPlaneBuffer(c.copy(useFbWriteBuffer = true, fbWriteBufferLineWords = 256))
+    ),
+    "FramebufferPlaneBufferWbSmallLocal" -> ok("alias of FramebufferPlaneBufferWbSmall")(
+      FramebufferPlaneBuffer(planeBufferSmallConfig)
+    ),
     "FramebufferPlaneReader" -> ok("FramebufferMemSubsystem.scala:78 — FramebufferPlaneReader(c)")(
       FramebufferPlaneReader(c)
     ),
