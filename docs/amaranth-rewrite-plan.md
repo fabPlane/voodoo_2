@@ -907,7 +907,7 @@ Spinal core does.
       `frontend/swap_buffer.py`.
 
 ### Phase 5
-- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [ ] texture_mem  - [ ] texture_mem_subsystem
+- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
 - [x] **tex_layout_tables** (2026-09-20). `amaranth/avoodoo/texture/tex_layout_tables.py`
       is the pure-Python transliteration of the Scala object (`TexConfig`/`Tables`
       dataclasses, `compute`, 22-bit wrapping kept); `tests/test_tex_layout_tables.py`
@@ -958,6 +958,37 @@ Spinal core does.
       tables exist under `ext/SpinalVoodoo/src/voodoo`: the NCC, fog and gamma
       tables are all register-loaded at runtime, and texel expansion is a
       bit-replication helper, not a LUT.
+- [x] **texture_mem + texture_mem_subsystem** (2026-09-20).
+      `amaranth/avoodoo/texture/texture_mem.py` is `TextureMem.scala` (an object, no
+      Component): `DownloadConfig` (+ `from_register_bank(m, c, reg_bank.tmu_config)`),
+      `WriteCmd`, the two private `*CpuWritePrep` layouts, `write_cmd_to_membus`
+      (`toBmb`) and `write_cmd_from_pci_drain` (`fromPciDrain`, both the packed and the
+      linear branch). `amaranth/avoodoo/core/texture_mem_subsystem.py` is the Component:
+      `s2mPipe` on the TMU command, `queue(2)` on the CPU read, fixed TMU > CPU-write >
+      CPU-read priority re-evaluated per cycle, `routedSource` with the 2-bit route tag
+      in the low `source` bits, rsp demux on `rsp.source[1:0]`. Supporting additions:
+      `membus_params.tmu_bmb_params(c)` (`Tmu.bmbParams`, canWrite = false so the
+      command has no data/mask) and a hardware `TexLayoutTables.compute` --
+      `tex_layout_tables.TexConfigLayout` + `compute_tables(m, cfg)` -- next to the
+      Python model (checked against it, 3 x 68 random configs). `TexWritePayload`
+      comes from `core_types.py` (added by the Lfb/frontdoor port).
+      Tests: `tests/test_texture_mem_subsystem.py` (13; a Python model of the packed
+      address decode incl. the LOD 9..15 / non-TMU0 drops, directed 8/16-bit/seq8/
+      multibase cases, 2-cycle latency + 1/cycle throughput, arbitration order with
+      all three pending, TMU starvation, queue depth 2, rsp routing for all 64
+      source values x slave readies, write rsp swallowed) and
+      `tests/diff/test_diff_texture_mem_subsystem.py` (20k x 3 + 10k back-pressured).
+      Diff: `make diff MOD=TextureMemSubsystem` **clean, 3 seeds x 1e6 cycles**
+      (256 s on the Mac, 54 ports paired: 32 in / 22 out, no overrides), plus
+      3 x 200k at `--valid-density 0.9 --ready-density 0.1` clean. The generic
+      driver's random `texMem.rsp.source` does not echo the command source, but both
+      sides route purely on `rsp.source[1:0]`, so this is strictly wider coverage
+      than the system contract, not a gap; no responder needed. Two Spinal details
+      reproduced on purpose: the 9-entry `Vec` read with a 4-bit `lod` falls to
+      entry 8 for 9..15 (Spinal's `case` default), and the second `m2sPipe` loads
+      its payload register on `ready`, not `fire`, so thrown-away writes still
+      land in it. `register_bank.py` (in flight) carries its own copy of the
+      hardware table compute; dedupe onto `compute_tables` later.
 
 ### Phase 6
 - [ ] address_math  - [ ] plane_buffer  - [ ] plane_reader  - [ ] plane_direct_reader  - [ ] framebuffer_mem_subsystem

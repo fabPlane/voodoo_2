@@ -217,6 +217,23 @@ REGISTRY: dict[str, DiffEntry] = {
         # of free input, re-randomised every cycle, which is a strictly harder
         # stimulus than the register-written tables the real core supplies.
     ),
+    "TextureMemSubsystem": DiffEntry(
+        spinal="TextureMemSubsystem",
+        factory="avoodoo.core.texture_mem_subsystem:TextureMemSubsystem",
+        note="Core.scala:112 — TextureMemSubsystem(c), Config.voodoo1(): the CPU "
+             "texture-download write path (TextureMem.scala) plus the 3-way "
+             "TMU/CPU-write/CPU-read arbitration onto texMem "
+             "(ext/SpinalVoodoo/src/voodoo/core/TextureMemSubsystem.scala -> "
+             "avoodoo/core/texture_mem_subsystem.py, avoodoo/texture/texture_mem.py)",
+        # No overrides: io_downloadConfig_texBaseAddr38 -> the
+        # download_config__tex_base_addr38 slice, io_tmuTexRead_cmd_payload_fragment_*
+        # -> slices of the packed tmu_tex_read__cmd__payload (no data/mask: the
+        # TMU bus is canWrite = false on both sides).  The generic driver
+        # randomises tex_mem.rsp.source, so the response demux is exercised
+        # with every route tag including the unmapped 3; the "rsp echoes cmd
+        # source" contract is the memory's, not this module's, and both sides
+        # route the same way regardless.
+    ),
     # --- Phase 3 ---------------------------------------------------------
     "TriangleSetup": DiffEntry(
         spinal="TriangleSetup",
