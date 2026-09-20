@@ -27,7 +27,7 @@ SIM_OVERRIDES := \
 	SCALA_SRCS=
 
 .PHONY: help venv test rtl-module rtl-core-sim rtl-console diff diff-list gowin-console clean \
-        sim-model sim-build sim-run sim-clean
+        sim-model sim-build sim-run sim-trace-check sim-clean
 
 help:
 	@echo "venv           uv sync (create/refresh .venv)"
@@ -37,6 +37,7 @@ help:
 	@echo "sim-model      verilate CoreSim.v + build the harness objects (Linux, -m32)"
 	@echo "sim-build TEST=test00   link one Glide test against the Amaranth CoreSim"
 	@echo "sim-run   TEST=test00   run it and convert the screenshot to PNG"
+	@echo "sim-trace-check TEST=test04   trace replay vs the 86Box ref model (64-bit)"
 	@echo "rtl-console    (Phase 8) TangConsole138k.v for the Gowin build"
 	@echo "diff MOD=X     Spinal-vs-Amaranth lockstep test (>=1e6 cycles x 3 seeds)"
 	@echo "diff-list      modules the diff harness knows about"
@@ -76,8 +77,34 @@ sim-build: sim-model
 sim-run: sim-build
 	$(MAKE) -C $(UPSTREAM) native/sim/run/$(TEST) $(SIM_OVERRIDES)
 
+# The screenshot/cycle parity gate (plan 7.3) does NOT go through the Glide
+# stack: `native/sim/check/%` runs ext/SpinalVoodoo/emu/test/trace_test, which
+# is a separate **64-bit** build replaying a captured trace against the 86Box
+# reference model. It reads the harness and the RTL out of plain `=`
+# variables, so it takes the Amaranth copy with three overrides and needs no
+# 32-bit libraries at all. Only trace *capture* and live Glide runs need -m32.
+AMTESTOBJ := $(CURDIR)/emu/test/obj_dir
+
+# `-o $(RTL_DIR)/CoreSim.v` is load-bearing. emu/test/Makefile has its own
+#     $(VERILOG): $(SCALA_SRCS) $(CORE_SIM_GEN_ARGS_FILE) $(SIM_INTERFACE_FILE)
+# rule that runs `voodoo.CoreSimGen` — a Scala build inside the read-only
+# submodule that regenerates the *Spinal* RTL, for a file it does not even
+# write to the overridden path. `SCALA_SRCS=` alone is not enough: the other
+# two prerequisites are sentinel files that `$(shell …)` recreates inside
+# OBJ_DIR at parse time, so they are always newer than the Amaranth RTL.
+# `-o FILE` tells make to treat that target as up to date, full stop.
+# This is the same trap that made us copy emu/sim/Makefile instead of
+# overriding it (doc §3.2).
+sim-trace-check: rtl-core-sim
+	$(MAKE) -C $(UPSTREAM)/emu/test -o $(RTL_DIR)/CoreSim.v $(AMTESTOBJ)/trace_test \
+		SIM_DIR=$(AMSIM) VERILOG=$(RTL_DIR)/CoreSim.v OBJ_DIR=$(AMTESTOBJ) \
+		SCALA_SRCS=
+	cd $(UPSTREAM) && $(AMTESTOBJ)/trace_test traces/$(TEST).bin \
+		--output-dir $(CURDIR)/test-output/$(TEST)
+
 sim-clean:
 	$(MAKE) -C $(AMSIM) clean
+	rm -rf $(AMTESTOBJ) $(CURDIR)/test-output
 
 # --- Spinal-vs-Amaranth lockstep diff (plan §4.2 / task 0.4) ---------------
 #

@@ -473,15 +473,47 @@ Spinal core does.
       *real* contents (dither/TMU tables) must not be stripped.
       On `hyper-ms-lin`: `rtl-core-sim` 35 s, `sim-model` 37 s, `make -C
       emu/sim smoke` passes (bus, fb+tex round-trip to the last word of each,
-      swap-count load path). **`sim-build` is blocked, not by this work**: the
-      box has no 32-bit zlib/libX11/libXext, so `libglide2x.so` cannot link —
-      upstream's own Glide build fails identically there (it gets them from a
-      nix devenv that is not installed). Fix: `dpkg --add-architecture i386` +
-      `zlib1g-dev:i386 libx11-dev:i386 libxext-dev:i386`. The same gap blocks
-      the 7.3 screenshot comparison for the Spinal build too.
+      swap-count load path). `sim-build TEST=test00` links `libglide2x.so.2`
+      and `test00.exe`; running it, Glide completes the whole SST-1 init
+      sequence against the stub, `fbiMemSize`'s LFB probe writes
+      `0xdead`/`0x55aa` and reads them back through the stub's framebuffer RAM
+      and correctly detects 4 MB, then it spins on a register the stub does
+      not model. Needed `zlib1g-dev:i386 libx11-dev:i386 libxext-dev:i386`
+      plus the dpkg i386 arch, now installed and recorded in `AGENTS.md` —
+      before that **no** Glide binary could be linked on that box, upstream's
+      own `make native/sim/build` included.
+- **Two pipelines, and 7.3 wants the 64-bit one.** The golden images in
+  `test-output/` come from `native/sim/check/%` → `emu/test/obj_dir/trace_test`,
+  a *separate 64-bit* build that replays a captured trace against the 86Box
+  reference model and only borrows `emu/sim`'s `harness/` and `rtl/` through
+  plain `=` variables. It therefore takes the Amaranth copy with three
+  overrides and **needs no 32-bit libraries at all**; the `-m32` Glide stack
+  is only for live runs and for *capturing* traces. New target:
+  `make sim-trace-check TEST=test04`. It runs the full pipeline against the
+  stub — 3024 entries, 35 triangles, 2107 texture uploads, all four output
+  files — and **`test04_ref.png` comes out byte-identical (md5) to the
+  committed reference**, which is the harness copy validated end to end. It
+  then fails as it should: 36354/307200 pixels mismatch, all `SIM-BLACK`,
+  because the stub draws nothing. `-o $(RTL_DIR)/CoreSim.v` in that recipe is
+  load-bearing: `emu/test/Makefile` has the same `$(VERILOG): $(SCALA_SRCS)`
+  trap, and `SCALA_SRCS=` alone does not disarm it because the rule's other
+  prerequisites are `$(shell …)` sentinels recreated in `OBJ_DIR` at parse
+  time, so it fires a `voodoo.CoreSimGen` Scala build inside the submodule.
+- **`native/sim/run/%` does not complete against the *Spinal* core either.**
+  Driving the unmodified upstream harness and the submodule's own `CoreSim.v`
+  through the copied `emu/sim/Makefile`, test04 renders the fastfill stage
+  (5022 pixels) and then hangs on the `fbiMemSize` LFB probe —
+  `bus_read(0x432100)` times out after 5 M cycles, and so does the next. So
+  there is no live-run reference to reproduce for either core; 7.3 should
+  compare through `trace_test`. That run did, however, validate the copied
+  `emu/sim/Makefile` independently of the Amaranth core: it verilated the
+  9.2 MB Spinal `CoreSim.v` with upstream's exact flags, compiled the
+  *upstream* `sim_harness.cpp` against it, and the Glide `Makefile.sim` linked
+  `libglide2x.so` entirely out of `amaranth/emu/sim/obj_dir/` from the single
+  `SIM_DIR=` override.
 
 ### Phase 1
-- [x] stream helpers  - [ ] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
+- [x] stream helpers  - [x] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
 - [x] 1.1 stream helpers — 2026-09-20. `amaranth/avoodoo/lib/stream.py` (+ `lib/fragment.py`,
       `bus/stream_while.py`), transliterated from the SpinalHDL 1.15.0 `spinal/lib/Stream.scala`,
       `Flow.scala`, `Counter.scala` and `Utils.scala` sources. 66 pysim tests in

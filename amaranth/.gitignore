@@ -7,6 +7,10 @@ rtl/
 # Verilator + harness build products (amaranth/emu/sim/Makefile)
 emu/sim/obj_dir/
 
+# trace_test build + output (make sim-trace-check)
+emu/test/obj_dir/
+test-output/
+
 # Gowin build products for the spike / console builds
 hw/spike/build/
 hw/spike/impl/

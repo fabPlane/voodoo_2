@@ -15,6 +15,7 @@ make rtl-core-sim                  # -> rtl/CoreSim.v   (Mac or Linux)
 make sim-model                     # verilate + build the harness  (Linux only)
 make sim-build TEST=test00         # link one Glide test against it (Linux only)
 make sim-run   TEST=test00         # run it, screenshot -> ext/SpinalVoodoo/output/
+make sim-trace-check TEST=test04   # trace replay vs the 86Box ref model (64-bit)
 ```
 
 `make rtl-console` and `gowin-console` are declared but not implemented; each
@@ -267,6 +268,32 @@ The copied `emu/sim/Makefile` keeps upstream's `VERILATOR_FLAGS`, `-m32`
 rule, which would otherwise regenerate the *Spinal* RTL over the Amaranth
 one, and the `$readmemb` `sed` that went with it.
 
+### Two pipelines, and only one of them needs 32 bits
+
+This is worth knowing before Phase 7.3, because the naming does not make it
+obvious:
+
+| Route | Binary | Bits | Produces |
+|---|---|---|---|
+| `native/sim/run/%` → `make sim-run` | `tests/<test>.exe` + `libglide2x.so` | **32** | a live Glide render, `output/<test>/screenshot.png` |
+| `native/sim/check/%` → `make sim-trace-check` | `emu/test/obj_dir/trace_test` | **64** | `test-output/<test>/{_ref,_sim,_diff}.png` + `_profile.json` |
+
+The committed golden images in `ext/SpinalVoodoo/test-output/` come from the
+**second** one. It replays a captured trace against the 86Box reference model
+and the RTL side by side, and it is an entirely separate build that only
+borrows `emu/sim`'s `harness/` and `rtl/` directories through plain `=`
+variables. So the parity gate takes the Amaranth copy with three overrides
+and needs no 32-bit libraries at all — the `-m32` Glide stack is only needed
+for live runs and for *capturing* new traces.
+
+`-o $(RTL_DIR)/CoreSim.v` in the `sim-trace-check` recipe is load-bearing.
+`emu/test/Makefile` carries the same `$(VERILOG): $(SCALA_SRCS) …` trap that
+made us copy `emu/sim/Makefile` rather than override it, and `SCALA_SRCS=`
+alone does not disarm it: the rule's other two prerequisites are sentinel
+files that `$(shell …)` recreates inside `OBJ_DIR` at parse time, so they are
+always newer than the Amaranth RTL and the rule fires a `voodoo.CoreSimGen`
+Scala build inside the read-only submodule. `make -o FILE` settles it.
+
 ### State on `hyper-ms-lin` (2026-09-20)
 
 Verified there, in this order:
@@ -278,24 +305,46 @@ Verified there, in this order:
   fb + texture round-trips including the last word of each (4 MiB−4 and
   8 MiB−4, which is what catches an array one size too small), and the
   `swapCountReg` load path for all four values.
+* `make sim-build TEST=test00` → `libglide2x.so.2` and `test00.exe` link
+  against the Amaranth stub. Running it, Glide gets all the way through the
+  SST-1 init sequence — reset staging, register defaults, `setResolution`,
+  fastfill, and `fbiMemSize`, whose LFB probe writes `0xdead`/`0x55aa` and
+  reads them back through the stub's framebuffer RAM, correctly detecting
+  4 MB. It then spins polling a register the stub does not model, which is
+  what a stub should do.
+* `make sim-trace-check TEST=test04` → the whole parity pipeline runs:
+  3024 trace entries, 35 triangles, 2107 texture uploads, and all four output
+  files written. **`test04_ref.png` comes out byte-identical (same md5) to the
+  committed `ext/SpinalVoodoo/test-output/test04/test04_ref.png`.** The target
+  then *fails*, correctly: 36354/307200 pixels mismatch, every one of them
+  classified `SIM-BLACK`, because the stub draws nothing. Phase 7.2 is what
+  makes `_sim.png` match; the plumbing is already proven.
 
-**`make sim-build` does not link yet, and not because of anything here.**
-`hyper-ms-lin` has no 32-bit `zlib` / `libX11` / `libXext`, so the final
-`libglide2x.so` link fails with `cannot find -lz / -lX11 / -lXext`. Upstream
-hits exactly the same wall: SpinalVoodoo gets those from its nix devenv
-(`pkgs.pkgsi686Linux.{zlib,xorg.libX11,xorg.libXext}`) and nix is not
-installed on that box, so the Glide suite has evidently never been built
-there. Everything before the link — all 32-bit Glide objects, `libglide2x.a`,
-the harness, the model — builds clean. The fix is three packages:
+Two findings that are upstream's, not ours:
 
-```
-sudo dpkg --add-architecture i386 && sudo apt-get update
-sudo apt-get install -y zlib1g-dev:i386 libx11-dev:i386 libxext-dev:i386
-```
+* **The 32-bit dev libraries were missing.** `zlib1g-dev:i386`,
+  `libx11-dev:i386` and `libxext-dev:i386` are now installed (see
+  `AGENTS.md`). Before that, no Glide test binary could be linked at all —
+  upstream's own `make native/sim/build` included, since SpinalVoodoo gets
+  them from a nix devenv that is not installed on that box.
+* **`native/sim/run/%` does not complete against the Spinal core either.**
+  Driving the *unmodified upstream* harness and the submodule's own
+  `CoreSim.v` through the copied `emu/sim/Makefile`, test04 renders the
+  fastfill stage (5022 pixels) and then hangs on the `fbiMemSize` LFB probe:
+  `bus_read(0x432100)` times out after 5 M cycles, and so does the next one.
+  So there is no live-run reference screenshot to reproduce, for either core.
+  That is why the cross-check above goes through `trace_test` instead.
 
-Until then `make -C emu/sim smoke` is the harness gate, and the
-screenshot-parity check against `test-output/` (plan 7.3) is blocked on the
-same three packages — for the Spinal build as much as for this one.
+That cross-check also validated the copied `emu/sim/Makefile` independently of
+the Amaranth core: it verilated the 9.2 MB Spinal `CoreSim.v` with upstream's
+exact flags, compiled the **upstream** `sim_harness.cpp` against it, and the
+Glide `Makefile.sim` then linked `libglide2x.so` entirely out of
+`amaranth/emu/sim/obj_dir/` — `sim_harness.o`, `voodoo_trace_writer.o`,
+`verilated.o`, `verilated_threads.o`, `VCoreSim__ALL.a` — from the single
+`SIM_DIR=` override. (The submodule's `CoreSim.v` has absolute *Mac*
+`$readmemb` paths baked in from whoever generated it; the check ran against a
+copy under `/home/hyper/tmp` with those rewritten, so nothing in `ext/` was
+touched.)
 
 ### rsync
 
