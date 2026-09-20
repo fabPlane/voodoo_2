@@ -402,7 +402,43 @@ Spinal core does.
 - [ ] 0.5 harness copy skeleton links
 
 ### Phase 1
-- [ ] stream helpers  - [ ] membus + adapters  - [ ] fpxx  - [ ] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
+- [x] stream helpers  - [ ] membus + adapters  - [ ] fpxx  - [ ] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
+- [x] 1.1 stream helpers — 2026-09-20. `amaranth/avoodoo/lib/stream.py` (+ `lib/fragment.py`,
+      `bus/stream_while.py`), transliterated from the SpinalHDL 1.15.0 `spinal/lib/Stream.scala`,
+      `Flow.scala`, `Counter.scala` and `Utils.scala` sources. 66 pysim tests in
+      `amaranth/tests/test_stream.py` + `test_stream_while.py`; `make test` 145 green.
+      Ported (everything the core instantiates, census in the module docstring): `Stream`/`Flow`,
+      `m2sPipe`/`s2mPipe`/`halfPipe`/`stage`/`combStage`, `translateWith`/`map`,
+      `throwWhen`/`haltWhen`/`takeWhen`/`continueWhen`/`clearValidWhen`, `StreamFork`
+      (sync + async), `StreamJoin`, `StreamDemux`, `StreamMux`, `StreamArbiter` with all four
+      arbitration and three lock policies, `StreamFifo` (latency 0/1/2, `flush`, `occupancy`,
+      `availability`), `StreamFifoCC`, `Counter`, `OHMasking`/`MuxOH`/`OHToUInt`. Deliberately
+      skipped: `StreamFifoLowLatency`, `StreamCCByToggle`, `StreamWidthAdapter`,
+      `StreamTransactionExtender`, `StreamUnpacker`/`Packer`, `repeat`/`slowdown`/`delay`/
+      `validPipe`/`forkSerial`/`toStream`/`queueOfReg`, `forFMax`, `useVec`.
+      **Findings that bind later phases** (full text in `stream.py:SPINAL_VS_AMARANTH`):
+      (a) `amaranth.lib.fifo.SyncFIFOBuffered` is *not* substitutable for `StreamFifo` — no
+      `flush` (the two `FramebufferPlaneBuffer` slot FIFOs drive it), no `availability`
+      (`PciFifo` exports it as `io.pciFifoFree`), and its `level` disagrees with Spinal's
+      `occupancy` on the cycle a pop fires, because Spinal computes `pushPtr - popOnIo` with
+      `popOnIo = RegNextWhen(popPtr, readArbitration.fire)`; the core's `busy` flags and the
+      HUD debug word read that, so `avoodoo.lib.stream.Fifo` is a transliteration.
+      A cycle-accurate Python model of the Scala is in `tests/test_stream.py` and every output
+      is compared every cycle for depths 2/3/4/5/8/16. Usable capacity is `depth`, not
+      `depth + 1`: `full` compares against `popOnIo`, so the output register buys no slot.
+      (b) `amaranth.lib.stream.Signature` is `@final`, so the ~100 Spinal `Stream` methods are
+      module-level functions taking the `Module` first. (c) `StreamFork(synchronous = true)`
+      drives `outputs.valid := i.valid && i.ready` — valid depends on ready, illegal in AXI,
+      relied on in six places; kept verbatim. (d) Several helpers depend on Spinal's
+      last-`when`-wins override order (`s2mPipe`, `halfPipe`, `StreamForkArea`, `StreamFifo`
+      flush); statement order is preserved for that reason. (e) `StreamFifoCC` derives the pop
+      domain reset from the push domain by default
+      (`ClockDomain.crossClockBufferPushToPopResetGen` is **true**); reproduced with a local
+      async-reset domain + `amaranth.lib.cdc.ResetSynchronizer`, and it needs checking against
+      the Console Verilog in Phase 8 (decision 6).
+      `avoodoo.bus.stream_while:StreamWhileDiffWrap` is the elaboratable counterpart of
+      `fpga/src/voodoo/diff/DiffWrappers.scala`, ready for the 0.4 harness; it is not in
+      `gen/gen_module.py`'s `REGISTRY` yet (use the `module:Class` spec).
 
 ### Phase 2
 - [ ] regdef  - [ ] register_bank  - [ ] address_remapper  - [ ] swap_buffer  - [ ] lfb  - [ ] cpu_frontdoor  - [ ] core_types
