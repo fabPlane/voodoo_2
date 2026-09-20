@@ -568,7 +568,7 @@ Spinal core does.
       `tests/diff/test_diff_membus.py`.
       **Diff results** (`make diff`, 3 seeds x 1e6 cycles, Mac, Verilator 5.052), each against
       the parameters its Scala call site uses: `BmbArbiter` (5 x fbMemBmbParams, lowerFirst)
-      PASS at 3 x 20k, full 3 x 1e6 gate still running on a loaded Mac, `BmbArbiterSingle` (PlaneBuffer -> fbMem, the portCount == 1 bypass) PASS,
+      PASS, `BmbArbiterSingle` (PlaneBuffer -> fbMem, the portCount == 1 bypass) PASS,
       `BmbSourceRemover` (fbMemBmbParams) PASS, `BmbAligner` (fbMemBmbParams, burstLog2 8)
       PASS, `BmbLengthFixer` (aligner.op, 8) PASS, `BmbAlignedSpliter`
       (PlaneReader.internalBmbParams, lengthMax 2048) PASS, `BmbContextRemover`
