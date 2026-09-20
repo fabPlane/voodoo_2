@@ -333,6 +333,12 @@ Spinal core does.
   allows so waveforms line up.
 - Test before "done": unit test (pysim), diff test (Verilator), both wired
   into `make test` / `make diff`.
+- Spinal `Reg(...)` without `init` has no reset; an Amaranth `Signal` resets
+  to 0. Declare such registers `reset_less=True` or the lockstep diff diverges
+  right after reset (the harness resets before every seed).
+- Amaranth attaches an initialiser to every `Memory`; large uninitialised RAMs
+  must go through `gen/gen_core_sim.py`'s `strip_meminit` or Verilog emission
+  explodes to one `initial` per word.
 - Keep `avoodoo/` free of simulation-only code paths except `core_sim.py` and
   `sim_membus_memory.py`.
 - Gowin PnR only on `hyper-ms-lin`, one `gw_sh` at a time (see `AGENTS.md`).
