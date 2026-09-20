@@ -552,10 +552,47 @@ Spinal core does.
 - [ ] triangle_setup  - [ ] rasterizer  - [ ] span_walker  - [ ] fastfill (3 files)  - [ ] write
 
 ### Phase 4
-- [ ] color_combine  - [ ] fog  - [ ] dither + tables  - [ ] framebuffer_access  - [ ] pixel_pipeline
+- [ ] color_combine  - [ ] fog  - [x] dither tables  - [ ] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
+- [x] **dither tables — formula-generated, no data pasted** (2026-09-20).
+      `amaranth/avoodoo/pixel/dither_tables.py` builds all eight 86Box tables
+      (`rb4x4`/`g4x4`/`rb2x2`/`g2x2` + the four `dithersub` ones, 10 240 entries,
+      931 Scala lines) from two Bayer rank matrices and a shift-and-add level
+      count; `tests/test_dither_tables.py` (40 tests) asserts **every entry**
+      against the Scala literals in `tests/data/dither_tables_spinal.json`
+      (extracted by `amaranth/tools/extract_spinal_tables.py`) and again against
+      `emu/86Box/src/include/86box/vid_voodoo_dither.h`, which is byte-identical
+      to the Scala. 86Box itself has no generator — the tables are literal arrays
+      there too — so the generator was recovered from the data: per cell they are
+      provably *not* `floor((a*v+b)/c)` for any integers (LP over the thresholds),
+      but `levels(v) = 2v - (v>>4) + (v>>7)` (5-bit) / `4v - (v>>4) + (v>>6)`
+      (6-bit), `divmod` by the tile size, bump the cells ranked below the
+      remainder, reproduces them exactly. The API matches the Scala object
+      (eight `lookup*`, four `*_packed` ROM images, `packed_index` =
+      `Dither.packedAddr`) so `pixel/dither.py` can be a 1:1 port.
 
 ### Phase 5
-- [ ] tex_layout_tables  - [ ] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [ ] texture_mem  - [ ] texture_mem_subsystem
+- [x] tex_layout_tables  - [ ] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [ ] texture_mem  - [ ] texture_mem_subsystem
+- [x] **tex_layout_tables** (2026-09-20). `amaranth/avoodoo/texture/tex_layout_tables.py`
+      is the pure-Python transliteration of the Scala object (`TexConfig`/`Tables`
+      dataclasses, `compute`, 22-bit wrapping kept); `tests/test_tex_layout_tables.py`
+      (171 tests) checks every non-multibase configuration LOD by LOD against an
+      independent reimplementation of 86Box `voodoo_recalc_tex12`
+      (`vid_voodoo_texture.c:59-144`) written from the C's width/height/shift loop.
+      Noted for Phase 5: **the Scala deliberately differs from 86Box under
+      `tLOD_multibase`** — 86Box adds its running offset to the replaced base
+      (`tex_base[1] = texBaseAddr1 + size(LOD0)`), the Scala uses the register bare
+      for LOD 1/2 and a tail offset restarting at LOD 3. The port follows the Scala;
+      the test pins the divergence so it is not "fixed" by accident.
+- [x] **tmu constant ROMs** (2026-09-20, ahead of `tmu`).
+      `amaranth/avoodoo/texture/tmu_tables.py` = the `lookupTables` area of
+      `Tmu.scala:53-80` only (no pipeline): the 512-entry 17-bit reciprocal LUT
+      (formula, exact-integer `round`) and the 256-entry log2 LUT, whose Scala
+      literal is exactly `floor(log2(1 + i/256) * 256)` and identical to 86Box's
+      `logtable` (`vid_voodoo_render.c:111`). `tests/test_tmu_tables.py` (8 tests)
+      pins the log table against the extracted literal. No other pure constant
+      tables exist under `ext/SpinalVoodoo/src/voodoo`: the NCC, fog and gamma
+      tables are all register-loaded at runtime, and texel expansion is a
+      bit-replication helper, not a LUT.
 
 ### Phase 6
 - [ ] address_math  - [ ] plane_buffer  - [ ] plane_reader  - [ ] plane_direct_reader  - [ ] framebuffer_mem_subsystem
