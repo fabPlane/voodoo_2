@@ -28,6 +28,7 @@ from amaranth.lib import wiring
 REGISTRY: dict[str, str] = {
     "Counter": "avoodoo.example:Counter",
     "SpikeBlinky": "avoodoo.gowin.spike_blinky:SpikeBlinky",
+    "TriangleSetup": "avoodoo.raster.triangle_setup:TriangleSetup",
 }
 
 DEFAULT_OUT_DIR = Path(__file__).resolve().parent.parent / "rtl"
