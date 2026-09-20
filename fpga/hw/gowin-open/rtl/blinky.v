@@ -13,7 +13,10 @@ module top (
             counter <= counter + 1'b1;
     end
 
-    // LEDs are active-low. LED 0 blinks; LED 1 follows the USER key.
-    assign led_n[0] = ~counter[24];
-    assign led_n[1] = key0_n;
+    // These two active-low outputs drive the Console's two status-light
+    // channels. Alternate them so a running clock is visually unambiguous.
+    assign led_n[0] =  counter[23];
+    assign led_n[1] = ~counter[23];
+
+    wire _unused = key0_n;
 endmodule

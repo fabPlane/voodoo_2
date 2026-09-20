@@ -42,10 +42,12 @@ $(BUILD_DIR)/%-synth.json: rtl/%.v Makefile | $(BUILD_DIR)
 
 $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 	$(NEXTPNR) --threads $(THREADS) --timing-allow-fail -r \
-		--freq 50 --json $< --write $@ --device $(DEVICE) --vopt cst=$(CST)
+		--freq 50 --json $< --write $@ --device $(DEVICE) \
+		--vopt cst=$(CST) --vopt sspi_as_gpio
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).fs: $(BUILD_DIR)/%-pnr.json
-	$(GOWIN_PACK) --cpu_as_gpio --ready_as_gpio --done_as_gpio \
+	$(GOWIN_PACK) --cpu_as_gpio --sspi_as_gpio --mspi_as_gpio \
+		--ready_as_gpio --done_as_gpio \
 		-d $(PACK_DEVICE) -o $@ $<
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).bin: $(BUILD_DIR)/%$(OPEN_SUFFIX).fs fs_to_bin.py
