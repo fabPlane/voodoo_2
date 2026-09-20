@@ -191,6 +191,24 @@ untouched, so `CoreSim_spinal.v` contains `Core`, `PciFifo`, `Tmu`, … unchange
 generated as `<Name>_am`, the two can be instantiated side by side in one Verilator build
 without a name clash — as long as the Amaranth side also namespaces its submodules.
 
+### 1.7 Undriven outputs: only the top is checked
+
+`PhaseCheck_noLatchNoOverride` rejects an undriven combinational output **on the top component**,
+and also on an inner component whose output is actually read. `CoreDebug`
+(`ext/SpinalVoodoo/src/voodoo/core/CoreTypes.scala`) declares ten debug words —
+`pipelineBusySources`, `fbAccess`, `fbColorCache{,Req,Expected,Occupancy}`,
+`fbAuxCache{,Req,Expected,Occupancy}` — that **nothing in the design ever assigns**.
+`Core`/`CoreSim` elaborate anyway because RegisterBank does not really consume them and Spinal
+prunes the whole path; a bare `PixelPipeline` top does not. `DiffHierWrap` (in
+`DiffWrappers.scala`) handles this generically: it re-exports a component's io one level up and
+skips any output with `hasDataAssignment == false`, printing the list. For `PixelPipeline` that
+is the ten words above — the Amaranth port should simply not implement them (or drive them to
+zero and say so), and the diff harness must not expect them.
+
+Sweep result on 2026-09-20: all **44 buildable registry entries** generate, and all 44
+`verilator --lint-only -Wno-fatal` runs report **0 errors** (warnings are the usual
+`WIDTHTRUNC` / `CMPCONST` / `UNSIGNED` classes the repo's own `fpga/Makefile` suppresses).
+
 ---
 
 ## 2. What `sim_harness.cpp` reaches into
@@ -397,7 +415,7 @@ Three further facts that bite:
 | Path | What |
 |---|---|
 | `fpga/src/voodoo/diff/GenOne.scala` | registry + `scala-cli` main; `GenOne <Module> [outDir]` |
-| `fpga/src/voodoo/diff/DiffWrappers.scala` | `StreamWhileDiffWrap`, `FpxxDiffWrap` |
+| `fpga/src/voodoo/diff/DiffWrappers.scala` | `StreamWhileDiffWrap`, `FpxxDiffWrap`, `DiffHierWrap` |
 | `fpga/src/voodoo/diff/AfixOps.scala` | AFix op-by-op reference module |
 | `fpga/src/voodoo/diff/ports.py` | `*_spinal.v` → JSON port map |
 | `fpga/src/voodoo/diff/portmaps/*.json` | committed port maps (the RTL itself is gitignored) |

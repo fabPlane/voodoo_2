@@ -175,8 +175,11 @@ object GenOne {
     "TmuTextureCache" -> ok("Tmu.scala:597 — TmuTextureCache(c) when c.useTexFillCache")(
       TmuTextureCache(c)
     ),
-    "TmuNoTextureCache" -> ok("Tmu.scala:597 — TmuNoTextureCache(c) when !c.useTexFillCache")(
-      TmuNoTextureCache(c)
+    "TmuNoTextureCache" -> ok(
+      "Tmu.scala:597 — TmuNoTextureCache when !c.useTexFillCache; the module `require`s it, " +
+        "so this entry uses Config.voodoo1().copy(useTexFillCache = false)"
+    )(
+      TmuNoTextureCache(c.copy(useTexFillCache = false))
     ),
     "Tmu" -> ok("PixelPipeline.scala:294 — Tmu(c)")(Tmu(c)),
     "TextureMem" -> todo(
@@ -217,7 +220,13 @@ object GenOne {
     "TmdsSerializer" -> ok("HdmiScanout.scala:620 — TmdsSerializer()")(TmdsSerializer()),
 
     // ---- pipeline / top -------------------------------------------------------------------------
-    "PixelPipeline" -> ok("Core.scala:110 — PixelPipeline(c)")(PixelPipeline(c)),
+    "PixelPipeline" -> ok(
+      "Core.scala:110 — PixelPipeline(c), inside DiffHierWrap: CoreDebug's fbAccess / " +
+        "fbColorCache* / pipelineBusySources outputs are never driven upstream, which only a " +
+        "TOP component may not do"
+    )(
+      new DiffHierWrap("pixelPipeline", PixelPipeline(c))
+    ),
     "SimBmbMemory" -> ok("CoreSim.scala:32 — SimBmbMemory(fbMemBmbParams, 4 MiB, default timing)")(
       SimBmbMemory(Core.fbMemBmbParams(simConfig), 4 * 1024 * 1024, simTiming)
     ),
@@ -293,9 +302,20 @@ object GenOne {
 
     if (args.contains("--all")) {
       val outDir = positional.headOption.getOrElse("rtl/diff")
+      val failures = scala.collection.mutable.ArrayBuffer[(String, String)]()
       registry.filter(_._2.build.isDefined).foreach { case (n, _) =>
         println(s"[GenOne] $n")
-        println(s"[GenOne] wrote ${generate(n, outDir, asyncReset)}")
+        try println(s"[GenOne] wrote ${generate(n, outDir, asyncReset)}")
+        catch {
+          case e: Throwable =>
+            println(s"[GenOne] FAILED $n: ${e.getClass.getSimpleName}: ${e.getMessage}")
+            failures += ((n, s"${e.getClass.getSimpleName}: ${e.getMessage}"))
+        }
+      }
+      if (failures.nonEmpty) {
+        println(s"[GenOne] ${failures.size} failure(s):")
+        failures.foreach { case (n, m) => println(s"[GenOne]   $n — $m") }
+        sys.exit(1)
       }
       return
     }

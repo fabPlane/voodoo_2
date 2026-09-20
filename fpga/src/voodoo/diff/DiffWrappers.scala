@@ -142,3 +142,50 @@ case class FpxxDiffWrap(fc: FpxxConfig = FpxxConfig.float32()) extends Component
   zeroConst.set_zero()
   io.constZero := zeroConst.asBits
 }
+
+/** DiffHierWrap: re-export another Component's whole io at the top level.
+  *
+  * Some upstream components cannot be elaborated as a top module because they leave a few
+  * outputs undriven — `PixelPipeline`'s `io.debug.pipelineBusySources`, `io.debug.fbAccess`
+  * and the seven framebuffer-cache debug words (CoreTypes.scala `CoreDebug`) are declared and
+  * consumed by RegisterBank but never assigned anywhere in the design. Spinal's
+  * `PhaseCheck_noLatchNoOverride` only rejects that on the TOP component, which is why
+  * `Core`/`CoreSim` elaborate fine and a bare `PixelPipeline` does not.
+  *
+  * Wrapping it in one more level restores exactly the situation inside `Core`: the undriven
+  * outputs are simply NOT re-exported (`hasDataAssignment` is false for them, and reading one
+  * would re-raise the same error — which is also why `Core` gets away with it: RegisterBank
+  * never really consumes those words, so Spinal prunes them). Every driven port keeps its exact
+  * name (`io_input_payload_…`), so the port map and the diff stimulus are unchanged apart from
+  * the extra module level. Dropped ports are listed in `droppedOutputs` and printed at
+  * elaboration time.
+  */
+class DiffHierWrap(dutName: String, gen: => Component) extends Component {
+  val dut = gen
+  dut.setName(dutName)
+
+  val droppedOutputs = scala.collection.mutable.ArrayBuffer[String]()
+
+  for (bt <- dut.getAllIo.toSeq.sortBy(_.getName())) {
+    if (bt.isOutput && !bt.hasDataAssignment) {
+      droppedOutputs += bt.getName()
+    } else {
+      val p = cloneOf(bt).asInstanceOf[BaseType]
+      p.setName(bt.getName())
+      if (bt.isInput) {
+        in(p)
+        bt.assignFromBits(p.asBits)
+      } else {
+        out(p)
+        p.assignFromBits(bt.asBits)
+      }
+    }
+  }
+
+  if (droppedOutputs.nonEmpty) {
+    SpinalInfo(
+      s"DiffHierWrap($dutName): ${droppedOutputs.size} undriven output(s) not re-exported: " +
+        droppedOutputs.mkString(", ")
+    )
+  }
+}
