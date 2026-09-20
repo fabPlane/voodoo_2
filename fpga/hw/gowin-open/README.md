@@ -99,6 +99,25 @@ encoding, and `gpio_probe_key1-fixed-open.fs` entered user mode with status
 `0x00022230`; holding RESET changed the status LED color. See
 `GW5AST_138C_GPIO_MILESTONE.md` for the image hash and decoded fuses.
 
+Clocked-logic diagnostics now include `button_latch`, `reset_toggle`, and
+`reset_shift`. Hardware testing proved that a RESET-clocked DFF can capture a
+constant, while the toggle feedback circuit and 50 MHz blinky do not run yet.
+This narrows the next database fix to GW5AST logic-tile LUT/DFF feedback and
+local routing rather than basic GPIO or DFF configuration.
+
+The read-only JTAG boundary sampler removes visual ambiguity from autonomous
+output tests:
+
+```sh
+python3 ../../../hardware/tang-console-138k/jtag_sample.py --count 20 --interval 0.1
+```
+
+Gowin Programmer operation 18 returns 616 live boundary bits. On the failing
+blinky, repeated scans changed only the same two unrelated background pins as
+a static design, objectively confirming that neither design output toggled.
+The GW5AST user-JTAG fabric primitive is not yet represented in Apicula, so
+arbitrary internal register reads and writes remain a separate database task.
+
 The template-backed database and domain-aware fuse application remain required:
 ordinary logic tiles carry non-zero blank-state patterns, and configured tiles
 both set and clear parts of that baseline. This milestone validates the direct
