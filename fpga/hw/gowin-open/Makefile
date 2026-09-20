@@ -7,7 +7,7 @@ YOSYS        ?= yosys
 NEXTPNR      ?= nextpnr-himbaechel
 GOWIN_PACK   ?= gowin_pack
 
-DEMOS        := blinky bram_test uart_hello
+DEMOS        := blinky blinky_local button_toggle button_latch bram_test uart_hello gpio_probe gpio_probe_key1
 BUILD_DIR    := build
 CST          := tang_console_138k_open.cst
 OPEN_SUFFIX  := -open
@@ -43,11 +43,16 @@ $(BUILD_DIR)/%-synth.json: rtl/%.v Makefile | $(BUILD_DIR)
 $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 	$(NEXTPNR) --threads $(THREADS) --timing-allow-fail -r \
 		--freq 50 --json $< --write $@ --device $(DEVICE) \
-		--vopt cst=$(CST) --vopt sspi_as_gpio
+		--vopt cst=$(CST) --vopt sspi_as_gpio $(EXTRA_VOPTS)
+
+# Diagnostic fallback: keep the external clock on ordinary routing so the
+# GW5AST global-clock network can be tested independently.
+$(BUILD_DIR)/blinky_local-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
+$(BUILD_DIR)/button_toggle-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).fs: $(BUILD_DIR)/%-pnr.json
 	$(GOWIN_PACK) --cpu_as_gpio --sspi_as_gpio --mspi_as_gpio \
-		--ready_as_gpio --done_as_gpio \
+		--ready_as_gpio --done_as_gpio --reconfign_as_gpio \
 		-d $(PACK_DEVICE) -o $@ $<
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).bin: $(BUILD_DIR)/%$(OPEN_SUFFIX).fs fs_to_bin.py
