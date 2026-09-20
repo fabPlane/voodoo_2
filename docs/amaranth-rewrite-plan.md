@@ -394,6 +394,15 @@ Spinal core does.
       clamps the value to what `bit_width - m` bits could hold. `floorToZero`/`ceilToInf`
       are implemented; `ROUNDTOEVEN`/`SCRAP` raise rather than guess (AfixOps only
       reaches them at `drop == 0`, where every mode is the identity).
+      One bug escaped all of that and was caught downstream by the SpanRasterizer diff
+      (p3-rasterizer): an AFix read out of an `amaranth.lib.data` layout did **unsigned**
+      arithmetic, because `data.View` hands a field's shape an unsigned slice and
+      `AFixValue` kept the Value's signedness instead of the shape's. Fixed in
+      `AFixValue.__init__`, three regression tests, and AfixOps now routes the vertex /
+      coefficient / colorMul operands through a `data.StructLayout` so the lockstep diff
+      covers the way the core actually stores an AFix — in a Bundle. Reverting the fix
+      now fails the diff on 33 ports at cycle 0. Lesson for the other phases: a helper
+      library's diff module must exercise the *storage* path, not just the operators.
 - [x] 0.3 Gowin compatibility spike — **built, awaiting hardware load**.
       `avoodoo/gowin/spike_blinky.py` + `amaranth/hw/spike/`; Gowin EDA 1.9.11.03
       on GW5AST-138C, 27 s, bitstream generated. No errors on escaped identifiers
@@ -781,7 +790,48 @@ Spinal core does.
       `FormalConfig.withBMC` runs sby in `bmc` mode, which ignores `cover`.
 
 ### Phase 3
-- [ ] triangle_setup  - [ ] rasterizer  - [ ] span_walker  - [ ] fastfill (3 files)  - [x] write
+- [x] triangle_setup  - [ ] rasterizer  - [ ] span_walker  - [ ] fastfill (3 files)  - [x] write
+- [x] **triangle_setup** (2026-09-20). `amaranth/avoodoo/raster/triangle_setup.py` (498
+      Scala lines), plus `avoodoo/vertex.py` (the `package object voodoo` vertex helpers
+      from `Bundles.scala`) and `triangle_setup_input_layout` appended to
+      `avoodoo/core/core_types.py` (the `Output` half and the shared config bundles are
+      the rasterizer agent's). **`make diff MOD=TriangleSetup` clean at 1e6 cycles x
+      seeds 1,2,3**, plus 20k x 3 at `--valid-density 0.95 --ready-density 0.12` in
+      `tests/diff/`; 34 pysim tests in `tests/test_triangle_setup.py` compare **every**
+      output bit against a `fixed_model.py` reference model over directed corner cases
+      and three random seeds, and re-assert the `GenerationFlags.formal` bounding-box
+      invariants every cycle `o.valid` is high. No `DiffEntry.overrides` needed: Spinal's
+      258 scalar leaf ports pair against two packed Amaranth ports (`i__payload` 2129
+      bits, `o__payload` 2504) through `amports.py` alone.
+      Five things worth knowing before the next raster module:
+      (a) **`reset_less` is not optional here.** `pending` and `outputReg` are plain
+      Spinal `Reg`s and must not reset; `state`, `iterIndex`, `dxMagWork`, `dyMagWork`
+      and the 33 `IterChannel` registers are `RegInit`/`.init(0)` and must. The split was
+      read off the `if(reset)` block of `fpga/rtl/diff/TriangleSetup_spinal.v`, and
+      `test_triangle_setup.py::test_reset_less_registers_match_spinal` pins it.
+      (b) **A signal Spinal declares inside a `when` is emitted unconditionally.**
+      `coeffsVec`, `edgeStartVec` and `scaleByChunk`'s `scaled` all look conditional in
+      the Scala but are plain `assign` / `always @(*)` in the Verilog, because Spinal
+      treats a signal declared in a conditional scope as complete within it. The port
+      builds all of the `Prep` and `Iterate` combinational math outside the `m.If`, with
+      only the register writes inside — which is also the only way Amaranth takes it.
+      (c) **Three Spinal width rules have no Amaranth equivalent** and got named helpers:
+      `SInt + SInt` keeps the operand width (Amaranth grows), `|<<` is a width-preserving
+      shift, and `SInt >> n` with a constant *narrows* by `n`. The trap is
+      `dxPix = (startXPix - aXPix).resize(16 bits)`: the subtract wraps at **13** bits
+      (max of 12 and 13) and only then sign-extends to 16.
+      (d) **`AFixValue` read out of an `amaranth.lib.data` layout did unsigned
+      arithmetic** — `data.View` hands a ShapeCastable member an unsigned slice and
+      `AFixValue.__init__` kept it, so every add, compare and saturation on a
+      record-resident AFix was unsigned. Found here, fixed in `avoodoo/lib/fixed.py` by
+      the fixed-point agent (the shape decides now, not the incoming Value). Anything
+      ported before that fix and not diff-tested against negative values is suspect; the
+      same trap bites test code, where `ctx.get(afix.raw)` now returns a *signed* int.
+      (e) `TriangleSetupTest.scala`'s "scale factor is 2^4 = 16" does **not** convert to
+      fixed point: SpinalSim's `AFix #= Int` assigns the *value*, so the test's triangles
+      are sixteen times bigger than they read and its expected bounding boxes (`96.0` for
+      `x = 6.0`) are values, not raw words. The pytest port reproduces that literally so
+      the two files diff line for line.
 - [x] **write** (2026-09-20). `amaranth/avoodoo/pixel/write.py`; the
       `PixelCoords`/`FbRouting`/`FramebufferPlaneBuffer.WriteReq` layouts and the
       `FramebufferAddressMath` / `packWordLane` helpers went into
