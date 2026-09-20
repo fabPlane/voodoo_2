@@ -14,7 +14,6 @@ Spinal port name whose Amaranth twin the mechanical rule in
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from dataclasses import replace as _replace
 
 from avoodoo.config import Config
 from avoodoo.core import membus_params as _mp
@@ -218,6 +217,23 @@ REGISTRY: dict[str, DiffEntry] = {
         # of free input, re-randomised every cycle, which is a strictly harder
         # stimulus than the register-written tables the real core supplies.
     ),
+    "TextureMemSubsystem": DiffEntry(
+        spinal="TextureMemSubsystem",
+        factory="avoodoo.core.texture_mem_subsystem:TextureMemSubsystem",
+        note="Core.scala:112 — TextureMemSubsystem(c), Config.voodoo1(): the CPU "
+             "texture-download write path (TextureMem.scala) plus the 3-way "
+             "TMU/CPU-write/CPU-read arbitration onto texMem "
+             "(ext/SpinalVoodoo/src/voodoo/core/TextureMemSubsystem.scala -> "
+             "avoodoo/core/texture_mem_subsystem.py, avoodoo/texture/texture_mem.py)",
+        # No overrides: io_downloadConfig_texBaseAddr38 -> the
+        # download_config__tex_base_addr38 slice, io_tmuTexRead_cmd_payload_fragment_*
+        # -> slices of the packed tmu_tex_read__cmd__payload (no data/mask: the
+        # TMU bus is canWrite = false on both sides).  The generic driver
+        # randomises tex_mem.rsp.source, so the response demux is exercised
+        # with every route tag including the unmapped 3; the "rsp echoes cmd
+        # source" contract is the memory's, not this module's, and both sides
+        # route the same way regardless.
+    ),
     # --- Phase 3 ---------------------------------------------------------
     "TriangleSetup": DiffEntry(
         spinal="TriangleSetup",
@@ -318,40 +334,6 @@ REGISTRY: dict[str, DiffEntry] = {
         note="FramebufferPlaneReader.scala:100 — pendingMax = issueQueueDepth = 64. "
              "Same needBurstSplitter caveat as BmbAlignedSpliter "
              "(spinal/lib/bus/bmb/BmbContextRemover.scala)",
-    ),
-    # --- Phase 6 (agent p6-planebuffer owns avoodoo/framebuffer/plane_buffer.py)
-    # Three rows, one module: `Config.voodoo1()` has useFbWriteBuffer = false,
-    # so the plain entry (what CoreSim and TangConsole138k build) is the
-    # 8-deep direct queue only; the two Wb rows elaborate the write combiner
-    # with the Dock/Artix parameters and with the throughput test's smallest
-    # line, which is the one random stimulus can fill (2 words) and so the
-    # only one that reaches the sequential-append / full-line-drain paths.
-    # No overrides: every leaf pairs mechanically, the 20 stat counters as
-    # io_writeSingleWordDrainStartAtZeroCount ->
-    # write_single_word_drain_start_at_zero_count.
-    "FramebufferPlaneBuffer": DiffEntry(
-        spinal="FramebufferPlaneBuffer",
-        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
-        note="FramebufferMemSubsystem.scala:86 — FramebufferPlaneBuffer(c), "
-             "Config.voodoo1() (useFbWriteBuffer = false: direct 8-deep queue) "
-             "(ext/SpinalVoodoo/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala)",
-    ),
-    "FramebufferPlaneBufferWb": DiffEntry(
-        spinal="FramebufferPlaneBufferWb",
-        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
-        params=dict(c=_replace(_C, use_fb_write_buffer=True,
-                               fb_write_buffer_line_words=256)),
-        note="CoreGowinGen.scala:28 / CoreArtixGen.scala:29 — the write combiner "
-             "as the Dock/Mega/Artix cores build it: two 255-deep slot FIFOs",
-    ),
-    "FramebufferPlaneBufferWbSmall": DiffEntry(
-        spinal="FramebufferPlaneBufferWbSmall",
-        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
-        params=dict(c=_replace(_C, address_width=12, mem_burst_length_width=4,
-                               fb_write_buffer_line_words=2,
-                               use_fb_write_buffer=True, use_tex_fill_cache=False)),
-        note="test/FramebufferPlaneBufferThroughputTest.scala's config — 12-bit "
-             "addresses, 2-word lines (slot FIFOs are one m2sPipe each)",
     ),
     "SimBmbMemorySmall": DiffEntry(
         spinal="SimBmbMemorySmall",

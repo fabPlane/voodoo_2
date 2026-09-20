@@ -682,43 +682,99 @@ class ColorCombineOutput(data.StructLayout):
 
 
 # ---------------------------------------------------------------------------
-# framebuffer/FramebufferPlaneBuffer.scala + FramebufferPlaneReader.scala --
-# the plane read-side bundles (agent p6-planereader, append-only block).
-#
-# `FramebufferPlaneBuffer.ReadReq(c)` / `ReadRsp()` are shared by the plane
-# buffer, the cached plane reader and the direct plane reader;
-# `FramebufferPlaneReader.PrefetchReq(c)` by the reader and the mem
-# subsystem.  Field order is the Scala declaration order (convention 2).
+# RenderConfig.scala `LfbMode`, Lfb.scala `Lfb.Regs`, PciFifo.scala
+# `TexWritePayload`, and the three `package object voodoo` data-shuffling
+# helpers the LFB path uses (appended by the Lfb / CoreCpuFrontdoor port:
+# `frontend/lfb.py`, `core/cpu_frontdoor.py`).  Same append-only rule as the
+# block above; nothing here is imported at the top of the file.
 # ---------------------------------------------------------------------------
 
 __all__ += [
-    "FramebufferReadReq",
-    "FramebufferReadRsp",
-    "FramebufferPrefetchReq",
+    "LfbMode",
+    "LfbRegs",
+    "TexWritePayload",
+    "expand_rgb565",
+    "expand_rgb555",
+    "word_swap_and_swizzle",
 ]
 
 
-class FramebufferReadReq(data.StructLayout):
-    """``FramebufferPlaneBuffer.ReadReq(c)`` -- one 16-bit lane read by byte address."""
-
-    def __init__(self, c: Config) -> None:
-        self.c = c
-        super().__init__({"address": unsigned(c.address_width)})
-
-
-class FramebufferReadRsp(data.StructLayout):
-    """``FramebufferPlaneBuffer.ReadRsp()`` -- the 16-bit lane that came back."""
+class LfbMode(data.StructLayout):
+    """``case class LfbMode()`` -- SST-1 register 0x114 (``RenderConfig.scala:97``)."""
 
     def __init__(self) -> None:
-        super().__init__({"data": unsigned(16)})
+        super().__init__({
+            "write_format": unsigned(4),          # [3:0]
+            "write_buffer_select": unsigned(2),   # [5:4]
+            "read_buffer_select": unsigned(2),    # [7:6]
+            "pixel_pipeline_enable": unsigned(1), # [8]
+            "rgba_lanes": unsigned(2),            # [10:9]
+            "word_swap_writes": unsigned(1),      # [11]
+            "byte_swizzle_writes": unsigned(1),   # [12]
+            "y_origin": unsigned(1),              # [13]
+            "w_select": unsigned(1),              # [14]
+            "word_swap_reads": unsigned(1),       # [15]
+            "byte_swizzle_reads": unsigned(1),    # [16]
+        })
 
 
-class FramebufferPrefetchReq(data.StructLayout):
-    """``FramebufferPlaneReader.PrefetchReq(c)`` -- inclusive byte-address span."""
+class LfbRegs(data.StructLayout):
+    """``Lfb.Regs(c)`` (``frontend/Lfb.scala:453``) -- the register-bank view
+    the LFB reads.  ``Lfb.Regs.fromRegisterBank`` fills it from
+    ``RegisterBank.renderConfig`` plus the two ``FramebufferLayout`` routings.
+    """
 
     def __init__(self, c: Config) -> None:
         self.c = c
         super().__init__({
-            "start_address": unsigned(c.address_width),
-            "end_address": unsigned(c.address_width),
+            "lfb_mode": LfbMode(),
+            "fbz_mode": FbzMode(),
+            "alpha_mode": ALPHA_MODE_LAYOUT,
+            "fog_mode": FOG_MODE_LAYOUT,
+            "fog_color": unsigned(32),
+            "za_color": unsigned(32),
+            "write_routing": FbRouting(c),
+            "read_routing": FbRouting(c),
         })
+
+
+class TexWritePayload(data.StructLayout):
+    """``case class TexWritePayload()`` (``bus/PciFifo.scala:12``).
+
+    ``CoreCpuFrontdoor.io.texWrite`` -> ``PciFifo.io.texWrite`` ->
+    ``PciFifo.io.texDrain``; a raw 23-bit PCI offset inside the texture
+    window plus the write data and byte mask.
+    """
+
+    def __init__(self) -> None:
+        super().__init__({
+            "pci_addr": unsigned(23),
+            "data": unsigned(32),
+            "mask": unsigned(4),
+        })
+
+
+def expand_rgb565(v):
+    """``def expandRgb565(v: UInt): Color[UInt]`` -- as an ``(r, g, b)`` tuple.
+
+    ``Bundles.scala:109``.  The tuple rather than a :class:`Color` view because
+    every caller assigns the channels to three separate destinations.
+    """
+    return (expand_to_8(v[11:16], 5), expand_to_8(v[5:11], 6), expand_to_8(v[0:5], 5))
+
+
+def expand_rgb555(v):
+    """``def expandRgb555(v: UInt): Color[UInt]`` -- ignores bit 15 (alpha)."""
+    return (expand_to_8(v[10:15], 5), expand_to_8(v[5:10], 5), expand_to_8(v[0:5], 5))
+
+
+def word_swap_and_swizzle(data_, do_word_swap, do_byte_swizzle):
+    """``def wordSwapAndSwizzle(data: Bits, doWordSwap: Bool, doByteSwizzle: Bool): Bits``.
+
+    Word swap first (``lo16 ## hi16``), then the byte reversal of the whole
+    32-bit word -- ``Bundles.scala:162``.
+    """
+    after_word_swap = Mux(do_word_swap, Cat(data_[16:32], data_[0:16]), data_)
+    swizzled = Cat(after_word_swap[24:32], after_word_swap[16:24],
+                   after_word_swap[8:16], after_word_swap[0:8])
+    return Mux(do_byte_swizzle, swizzled, after_word_swap)
