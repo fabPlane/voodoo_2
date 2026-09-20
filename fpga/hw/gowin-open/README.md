@@ -25,6 +25,8 @@ complete-core name.
   pass/fail LEDs. This is the first check that GW5AST BSRAM mapping works.
 - `uart_hello`: sends `OPEN GOWIN 138K OK` once per second at 115200 baud on
   the FPGA-to-BL616 UART. Press USER to send immediately.
+- `jtag_mailbox`: deterministic 32-bit host-to-fabric reads and writes through
+  the GW5AST ER1 JTAG instruction, with the low two bits mirrored on the LEDs.
 - `hdmi_colorbars` (work in progress): complete open RTL for 640x480 timing,
   eight color bars, TMDS encoding, and GW5A serializers/differential outputs.
   RESET restarts the counters; holding USER blanks active video.
@@ -115,8 +117,12 @@ python3 ../../../hardware/tang-console-138k/jtag_sample.py --count 20 --interval
 Gowin Programmer operation 18 returns 616 live boundary bits. On the failing
 blinky, repeated scans changed only the same two unrelated background pins as
 a static design, objectively confirming that neither design output toggled.
-The GW5AST user-JTAG fabric primitive is not yet represented in Apicula, so
-arbitrary internal register reads and writes remain a separate database task.
+The GW5AST user-JTAG fabric primitive is now represented by the Apicula fork at
+commit `bd7cbbb`.  A regenerated chip database places `GW_JTAG` at
+`X165Y108/GW_JTAG`; the mailbox routes and packs completely in the open flow.
+See `../../../hardware/tang-console-138k/JTAG_MAILBOX.md` for the build and
+host-side protocol.  Hardware validation of the open image is pending a
+connected FT2232 adapter.
 
 The template-backed database and domain-aware fuse application remain required:
 ordinary logic tiles carry non-zero blank-state patterns, and configured tiles

@@ -1,0 +1,17 @@
+diff --git a/himbaechel/uarch/gowin/gowin_arch_gen.py b/himbaechel/uarch/gowin/gowin_arch_gen.py
+--- a/himbaechel/uarch/gowin/gowin_arch_gen.py
++++ b/himbaechel/uarch/gowin/gowin_arch_gen.py
+@@ -1087,7 +1087,12 @@ def create_extra_funcs(db, tt, row, col):
+                 bel = tt.create_bel("PINCFG", "PINCFG", PINCFG_Z)
+                 portmap = desc['ins']
+                 for port, wire in portmap.items():
+-                    create_reuse_wire(tt, wire, "PINCFG_IN")
++                    # Some configuration inputs are hard-wired constants rather
++                    # than switch-matrix wires. Mark those local wires as
++                    # constant sources so the router need not reach them from
++                    # the device-wide GND/VCC generator.
++                    const_value = wire if wire in {'VSS', 'VCC'} else ''
++                    create_reuse_wire(tt, wire, "PINCFG_IN", const_value)
+                     tt.add_bel_pin(bel, port, wire, PinType.INPUT)
+         elif func == 'pll':
+                 pll = tt.create_bel("PLL", "PLLA", z = PLL_Z)

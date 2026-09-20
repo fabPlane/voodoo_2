@@ -9,24 +9,39 @@ the next one.
 The tested adapter is the Sipeed USB Debugger's FT2232H channel A
 (`0403:6010`). The GW5AST IDCODE is `0x0001081b`.
 
-## Load the oracle image
+## Build and load the open image
 
-The current mailbox image is built by Gowin EDA because Apicula does not yet
-emit the GW5AST `GW_JTAG` hard block. Build it on the Linux build machine:
+Apicula commit `bd7cbbb` describes the GW5AST `GW_JTAG` hard block and emits
+the two ER enable fuses.  Build with a nextpnr chip database regenerated from
+that Apicula checkout:
 
 ```sh
-cd fpga/hw/gowin-open/vendor-jtag-mailbox
-gw_sh build_jtag_mailbox.tcl
+cd fpga/hw/gowin-open
+make jtag_mailbox \
+  NEXTPNR_CHIPDB=/tmp/chipdb-GW5AST-138C.bin \
+  GOWIN_PACK='/home/hyper/projects/fabPlane/apicula/.venv/bin/python -m apycula.gowin_pack'
 ```
 
-Volatile-load the resulting image:
+`PYTHONPATH` must include the same Apicula checkout.  Until the small nextpnr
+PINCFG constant-wire change is upstream, the database generator must mark
+`VSS`/`VCC` PINCFG inputs with their matching `const_value`; otherwise routing
+stops on the local `VSS` sink even though `GW_JTAG` itself placed correctly.
+The tested change is saved as
+`fpga/hw/gowin-open/nextpnr-pincfg-constants.patch`; apply it from the root of
+the nextpnr source tree before regenerating the `.bba` and `.bin` chipdb.
+
+Volatile-load the resulting fully open image:
 
 ```sh
 hardware/tang-console-138k/program_debug_sram.sh \
-  fpga/hw/gowin-open/vendor-jtag-mailbox/impl/pnr/vendor_jtag_mailbox.fs
+  fpga/hw/gowin-open/build/jtag_mailbox-open.fs
 ```
 
 The known-good configured status is `0x00022230`.
+
+The vendor project under `vendor-jtag-mailbox/` remains only as a routing and
+fuse oracle.  Both its image and the open image set CFG-tile bits `(20,18)` and
+`(20,19)`, corresponding to `JTAG_ER1=USED` and `JTAG_ER2=USED`.
 
 ## Read, write, and run timed sequences
 
@@ -61,10 +76,11 @@ logical_readback = (wire_readback >> 1) & 0xffffffff
 The OpenOCD adapter/TAP definition is in `openocd-gowin-ft2232.cfg`. The FPGA
 side is `fpga/hw/gowin-open/rtl/jtag_mailbox.v`.
 
-## Open-source flow work remaining
+## Open-source flow status
 
-The host protocol is fully open and proven. The remaining Apicula task is to
-describe the GW5AST `GW_JTAG` hard-block location, internal wires, and enable
-fuses so nextpnr can route this same RTL without the Gowin vendor tools. The
-vendor image above is the oracle for differential bitstream and routing
-analysis.
+The host protocol is open and proven against the vendor oracle.  The open
+Yosys/nextpnr/Apicula build now synthesizes one `GW_JTAG`, places it at
+`X165Y108/GW_JTAG`, routes all arcs, and packs a 4.1 MiB binary without Gowin
+EDA.  Hardware read/write validation of that open image still requires the
+FT2232 adapter to be connected; the last attempt could not open USB device
+`0403:6010`.

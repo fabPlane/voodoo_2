@@ -4,12 +4,22 @@
 // A 32-bit DR scan on ER1 returns the previous mailbox value while shifting in
 // its replacement, LSB first.  UPDATE-DR commits the new word.
 module top (
+`ifndef OPEN_SOURCE
     input  wire       tck_pad_i,
     input  wire       tms_pad_i,
     input  wire       tdi_pad_i,
     output wire       tdo_pad_o,
+`endif
     output wire [1:0] led_n
 );
+`ifdef OPEN_SOURCE
+    // nextpnr's GW_JTAG packer disconnects these dummy pad-side ports. The
+    // hard block remains connected to the dedicated package JTAG pins.
+    wire tck_pad_i = 1'b0;
+    wire tms_pad_i = 1'b0;
+    wire tdi_pad_i = 1'b0;
+    wire tdo_pad_o;
+`endif
     wire jtag_tck;
     wire jtag_tdi;
     wire shift_capture;
