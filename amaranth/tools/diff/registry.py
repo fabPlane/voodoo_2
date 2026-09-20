@@ -231,6 +231,19 @@ REGISTRY: dict[str, DiffEntry] = {
         # `clipLowY` -> `clip_low_y`), and they come out of
         # tools/diff/naming.camel_to_snake unchanged.
     ),
+    # --- Phase 5 ---------------------------------------------------------
+    "TmuTexelDecoder": DiffEntry(
+        spinal="TmuTexelDecoder",
+        factory="avoodoo.texture.tmu_texel_decoder:TmuTexelDecoder",
+        note="texel format decode + bilinear blend, Config.voodoo1() "
+             "(ext/SpinalVoodoo/src/voodoo/texture/TmuTexelDecoder.scala)",
+        # The generic driver covers this module's two odd inputs on its own:
+        # `paletteWrite` is a Flow (valid, no ready), so it is randomised every
+        # cycle and the 256-entry RAMs are fully written within a few thousand
+        # cycles, interleaved with the P8/AP88 lookups; `nccTables` is 688 bits
+        # of free input, re-randomised every cycle, which is a strictly harder
+        # stimulus than the register-written tables the real core supplies.
+    ),
     # --- Phase 0.2 -------------------------------------------------------
     "AfixOps": DiffEntry(
         spinal="AfixOps",

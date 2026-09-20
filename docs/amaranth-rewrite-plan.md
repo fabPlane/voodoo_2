@@ -907,7 +907,7 @@ Spinal core does.
       `frontend/swap_buffer.py`.
 
 ### Phase 5
-- [x] tex_layout_tables  - [ ] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [ ] texture_mem  - [ ] texture_mem_subsystem
+- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [ ] texture_mem  - [ ] texture_mem_subsystem
 - [x] **tex_layout_tables** (2026-09-20). `amaranth/avoodoo/texture/tex_layout_tables.py`
       is the pure-Python transliteration of the Scala object (`TexConfig`/`Tables`
       dataclasses, `compute`, 22-bit wrapping kept); `tests/test_tex_layout_tables.py`
@@ -919,6 +919,35 @@ Spinal core does.
       (`tex_base[1] = texBaseAddr1 + size(LOD0)`), the Scala uses the register bare
       for LOD 1/2 and a tail offset restarting at LOD 3. The port follows the Scala;
       the test pins the divergence so it is not "fixed" by accident.
+- [x] **tmu_texel_decoder** (2026-09-20). `amaranth/avoodoo/texture/tmu_texel_decoder.py`
+      is the 1:1 port of `TmuTexelDecoder.scala` (all 13 formats + the 3 unassigned codes
+      that fall through to RGB565, NCC/YIQ decode with the 11-bit wrapping adds and
+      `clampToU8`, P8/AP88 palette, `bilinearWeights`/`blendChannel`, `sendConfig`
+      override, three `m2sPipe` stages). The `object Tmu` bundles it needs
+      (`PaletteWrite`, `TmuPassthrough`, `SampleFetch`, `BilinearWeights`, `NccTableData`,
+      `NccTables`, `Output`, `TextureFormat`) live in `texture/tmu_types.py` for `tmu.py`
+      / `tmu_texture_cache.py` to extend; `expandTo8` / `clampToU8` / `Color` are the
+      shared `core_types.py` ones. **Diff-clean at 1e6 cycles x 3 seeds**
+      (`make diff MOD=TmuTexelDecoder`, 70 ports, no overrides) and again at 1e6 x 3
+      with `--valid-density 0.9 --ready-density 0.12`; `tests/diff/test_diff_tmu_texel_decoder.py`
+      runs both shapes at 20k/10k. No directed stimulus was needed: `paletteWrite` is a
+      Flow, so the generic driver randomises it every asserted cycle and all 256 entries of
+      the four replicated RAMs are written within a few thousand cycles, interleaved with
+      the P8/AP88 lookups; `nccTables` is 688 bits of free input re-randomised every cycle.
+      `tests/test_tmu_texel_decoder.py` (37 tests) ports the two Scala cases exactly (the
+      Scala test itself is stale -- it drives `passthrough.ncc`/`readIdx`/`requestId` fields
+      that no longer exist) and adds an independent Python model per format, all 256 NCC
+      indices on both tables, palette write-then-read, the 3-cycle latency, back-pressure
+      and a 400-request random sweep.
+      Two things worth recording: (a) the palette RAM is **read-before-write** -- the
+      Spinal Verilog puts the write and the `readSync` in separate `always` blocks -- which
+      is Amaranth's default `read_port(domain="sync")` (`transparent_for=()`), and the
+      diff would have caught the other choice ~1400 times per 1e6 cycles; a unit test pins
+      it. (b) The 256 x 24-bit RAMs have no `init` in Spinal but Amaranth must attach one;
+      at this size the resulting `initial` block is harmless (no `strip_meminit` needed)
+      and both sides read zero before the first write, so the early cycles diff too.
+      No AFix anywhere in this module, so the layout-read signedness fix in
+      `lib/fixed.py` does not touch it.
 - [x] **tmu constant ROMs** (2026-09-20, ahead of `tmu`).
       `amaranth/avoodoo/texture/tmu_tables.py` = the `lookupTables` area of
       `Tmu.scala:53-80` only (no pipeline): the 512-entry 17-bit reciprocal LUT
