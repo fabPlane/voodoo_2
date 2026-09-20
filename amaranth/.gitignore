@@ -1,0 +1,17 @@
+# Generated Verilog (gen/gen_module.py, gen_core_sim.py, gen_tang_console.py)
+rtl/
+
+# uv-managed virtualenv
+.venv/
+
+# Gowin build products for the spike / console builds
+hw/spike/build/
+hw/spike/impl/
+hw/console/impl/
+
+# Python / pytest / cocotb leftovers
+__pycache__/
+*.pyc
+.pytest_cache/
+sim_build/
+results.xml

@@ -10,6 +10,10 @@ Board-specific packages for SpinalVoodoo. The Voodoo core itself is the upstream
 | Sipeed Tang Mega 138K Pro Dock | `voodoo.gowin` | Gowin PCIe TLP BAR0 → AXI4-Lite | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
 | Sipeed Tang Retro Console 138K | `voodoo.gowin` | USB-pad Glide SDK tests + Tomb info | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
 
+An Amaranth (Python HDL) re-implementation of this tree is in progress under
+`../amaranth/`; see `../docs/amaranth-rewrite-plan.md`. It does not touch this
+tree, and the Spinal build stays authoritative until Phase 7 parity.
+
 Upstream SpinalVoodoo only has the DE10-Nano (`CoreDe10`). `CoreArtix` /
 `CoreGowin` are the ports of that wrapper. The Artix board top (`AmdAc701`)
 is LiteX `xilinx_ac701`: 16 MiB BAR0, textures relocated to 4 MiB in the same
