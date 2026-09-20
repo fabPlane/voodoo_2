@@ -5,6 +5,7 @@ import java.nio.file.{Files, Paths}
 import spinal.core._
 import spinal.lib.bus.bmb._
 import voodoo._
+import voodoo.artix.CoreArtix
 import voodoo.bus.{PciFifo, RegisterCategory}
 import voodoo.core.{CoreCpuFrontdoor, FramebufferMemSubsystem, PixelPipeline, TextureMemSubsystem}
 import voodoo.framebuffer.{
@@ -132,6 +133,64 @@ object GenOne {
         lowerFirstPriority = true
       )
     ),
+    "BmbArbiterSingle" -> ok(
+      "FramebufferMemSubsystem.scala:45 — makeFbSingleWriteBridge: one PlaneBuffer master " +
+        "(sourceWidth 1) widened onto fbMemBmbParams (sourceWidth 4); exercises the " +
+        "`portCount == 1` bypass and its weakAssignFrom resizes"
+    )(
+      BmbArbiter(
+        inputsParameter = Seq(FramebufferPlaneBuffer.bmbParams(c)),
+        outputParameter = Core.fbMemBmbParams(c),
+        lowerFirstPriority = true
+      )
+    ),
+    "BmbSourceRemover" -> ok(
+      "De10MemBackend.scala:480 — BmbSourceRemover(Core.fbMemBmbParams(c)); the only " +
+        "parameterisation in the tree (:497 is the same shape with texMemBmbParams)"
+    )(
+      BmbSourceRemover(Core.fbMemBmbParams(c))
+    ),
+    "BmbAligner" -> ok(
+      "CoreArtix.scala:226 — BmbToAxi4Mem(Core.fbMemBmbParams(c), burstLog2 = 8); " +
+        "CoreGowin.scala:44 builds the same one"
+    )(
+      BmbAligner(Core.fbMemBmbParams(c), CoreArtix.axiBurstLog2)
+    ),
+    "BmbLengthFixer" -> ok(
+      "CoreArtix.scala:227 — BmbLengthFixer(aligner.op, burstLog2 = 8), i.e. the second half " +
+        "of BmbToAxi4Mem(Core.fbMemBmbParams(c), 8)"
+    )(
+      BmbLengthFixer(
+        BmbAligner.outputParameter(Core.fbMemBmbParams(c).access, CoreArtix.axiBurstLog2)
+          .toBmbParameter(),
+        CoreArtix.axiBurstLog2
+      )
+    ),
+    "BmbAlignedSpliter" -> ok(
+      "FramebufferPlaneReader.scala:98 — BmbAlignedSpliter(internalBmbParams(c), " +
+        "1 << c.memBurstLengthWidth). NOTE: needBurstSplitter(Config.voodoo1()) is FALSE " +
+        "(((800+1)/2)*4 = 1600 <= 2048), so the shipping core contains no instance; these are " +
+        "the parameters it would be built with."
+    )(
+      BmbAlignedSpliter(
+        FramebufferPlaneReader.internalBmbParams(c),
+        1 << c.memBurstLengthWidth
+      )
+    ),
+    "BmbContextRemover" -> ok(
+      "FramebufferPlaneReader.scala:100 — BmbContextRemover(splitterBmbParams(c), " +
+        "pendingMax = issueQueueDepth = 64). Same needBurstSplitter caveat as BmbAlignedSpliter."
+    )(
+      BmbContextRemover(
+        BmbParameter(
+          BmbAlignedSpliter.outputParameter(
+            FramebufferPlaneReader.internalBmbParams(c).access,
+            1 << c.memBurstLengthWidth
+          )
+        ),
+        pendingMax = 64
+      )
+    ),
     "BmbBusInterface" -> todo(
       "TODO params: not a Component — a spinal.lib.bus.regif adapter built inside RegisterBank. " +
         "Diff it through RegisterBank."
@@ -157,6 +216,13 @@ object GenOne {
     ),
     "SpanWalker" -> ok("Rasterizer.scala — SpanWalker(c, formalStrong = false)")(
       SpanWalker(c, formalStrong = false)
+    ),
+    "SpanRasterizer" -> ok(
+      "Rasterizer.scala:22 — Rasterizer.SpanRasterizer(c), the per-pixel StreamWhile loop. " +
+        "Diffable on its own so the raster arithmetic can be proven before SpanWalker lands; " +
+        "`Rasterizer` covers it again as a sub-module."
+    )(
+      Rasterizer.SpanRasterizer(c)
     ),
     "Fastfill" -> ok("PixelPipeline — Fastfill(c)")(Fastfill(c)),
     "FastfillWordWriter" -> ok("Fastfill — FastfillWordWriter(c)")(FastfillWordWriter(c)),
@@ -232,6 +298,15 @@ object GenOne {
     ),
     "SimBmbMemory" -> ok("CoreSim.scala:32 — SimBmbMemory(fbMemBmbParams, 4 MiB, default timing)")(
       SimBmbMemory(Core.fbMemBmbParams(simConfig), 4 * 1024 * 1024, simTiming)
+    ),
+    "SimBmbMemorySmall" -> ok(
+      "SimBmbMemory with the CoreSim parameters but a 64 KiB array instead of 4 MiB — the " +
+        "diffable size. Everything except `wordAddrWidth` is depth-independent, and the " +
+        "4 MiB version is not practical to lockstep: 1 048 576 words x 4 byte lanes blows up " +
+        "both the Amaranth `write_verilog` and the Verilator build. With a 26-bit address and " +
+        "a 14-bit word index, random addresses alias — identically on both sides."
+    )(
+      SimBmbMemory(Core.fbMemBmbParams(simConfig), 64 * 1024, simTiming)
     ),
     "Core" -> ok("CoreSim.scala:29 — Core(c)")(Core(c)),
     "CoreSim" -> ok(

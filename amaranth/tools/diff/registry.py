@@ -217,6 +217,20 @@ REGISTRY: dict[str, DiffEntry] = {
         # of free input, re-randomised every cycle, which is a strictly harder
         # stimulus than the register-written tables the real core supplies.
     ),
+    # --- Phase 3 ---------------------------------------------------------
+    "TriangleSetup": DiffEntry(
+        spinal="TriangleSetup",
+        factory="avoodoo.raster.triangle_setup:TriangleSetup",
+        note="PixelPipeline.scala:221 — TriangleSetup(c), Config.voodoo1() "
+             "(ext/SpinalVoodoo/src/voodoo/raster/TriangleSetup.scala)",
+        # No overrides. Both payloads are one packed Amaranth port each
+        # (`i__payload` 2129 bits, `o__payload` 2504), and amports.py walks
+        # the data.Layout to pair every Spinal leaf with a slice. The only
+        # names worth double-checking are the camelCase-heavy config leaves
+        # (`tmudSdX` -> `tmud_sd_x`, `tLOD`/`tmuTLOD` -> `t_lod`/`tmu_tlod`,
+        # `clipLowY` -> `clip_low_y`), and they come out of
+        # tools/diff/naming.camel_to_snake unchanged.
+    ),
     # --- Phase 0.2 -------------------------------------------------------
     "AfixOps": DiffEntry(
         spinal="AfixOps",
@@ -291,16 +305,30 @@ REGISTRY: dict[str, DiffEntry] = {
              "Same needBurstSplitter caveat as BmbAlignedSpliter "
              "(spinal/lib/bus/bmb/BmbContextRemover.scala)",
     ),
+    "SimBmbMemorySmall": DiffEntry(
+        spinal="SimBmbMemorySmall",
+        factory="avoodoo.sim_membus_memory:SimMemBusMemory",
+        params=dict(p=_FB, size=64 * 1024),
+        note="CoreSim.scala:32's SimBmbMemory at a diffable 64 KiB instead of 4 MiB "
+             "(ext/SpinalVoodoo/src/voodoo/SimBmbMemory.scala). Two deliberate "
+             "differences, neither observable at the ports: the array is 64 KiB, "
+             "and Spinal splits a byte-enabled Mem into ram_symbol0..3 while "
+             "Amaranth/yosys keep one 32-bit `mem`. Both start all-zero.",
+    ),
     "SimBmbMemory": DiffEntry(
         spinal="SimBmbMemory",
         factory="avoodoo.sim_membus_memory:SimMemBusMemory",
         params=dict(p=_FB, size=4 * 1024 * 1024),
-        note="CoreSim.scala:32 — 4 MiB behind the framebuffer arbiter, default "
-             "SimMemoryTiming(). NOTE the memory shape differs on purpose: Spinal "
-             "emits ram_symbol0..3 (four byte lanes), Amaranth one 32-bit `mem`. "
-             "Only the ports are compared, and the array starts all-zero on both "
-             "sides, so the diff is still valid — but do not expect the internal "
-             "names to line up (ext/SpinalVoodoo/src/voodoo/SimBmbMemory.scala)",
+        note="the real CoreSim instance, 4 MiB — diff it as SimBmbMemorySmall instead",
+        pending=(
+            "not lockstep-diffable at this size: 1 048 576 words makes "
+            "`amaranth_yosys` write_verilog run for minutes and emit a file "
+            "Verilator then has to chew through, and the Spinal side is four "
+            "1 Mi-entry byte arrays on top. Use MOD=SimBmbMemorySmall (64 KiB, "
+            "same parameters and timing); only `wordAddrWidth` differs, and the "
+            "logic is otherwise depth-independent. Revisit if a machine with "
+            "time to burn wants the full-size run."
+        ),
     ),
 }
 

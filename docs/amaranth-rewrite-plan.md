@@ -550,6 +550,83 @@ Spinal core does.
       `avoodoo.bus.stream_while:StreamWhileDiffWrap` is the elaboratable counterpart of
       `fpga/src/voodoo/diff/DiffWrappers.scala`, ready for the 0.4 harness; it is not in
       `gen/gen_module.py`'s `REGISTRY` yet (use the `module:Class` spec).
+- [x] 1.2 membus + adapters (and 1.4's `sim_membus_memory.py`) — 2026-09-20.
+      `amaranth/avoodoo/lib/membus.py` (parameters, layouts, signature, six adapters),
+      `avoodoo/bus/routing.py` (the core-local `BmbRouting.scala`),
+      `avoodoo/core/membus_params.py` (every `*BmbParams` in the design, one place) and
+      `avoodoo/sim_membus_memory.py` (`SimBmbMemory.scala` + `SimMemoryTiming`).
+      52 pysim tests in `tests/test_membus.py` + 12 short lockstep runs in
+      `tests/diff/test_diff_membus.py`.
+      **Diff results** (`make diff`, 3 seeds x 1e6 cycles, Mac, Verilator 5.052), each against
+      the parameters its Scala call site uses: `BmbSourceRemover` (fbMemBmbParams) PASS,
+      `BmbAligner` (fbMemBmbParams, burstLog2 8) PASS, `BmbLengthFixer` (aligner.op, 8) PASS,
+      `BmbAlignedSpliter` (PlaneReader.internalBmbParams, lengthMax 2048) PASS,
+      `BmbContextRemover` (splitterBmbParams, pendingMax 64) PASS,
+      `SimBmbMemorySmall` PASS. New `GenOne` rows for all of them plus `BmbArbiterSingle`
+      and `SimBmbMemorySmall`, with the committed port maps.
+      **Two rows are not diffed yet.** `BmbArbiter` / `BmbArbiterSingle` are blocked in
+      `tools/diff/amports.py`: an `In(sig).array(n)` member loses its index in
+      `signature.members.flatten()`, so Spinal's `io_inputs_0_cmd_valid` finds no
+      `inputs__0__cmd__valid` leaf even though the emitted Verilog port is spelled exactly
+      that. Reported to the harness owner with a suggested fix; until it lands the arbiter
+      rests on the pysim tests (priority order, fragment lock across a 3-beat burst,
+      source routing round trip, round-robin rotation, randomised multi-master read
+      traffic through a model memory). `SimBmbMemory` at its real 4 MiB is marked
+      `pending`: 1 048 576 words makes `amaranth_yosys` `write_verilog` run for minutes and
+      the Spinal side is four 1 Mi-entry byte arrays on top, so `SimBmbMemorySmall`
+      (64 KiB, identical parameters and timing, only `wordAddrWidth` differs) is the
+      diffable stand-in.
+      **Ported exactly what is used** (census in the module docstring): `BmbParameter` /
+      `BmbAccessParameter` / `BmbSourceParameter` with the derived widths and the
+      `aggregate` fold, `BmbCmd` / `BmbRsp` / `Fragment` layouts, `weakAssignFrom`,
+      `Bmb.incr` / `addToAddress` / `transferBeatCountMinusOne`, and the six adapters.
+      Not ported, and they raise rather than silently differ: the `inv`/`ack`/`sync`
+      channels (no parameter set in the core enables them), `canExclusive`, `BmbDecoder`,
+      `BmbUnburstify`, the up/down sizers, and a `BmbArbiter` with heterogeneous input
+      parameters.
+      **Findings that bind later phases:**
+      (a) **`sourceWidth` is derived, `log2Up(max(id) + 1)`, so a single source is a
+      ZERO-bit field and no Verilog port at all.** Every `withSingleSource` output
+      parameter has it, as does `contextWidth = 0` on all of the core's own buses. Fields
+      of width 0 are omitted from the Amaranth layout, matching Spinal, and the code guards
+      on presence rather than assuming.
+      (b) **The arbiter truncates the source.** `cmd.source := (source @@ chosen).resized`
+      writes into a field that is *not* widened, and CoreSim's five-way framebuffer arbiter
+      has `sourceWidth 4` with `routeWidth 3` — so master 2's source 2 goes out as 2, and
+      master 3's 3 goes out as 11. Only the route bits are meaningful; no master can rely on
+      getting its own source back, and the core does not.
+      (c) **Bundle assignment in Spinal resolves by NAME, not bit position.** The first
+      version of `ContextRemover` copied `io.output.rsp.payload` as a packed vector and
+      shifted `opcode`/`data` into the wrong fields, because the input and output payloads
+      have different shapes (the output has neither `source` nor `context`). Caught by a
+      pysim test before the diff ran. Any adapter that connects two differently
+      parameterised buses must use the by-name copy.
+      (d) **`Fragment` declares `last` FIRST**, so a packed cmd/rsp payload has `last` at
+      bit 0. `avoodoo/lib/fragment.py` had it reversed; reported and fixed by 1.1 (12905ae).
+      (e) **`last` retiming.** `LengthFixer` and `AlignedSplitter` re-derive `last` per
+      *sub*-burst and carry the input's own `last` in `context.last`; non-final *write*
+      responses are swallowed entirely (`takeWhen(!write || last && rsp.last)`). Getting
+      this wrong deadlocks the arbiter, whose `fragmentLock` holds the grant until a `last`
+      beat fires.
+      (f) **`mask` is write-only** (`canWrite && canMask`); reads ignore it. `Aligner` pads
+      a write burst by forcing `mask` to 0 on the padding beats rather than suppressing
+      them, so a slave must treat a zero mask as "write nothing" — `SimBmbMemory` does.
+      (g) **Write bursts carry a fresh address on every beat in this design.**
+      `FramebufferPlaneBuffer` increments `cmd.address` per beat and `SimBmbMemory` writes to
+      the current beat's address. `Aligner`/`LengthFixer` emit a *constant* address across a
+      burst instead, matching the AXI bridge that follows them, so `SimBmbMemory` must not
+      be wired straight behind either. The `tests/test_membus.py` model slave implements the
+      AXI convention for exactly that reason.
+      (h) **`needBurstSplitter(Config.voodoo1())` is FALSE** (`((800+1)/2)*4 = 1600 <= 2048`),
+      so the shipping core contains neither `BmbAlignedSpliter` nor `BmbContextRemover`.
+      Both are ported and diffed anyway with the parameters `FramebufferPlaneReader` would
+      give them; Phase 6 should not be surprised to find no instance.
+      (i) Registers: every Spinal `Reg` in these six adapters has an explicit `init`, so
+      none needed `reset_less=True` (0.4's finding). The two simulation memories do start
+      all-zero on both sides, which is what makes the `SimBmbMemory` diff meaningful.
+      `avoodoo/core/membus_params.py` duplicates the two register-bank parameter sets that
+      `avoodoo/frontend/address_remapper.py` also declares (`bmb_params` /
+      `external_bmb_params`); Phase 2 should collapse them onto one.
 - [x] 1.3 fpxx — 2026-09-20. `amaranth/avoodoo/lib/fpxx.py` (`Fpxx.scala`, 259 lines)
       and `fpxx2afix.py` (`Fpxx2AFix.scala`, 71). Both diff-clean against the Spinal
       Verilog at **1e6 cycles x 3 seeds** (`make diff MOD=FpxxDiffWrap`,
@@ -704,10 +781,33 @@ Spinal core does.
       `FormalConfig.withBMC` runs sby in `bmc` mode, which ignores `cover`.
 
 ### Phase 3
-- [ ] triangle_setup  - [ ] rasterizer  - [ ] span_walker  - [ ] fastfill (3 files)  - [ ] write
+- [ ] triangle_setup  - [ ] rasterizer  - [ ] span_walker  - [ ] fastfill (3 files)  - [x] write
+- [x] **write** (2026-09-20). `amaranth/avoodoo/pixel/write.py`; the
+      `PixelCoords`/`FbRouting`/`FramebufferPlaneBuffer.WriteReq` layouts and the
+      `FramebufferAddressMath` / `packWordLane` helpers went into
+      `avoodoo/core/core_types.py`. `make diff MOD=Write` clean at 3 seeds x 1e6
+      cycles (combinational, no clk/reset on either side);
+      `tests/test_write.py` ports `WriteTest.scala`'s payload claims (the Bmb
+      opcode/length/last assertions have no counterpart now that the output is a
+      `WriteReq` stream) and adds a 400-case stride sweep.
 
 ### Phase 4
-- [ ] color_combine  - [ ] fog  - [x] dither tables  - [x] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
+- [ ] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
+- [x] **fog** (2026-09-20). `amaranth/avoodoo/pixel/fog.py`, three `m2sPipe`
+      stages, `ColorCombine.Output` in / `Fog.Output` out. **The fog table is
+      not a `Mem`**: `io.fogTable` is `in Vec(Bits(16 bits), 64)`, 64 flat input
+      ports read combinationally in stage 1, so the Amaranth side is
+      `In(data.ArrayLayout(unsigned(16), 64))` and no `amaranth.lib.memory` is
+      involved; the 64 registers live in `RegisterBank`. `make diff MOD=Fog`
+      clean at 3 seeds x 1e6 cycles, 161 ports paired with **zero overrides**
+      (`io_fogTable_<N>` -> `fog_table__<N>` and the `AFix` leaf
+      `io_input_payload_depth` -> `input__payload__depth` both fall out of the
+      mechanical rule). `tests/test_fog.py` is a pysim run against a Python
+      model of `voodooFls` / the 86Box `wDepth` reconstruction / the table
+      interpolation / the four blend modes; the three places Spinal's
+      non-growing `+`/`-` make the result wrap (`wFogFactorRaw`, `diff`,
+      `finalColor`, all SInt(10)) and the `wBlend.asSInt`-before-sign-extend
+      reinterpretation are each pinned by their own case.
 - [x] **dither tables — formula-generated, no data pasted** (2026-09-20).
       `amaranth/avoodoo/pixel/dither_tables.py` builds all eight 86Box tables
       (`rb4x4`/`g4x4`/`rb2x2`/`g2x2` + the four `dithersub` ones, 10 240 entries,
