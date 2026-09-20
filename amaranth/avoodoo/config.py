@@ -44,10 +44,11 @@ class QFormat:
     def __post_init__(self) -> None:
         if self.width < 0 or self.fraction < 0:
             raise ValueError(f"QFormat({self.width}, {self.fraction}) must be non-negative")
-        if self.fraction > self.width:
-            raise ValueError(
-                f"QFormat({self.width}, {self.fraction}): fraction exceeds width"
-            )
+        # No `fraction <= width` check: Spinal's QFormat is an unvalidated case
+        # class, and `ColorCombine.clampAFixToFactor` really does build
+        # `UQ(0, 8)` -- a zero-bit format, which AFix turns into a constant
+        # zero. See docs/amaranth/afix-semantics.md §8.1; the port has to be
+        # able to express that to stay bit-identical.
 
     # -- derived properties (names kept identical to Spinal) ---------------
 
