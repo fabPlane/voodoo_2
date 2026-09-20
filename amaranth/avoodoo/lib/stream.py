@@ -1372,8 +1372,14 @@ class FifoCC(wiring.Component):
         pop_ptr_gray_cc = Signal(w, name="popPtrGray_cc")
         m.d.comb += push_ptr_plus.eq(push_ptr + 1)
 
+        # BufferCC(popToPushGray, B(0, ptrWidth bits)): `Vec(Reg(dataType,
+        # init), depth)` with a non-null init is a *reset* register in Spinal.
+        # FFSynchronizer defaults to reset_less=True, which let the pop side
+        # see the new push pointer two cycles early after a reset (found by
+        # the AxiLite4ClockCrossing lockstep diff, seed 1 cycle 3).
         m.submodules.pop_to_push = cdc.FFSynchronizer(
-            pop_to_push_gray, pop_ptr_gray_cc, o_domain=self.push_domain, init=0)
+            pop_to_push_gray, pop_ptr_gray_cc, o_domain=self.push_domain, init=0,
+            reset_less=False)
 
         push_fire = Signal(name="pushFire")
         m.d.comb += [
@@ -1398,7 +1404,8 @@ class FifoCC(wiring.Component):
         m.d.comb += pop_ptr_plus.eq(pop_ptr + 1)
 
         m.submodules.push_to_pop = cdc.FFSynchronizer(
-            push_to_pop_gray, push_ptr_gray_cc, o_domain=pop_dom, init=0)
+            push_to_pop_gray, push_ptr_gray_cc, o_domain=pop_dom, init=0,
+            reset_less=False)  # BufferCC(pushToPopGray, B(0, ...)), as above
 
         pop_ptr_gray = Signal(w, name="popPtrGray")
         m.d.comb += pop_ptr_gray.eq(to_gray(pop_ptr))

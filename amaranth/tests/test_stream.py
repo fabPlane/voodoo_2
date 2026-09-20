@@ -1118,3 +1118,33 @@ def test_fifo_cc_and_queue_helpers_accept_mem_attrs():
     assert m.submodules.qb.mem_attrs == st.DISTRIBUTED_RAM_ATTRS
     assert verilog.convert(m, ports=[a.valid, a.ready, b.valid, b.ready],
                            name="Queues").count("distributed_ram") == 2
+
+
+def test_fifo_cc_gray_synchronisers_reset():
+    """``BufferCC(x, B(0, ptrWidth bits))`` is built from ``Reg(T, init)``, i.e.
+    reset flops; with ``reset_less`` synchronisers the stale gray pointers
+    survive a reset and the pop side sees phantom entries for two cycles.
+    Found by the AxiLite4ClockCrossing lockstep diff (p1-axi)."""
+    m = Module()
+    cd = ClockDomain("sync")
+    m.domains += cd
+    m.submodules.fifo = dut = st.FifoCC(unsigned(8), 4, with_pop_buffered_reset=False)
+
+    async def tb(ctx):
+        outs = (dut.push.ready, dut.pop.valid, dut.push_occupancy, dut.pop_occupancy)
+        for k in range(3):
+            await cycle(ctx, [(cd.rst, 0), (dut.push.valid, 1), (dut.push.payload, k),
+                              (dut.pop.ready, 0)], outs)
+        await cycle(ctx, [(dut.push.valid, 0)], outs)
+        _, v, po, pp = await cycle(ctx, [], outs)
+        assert v == 1 and po == 3
+
+        await cycle(ctx, [(cd.rst, 1)], outs)
+        for n in range(5):
+            r, v, po, pp = await cycle(ctx, [(cd.rst, 0)], outs)
+            assert (r, v, po, pp) == (1, 0, 0, 0), f"cycle {n} after reset"
+
+    sim = Simulator(m)
+    sim.add_clock(PERIOD)
+    sim.add_testbench(tb)
+    sim.run()
