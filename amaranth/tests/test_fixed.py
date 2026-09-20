@@ -27,6 +27,7 @@ import random
 
 import pytest
 from amaranth.hdl import Module, Signal, Value, unsigned
+from amaranth.lib import data
 from amaranth.sim import Simulator
 
 from avoodoo.config import SQ, UQ, Config, QFormat
@@ -979,6 +980,115 @@ def test_sim_uint_sat():
         for value in range(128):
             ctx.set(source, value)
             assert ctx.get(out) == model.sat_uint(value, 7, 1), value
+
+    sim.add_testbench(testbench)
+    sim.run()
+
+
+# ===========================================================================
+# AFix inside an amaranth.lib.data layout
+# ===========================================================================
+
+
+def test_layout_field_keeps_the_shape_signedness():
+    """Regression: a signed AFix in a ``data`` layout must not go unsigned.
+
+    ``data.View.__getitem__`` resolves a shape-castable field by handing it an
+    *unsigned* slice of the packed signal.  If ``AFixValue`` kept the Value's
+    signedness instead of the shape's, every add, compare and saturation on
+    that field would silently be unsigned arithmetic.  Found by the
+    SpanRasterizer lockstep diff (p3-rasterizer), where ``state.x`` of
+    ``-13278`` read as ``+52258`` and ``(x + one).fixTo(vertexFormat)``
+    saturated to ``0x7FFF`` instead of giving Spinal's ``0xCC32``.
+
+    The core keeps every AFix in a Bundle (``Coefficients``, ``Cursor``,
+    ``InputGradient``, the Tmu payloads), so this is the normal case, not
+    a corner one.
+    """
+    vertex = AFixShape.from_q(SQ(16, 4))
+    layout = data.StructLayout({"x": vertex, "y": vertex})
+    view = Signal(layout)
+    free = Signal(vertex)
+
+    # both spellings must agree, and both must follow the *shape*
+    assert view.x.raw.shape().signed is True
+    assert free.raw.shape().signed is True
+    assert view.x.afix_shape == vertex
+
+
+def test_sim_layout_field_arithmetic_matches_the_model():
+    """Negative operands through a layout field: add, sub, mul, compare, fixTo."""
+    rng = random.Random(0xDA7A)
+    vertex = AFixShape.from_q(SQ(16, 4))
+    layout = data.StructLayout({"x": vertex, "y": vertex})
+    view = Signal(layout)
+    one = vertex.const(1.0)
+
+    outs = {
+        "add": (view.x + view.y).raw,
+        "sub": (view.x - view.y).raw,
+        "mul": (view.x * view.y).raw,
+        "neg": (-view.x).raw,
+        "ge": view.x >= view.y,
+        "fix_plus_one": (view.x + one).fix_to(SQ(16, 4)).raw,
+        "floor0": view.x.floor(0).raw,
+        "as_unsigned": view.x.floor(0).as_unsigned(),
+    }
+    m = Module()
+    ports = {}
+    for name, value in outs.items():
+        port = Signal(value.shape(), name=f"o_{name}")
+        m.d.comb += port.eq(value)
+        ports[name] = port
+
+    ref = to_model(vertex)
+    ref_one = model.const(ref, 1)
+    # the reported failure, plus corners and random negatives
+    vectors = [(-13278, 1)]
+    for x in raw_samples(vertex, rng, 20):
+        vectors.append((x, rng.randint(vertex.min_raw, vertex.max_raw)))
+    while len(vectors) < 200:
+        vectors.append((rng.randint(vertex.min_raw, -1),
+                        rng.randint(vertex.min_raw, vertex.max_raw)))
+
+    sim = Simulator(m)
+
+    async def testbench(ctx):
+        for x, y in vectors:
+            ctx.set(view.x.raw, x)
+            ctx.set(view.y.raw, y)
+            mx, my = model.ModelValue(ref, x), model.ModelValue(ref, y)
+            want = {
+                "add": (mx + my).raw,
+                "sub": (mx - my).raw,
+                "mul": (mx * my).raw,
+                "neg": (-mx).raw,
+                "ge": int(mx >= my),
+                "fix_plus_one": (mx + ref_one).fix_to(ref).raw,
+                "floor0": mx.floor(0).raw,
+                "as_unsigned": mx.floor(0).as_unsigned(),
+            }
+            for name, expected in want.items():
+                assert ctx.get(ports[name]) == expected, (name, x, y)
+
+    sim.add_testbench(testbench)
+    sim.run()
+
+
+def test_layout_field_reproduces_the_reported_span_walker_value():
+    """The exact value from the SpanRasterizer diff: raw -13278 -> 0xCC32."""
+    vertex = AFixShape.from_q(SQ(16, 4))
+    view = Signal(data.StructLayout({"x": vertex}))
+    result = (view.x + vertex.const(1.0)).fix_to(SQ(16, 4))
+    out = Signal(16)
+    m = Module()
+    m.d.comb += out.eq(result.raw)
+
+    sim = Simulator(m)
+
+    async def testbench(ctx):
+        ctx.set(view.x.raw, -13278)
+        assert ctx.get(out) & 0xFFFF == 0xCC32
 
     sim.add_testbench(testbench)
     sim.run()

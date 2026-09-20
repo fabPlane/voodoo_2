@@ -419,6 +419,16 @@ class AFixValue(ValueCastable):
             raise ValueError(
                 f"{shape} needs a {shape.bit_width}-bit storage word, got {len(raw)} bits"
             )
+        # The shape decides how the word is read, never the incoming Value: §1's
+        # "interpreted as signed iff signed" is a property of the AFix, and a
+        # caller can hand us a Value whose own signedness disagrees.  The case
+        # that bites is a field of an `amaranth.lib.data` layout --
+        # `data.View.__getitem__` passes an *unsigned* slice of the packed
+        # signal to the field's shape-castable -- and unsigned storage would
+        # silently turn every add, compare and saturation on that field into
+        # unsigned arithmetic.  Idempotent for a value that already agrees.
+        if raw.shape().signed != shape.signed:
+            raw = raw.as_signed() if shape.signed else raw.as_unsigned()
         self._shape = shape
         self._raw = raw
 
