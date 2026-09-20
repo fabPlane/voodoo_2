@@ -16,6 +16,7 @@ import random
 
 import pytest
 from amaranth import Module, Signal, unsigned
+from amaranth.hdl import ClockDomain
 from amaranth.lib import data
 from amaranth.sim import Simulator
 from amaranth.utils import ceil_log2
@@ -965,3 +966,42 @@ def test_oh_masking_and_mux_helpers():
         assert (f, r, i) == (0b0100, 0b0100, 2)
 
     run(m, tb)
+
+
+# ---------------------------------------------------------------------------
+# unreset registers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("pipe_cls", [st.M2SPipe, st.S2MPipe, st.HalfPipe])
+def test_payload_registers_are_unreset(pipe_cls):
+    """Spinal's ``rData`` is a plain ``Reg``, not a ``RegInit``: it keeps its
+    value across a reset while ``rValid`` clears.
+
+    The plan-0.4 lockstep diff caught the same mistake in ``StreamWhile``'s
+    ``state`` (a second seed mismatched at cycle 0 on ``output_payload``), so
+    every plain Spinal ``Reg`` ported here is ``reset_less=True``.
+    """
+    m = Module()
+    cd = ClockDomain("sync")
+    m.domains += cd
+    m.submodules.pipe = dut = pipe_cls(unsigned(8))
+
+    async def tb(ctx):
+        outs = (dut.o.valid, dut.o.payload)
+        # get 0xA5 into rData, then stall so it stays there
+        await cycle(ctx, [(cd.rst, 0), (dut.i.valid, 1),
+                          (dut.i.payload, 0xA5), (dut.o.ready, 0)], outs)
+        await cycle(ctx, [(dut.i.valid, 0)], outs)
+        v, p = await cycle(ctx, [], outs)
+        assert (v, p) == (1, 0xA5)
+
+        await cycle(ctx, [(cd.rst, 1)], outs)
+        v, p = await cycle(ctx, [(cd.rst, 0)], outs)
+        assert v == 0, "the valid register does reset"
+        assert p == 0xA5, "the payload register does not"
+
+    sim = Simulator(m)
+    sim.add_clock(PERIOD)
+    sim.add_testbench(tb)
+    sim.run()

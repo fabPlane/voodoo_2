@@ -466,8 +466,12 @@ class M2SPipe(wiring.Component):
     def elaborate(self, platform):
         m = Module()
         r_valid = Signal(name="rValid")
-        r_data = Signal(self._shape, name="rData",
-                        init=self._init_payload if self._init_payload is not None else 0)
+        # `initNull(initPayload)`: reset only when an initPayload was given.
+        # See the reset_less note in S2MPipe.
+        if self._init_payload is not None:
+            r_data = Signal(self._shape, name="rData", init=self._init_payload)
+        else:
+            r_data = Signal(self._shape, name="rData", reset_less=True)
 
         with m.If(self.i.ready):
             m.d.sync += r_valid.eq(self.i.valid)
@@ -518,7 +522,13 @@ class S2MPipe(wiring.Component):
     def elaborate(self, platform):
         m = Module()
         r_valid_n = Signal(init=1, name="rValidN")
-        r_data = Signal(self._shape, name="rData")
+        # `RegNextWhen(payload, ...)` is a plain `Reg`, not a `RegInit`: Spinal
+        # leaves it unreset. Amaranth resets every Signal to its init unless
+        # told otherwise, and an unreset-vs-zero payload register is exactly
+        # what the plan-0.4 lockstep diff catches (it found the same thing in
+        # StreamWhile's `state`). Every plain Spinal `Reg` ported here is
+        # `reset_less=True`.
+        r_data = Signal(self._shape, name="rData", reset_less=True)
 
         with m.If(self.i.valid):
             m.d.sync += r_valid_n.eq(0)
@@ -566,7 +576,8 @@ class HalfPipe(wiring.Component):
     def elaborate(self, platform):
         m = Module()
         r_valid = Signal(name="rValid")
-        r_data = Signal(self._shape, name="rData")
+        # unreset `Reg`; see the note in S2MPipe.
+        r_data = Signal(self._shape, name="rData", reset_less=True)
 
         with m.If(self.i.valid):
             m.d.sync += r_valid.eq(1)
@@ -925,8 +936,13 @@ class Arbiter(wiring.Component):
         mask_proposal = Signal(n, name="maskProposal")
         locked = Signal(name="locked") if self.lock_flag_enable else None
         if self.mask_lock_flag_enable:
-            init = (1 << (n - 1)) if self.arbitration == "roundRobin" else 0
-            mask_locked = Signal(n, name="maskLocked", init=init)
+            # RoundRobin is the only policy that gives `maskLocked` an init
+            # (`maskLocked(i) init(i == n - 1)`); for the others it is a plain
+            # unreset `Reg(Vec(Bool, n))`. See the note in S2MPipe.
+            if self.arbitration == "roundRobin":
+                mask_locked = Signal(n, name="maskLocked", init=1 << (n - 1))
+            else:
+                mask_locked = Signal(n, name="maskLocked", reset_less=True)
         else:
             mask_locked = None
 
