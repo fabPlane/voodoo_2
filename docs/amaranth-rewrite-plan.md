@@ -776,11 +776,11 @@ Spinal core does.
       replacement for the Verilator harness's poke at
       `…controlPlane_swapBuffer__DOT__swapCountReg` (`core_sim_ports.DBG_PORTS`). It is off
       by default, so the diffed port list is identical to the Scala's. `Stream(NoData)`
-      needed a decision: `stream.Signature(unsigned(0))` keeps a zero-width `payload`
-      member, which yosys emits as `input [-1:0] cmd__payload` — a port Spinal does not
-      have and the harness cannot pair — so `swap_buffer.NoDataStreamSignature` declares
-      only `valid`/`ready`. It belongs in `lib/stream.py`; `fastfillCMD` is the other
-      `NoData` stream. `RegisterBank.bmbParams` / `externalBmbParams` live in
+      is `stream.Signature(unsigned(0))`: yosys emits the zero-width payload as
+      `input [-1:0] cmd__payload`, which the harness now treats as no port (1a96914 drops
+      zero-width leaves; Verilator gets `-Wno-ASCRANGE`), so it stays a real
+      `amaranth.lib.stream` signature and composes with RegisterBank's command streams
+      (`fastfillCMD` is the other `NoData` one). `RegisterBank.bmbParams` / `externalBmbParams` live in
       `address_remapper.py` until 2.2 lands. Two findings: the Scala `AddressRemapper`'s
       bit-21-set-but-out-of-range branch (`inputAddr & ~(1 << 21)`, then `.resized` to 12
       bits) is indistinguishable from plain truncation, so the only real translation is the

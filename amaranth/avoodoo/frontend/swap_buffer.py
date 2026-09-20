@@ -36,48 +36,20 @@ simulation and Phase 9.1 re-expresses them for SymbiYosys.
 from __future__ import annotations
 
 from amaranth import Module, Signal, unsigned
-from amaranth.lib import enum, wiring
+from amaranth.lib import enum, stream, wiring
 from amaranth.lib.wiring import In, Out
 
-__all__ = ["NoDataStreamSignature", "State", "SwapBuffer"]
+__all__ = ["State", "SwapBuffer"]
 
-
-class NoDataStreamSignature(wiring.Signature):
-    """``Stream(NoData)`` -- a handshake with nothing on it.
-
-    ``spinal.lib.NoData`` is an empty ``Bundle``, so Spinal emits exactly two
-    Verilog ports for a ``Stream(NoData)``: ``..._valid`` and ``..._ready``.
-
-    ``amaranth.lib.stream.Signature(unsigned(0))`` would be the obvious
-    spelling, but it keeps a zero-width ``payload`` member, and yosys then
-    emits ``input [-1:0] cmd__payload;`` -- a descending-range port Verilator
-    warns about, a leaf the lockstep harness cannot pair against anything on
-    the Spinal side, and, most importantly, *not the same port list as the
-    Scala* (plan §6).  So the payload is simply not declared.
-
-    Everything in :mod:`avoodoo.lib.stream` that only touches the handshake
-    works on this unchanged -- :func:`~avoodoo.lib.stream.fire`,
-    :func:`~avoodoo.lib.stream.is_stall`, :func:`~avoodoo.lib.stream.is_free`,
-    :func:`~avoodoo.lib.stream.arbitration_from`.  The payload-copying helpers
-    (``connect_stream`` and friends) do not, and have nothing to copy anyway.
-
-    Belongs in ``avoodoo/lib/stream.py`` next to ``FlowSignature``; it lives
-    here until that file's owner moves it, because ``swapbufferCMD`` is the
-    first ``NoData`` stream to be ported (``fastfillCMD`` is the other one --
-    see ``regdef.COMMAND_STREAMS``).
-    """
-
-    def __init__(self):
-        super().__init__({"valid": Out(1), "ready": In(1)})
-
-    def __eq__(self, other):
-        return type(other) is type(self)
-
-    def __hash__(self):
-        return hash(type(self))
-
-    def __repr__(self):
-        return "NoDataStreamSignature()"
+#: ``slave Stream(NoData)``.  ``spinal.lib.NoData`` is an empty ``Bundle``, so
+#: Spinal emits only ``io_cmd_valid`` / ``io_cmd_ready``; the zero-width
+#: Amaranth payload is emitted by yosys as ``input [-1:0] cmd__payload``, which
+#: the lockstep harness treats as no port at all (``tools/diff/amports.py``
+#: drops zero-width leaves, commit 1a96914) and Verilator only warns about.
+#: Kept as a real ``stream.Signature`` rather than a bespoke valid/ready
+#: signature so it composes with every ``amaranth.lib.stream`` consumer --
+#: RegisterBank's ``swapbufferCMD`` command stream will be one.
+NO_DATA = stream.Signature(unsigned(0))
 
 
 class State(enum.Enum, shape=unsigned(2)):
@@ -121,10 +93,8 @@ class SwapBuffer(wiring.Component):
 
     Attributes
     ----------
-    cmd : In(NoDataStreamSignature())
-        ``slave Stream(NoData)`` -- ``valid``/``ready`` and nothing else; see
-        :class:`NoDataStreamSignature` for why it is not
-        ``stream.Signature(unsigned(0))``.
+    cmd : In(stream.Signature(unsigned(0)))
+        ``slave Stream(NoData)``; see :data:`NO_DATA`.
     v_retrace, vsync_enable, swap_interval, swap_cmd_enqueued : In
     waiting, swap_count, swaps_pending : Out
     """
@@ -132,7 +102,7 @@ class SwapBuffer(wiring.Component):
     def __init__(self, *, dbg_load_port: bool = False):
         self.dbg_load_port = bool(dbg_load_port)
         members = {
-            "cmd": In(NoDataStreamSignature()),
+            "cmd": In(NO_DATA),
             "v_retrace": In(1),
             "vsync_enable": In(1),
             "swap_interval": In(8),

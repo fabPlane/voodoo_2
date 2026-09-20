@@ -124,9 +124,9 @@ REGISTRY: dict[str, DiffEntry] = {
              "(ext/SpinalVoodoo/src/voodoo/frontend/SwapBuffer.scala)",
         # `dbg_load_port` is deliberately left at its default: it adds two
         # ports the Scala does not have, and only `core_sim.py` sets it.
-        # io_cmd carries `NoData`, so Spinal emits only io_cmd_valid/ready;
-        # `swap_buffer.NoDataStreamSignature` matches that exactly rather than
-        # carrying a zero-width payload the harness would find unpairable.
+        # io_cmd carries `NoData`, so Spinal emits only io_cmd_valid/ready; the
+        # Amaranth `cmd` is stream.Signature(unsigned(0)) and its zero-width
+        # `cmd__payload` is dropped by amports.py, not paired.
     ),
     "AddressRemapper": DiffEntry(
         spinal="AddressRemapper",
