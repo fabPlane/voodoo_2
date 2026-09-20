@@ -1,0 +1,21 @@
+// Synthesis declaration for Gowin's fabric-visible user JTAG hard block.
+(* blackbox *)
+module GW_JTAG (
+    input  wire tck_pad_i,
+    input  wire tms_pad_i,
+    input  wire tdi_pad_i,
+    output wire tdo_pad_o,
+    output wire tck_o,
+    output wire tdi_o,
+    output wire test_logic_reset_o,
+    output wire run_test_idle_er1_o,
+    output wire run_test_idle_er2_o,
+    output wire shift_dr_capture_dr_o,
+    output wire pause_dr_o,
+    output wire update_dr_o,
+    output wire enable_er1_o,
+    output wire enable_er2_o,
+    input  wire tdo_er1_i,
+    input  wire tdo_er2_i
+);
+endmodule

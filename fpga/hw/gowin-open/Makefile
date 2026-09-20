@@ -6,8 +6,10 @@ THREADS      ?= 8
 YOSYS        ?= yosys
 NEXTPNR      ?= nextpnr-himbaechel
 GOWIN_PACK   ?= gowin_pack
+NEXTPNR_CHIPDB ?=
+CHIPDB_ARG   := $(if $(NEXTPNR_CHIPDB),--chipdb $(NEXTPNR_CHIPDB),)
 
-DEMOS        := blinky blinky_local button_toggle button_latch reset_toggle reset_shift bram_test uart_hello gpio_probe gpio_probe_key1
+DEMOS        := blinky blinky_local button_toggle button_latch reset_toggle reset_shift bram_test uart_hello gpio_probe gpio_probe_key1 jtag_mailbox
 BUILD_DIR    := build
 CST          := tang_console_138k_open.cst
 OPEN_SUFFIX  := -open
@@ -40,8 +42,12 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%-synth.json: rtl/%.v Makefile | $(BUILD_DIR)
 	$(YOSYS) -p "read_verilog -sv $<; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
 
+$(BUILD_DIR)/jtag_mailbox-synth.json: rtl/jtag_mailbox.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
+
 $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 	$(NEXTPNR) --threads $(THREADS) --timing-allow-fail -r \
+		$(CHIPDB_ARG) \
 		--freq 50 --json $< --write $@ --device $(DEVICE) \
 		--vopt cst=$(CST) --vopt sspi_as_gpio $(EXTRA_VOPTS)
 
