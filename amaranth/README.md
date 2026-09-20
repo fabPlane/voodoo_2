@@ -10,10 +10,15 @@ make test                  # pytest
 make rtl-module MOD=Counter        # -> rtl/Counter.v
 make rtl-module MOD=SpikeBlinky    # (or: make rtl-spike)
 make rtl-module MOD=avoodoo.example:Counter PARAMS="width=16"
+
+make rtl-core-sim                  # -> rtl/CoreSim.v   (Mac or Linux)
+make sim-model                     # verilate + build the harness  (Linux only)
+make sim-build TEST=test00         # link one Glide test against it (Linux only)
+make sim-run   TEST=test00         # run it, screenshot -> ext/SpinalVoodoo/output/
 ```
 
-`make rtl-core-sim`, `rtl-console`, `diff`, `gowin-console` are declared but
-not implemented; each prints the plan phase that owns it.
+`make rtl-console` and `gowin-console` are declared but not implemented; each
+prints the plan phase that owns it.
 
 ## Toolchain (chosen 2026-09-20, Phase 0.1)
 
@@ -87,6 +92,151 @@ honoured (32x RAM16S4 SSRAM, **BSRAM 0/340**); escaped identifiers and the
 `initial` block accepted; Fmax 195 MHz; 27 s wall. Bitstream built, not yet
 loaded on hardware. Full write-up, warnings, and the programming command:
 [`hw/spike/RESULTS.md`](hw/spike/RESULTS.md).
+
+## Phase 0.5 — the out-of-tree Glide/Verilator harness
+
+`ext/SpinalVoodoo` is a read-only submodule, so `amaranth/emu/sim/` is a copy
+of its `emu/sim/` adapted to the Amaranth `CoreSim`. `sim_harness.h` is
+**byte-identical** to upstream's (a pytest asserts it), so `libglide2x.so` and
+every Glide test binary link against this copy with no source change.
+
+| Path | What |
+|---|---|
+| `avoodoo/core_sim_ports.py` | the port contract: the 19 Spinal ports + the `dbg` bundle + the memory-backdoor paths. Import this; never retype it. |
+| `avoodoo/core_sim.py` | **stub** CoreSim (Phase 7.2 replaces the body, keeps the ports) |
+| `gen/gen_core_sim.py` | `rtl/CoreSim.v` |
+| `emu/sim/Makefile` | copy of upstream's, with the Spinal-RTL generation rule deleted |
+| `emu/sim/harness/sim_harness.{h,cpp}` | the copy; `.h` byte-identical, `.cpp` adapted |
+| `emu/sim/harness/sim_smoke.cpp` | standalone check of the whole C API (not upstream) |
+| `tests/test_core_sim_ports.py` | cross-checks all of the above without building anything |
+
+### The `dbg` bundle
+
+The upstream harness names 153 hierarchical Verilator signals, but only 14 are
+live — the rest sit in two `#if 0` blocks
+(`docs/amaranth/spinal-naming-and-harness.md` §2). Hierarchical names are a
+SpinalHDL-version artefact, not a contract, so the live ones become real ports:
+
+| Port | Dir | Replaces |
+|---|---|---|
+| `dbg_pci_cmd_ready` | out 1 | `…core_1__DOT__pciFifo_1_io_cpuSide_cmd_ready` |
+| `dbg_frontdoor_cmd_ready` | out 1 | `…core_1__DOT__frontdoor_io_cpuBus_cmd_ready` |
+| `dbg_pci_fifo_free` | out 7 | `…core_1__DOT__pciFifo_1_io_pciFifoFree` |
+| `dbg_sync_drained` | out 1 | `…core_1__DOT__pciFifo_1_io_syncDrained` |
+| `dbg_pipeline_busy` | out 1 | `…pixelPipeline_1_io_debug_pipelineBusy` |
+| `dbg_swap_count` | out 2 | `…controlPlane_swapBuffer__DOT__swapCountReg` (read) |
+| `dbg_swap_count_set` | in 2 | same register (write) |
+| `dbg_swap_count_we` | in 1 | load strobe for the above |
+
+Names are flat, not a nested signature member: Amaranth joins nested paths
+with a *double* underscore, so a `dbg` sub-signature would emit
+`dbg__pci_cmd_ready`.
+
+`swapCountReg` is the only internal the harness *writes*. A load port costs
+`sim_set_swap_count()` one clock, which upstream's poke did not; its only
+callers (`emu/test/trace_test.cpp`, `tools/sim_trace_capture.cpp`) call it at
+trace-replay boundaries, where a cycle is not observable.
+
+### The memory backdoor: public arrays, not a DPI port
+
+`sim_read_fb` / `sim_write_fb_bulk` / `sim_write_tex_bulk` / `sim_read_tex`
+keep reaching straight into the Verilator model, exactly as upstream does, via
+`--public-flat-rw`. The alternative — a `dbg_mem_*` port pumped one word at a
+time — would turn every texture upload in a trace replay into thousands of
+`eval()` calls, so it was rejected.
+
+Two things make this cheaper than upstream rather than merely equal:
+
+* Amaranth 0.5.10 has **no way to attach a `verilator public` attribute to a
+  `Memory`** (neither `Memory` nor `MemoryData` takes `attrs=`), so
+  `--public-flat-rw` is the mechanism — which is fine, because it is already
+  in the upstream `VERILATOR_FLAGS` and the copy keeps them verbatim.
+* Where SpinalHDL splits a byte-enabled `Mem` into `ram_symbol0..3`,
+  Amaranth + yosys emit **one** `reg [31:0] mem [N-1:0]`, which Verilator
+  exposes as `VlUnpacked<IData, N>`. A bulk transfer is one index per word
+  instead of four.
+
+The two paths are `CoreSim__DOT__fbWriteRam__DOT__mem` and
+`CoreSim__DOT__texRam__DOT__mem` — one `__DOT__` for the `SimRam` submodule,
+one for the `Memory` inside it. They are spelled once each, in
+`VOODOO_FB_MEM` / `VOODOO_TEX_MEM` at the top of `sim_harness.cpp`, and
+`avoodoo/core_sim_ports.py` owns the canonical strings. If Phase 7.2 renames
+either submodule, `make -C emu/sim smoke` fails to **compile**, immediately;
+it does not produce a black screenshot half an hour into a trace replay.
+
+### Amaranth always initialises a Memory; yosys expands that per word
+
+`Memory(..., init=[])` still emits an all-zero `$meminit_v2` cell, and
+`write_verilog` turns it into one `initial` statement **per word** — 3.1
+million lines for the 4 MiB + 8 MiB simulation RAMs, which no C++ compiler
+will get through. The Spinal `Mem` this replaces has no initialiser at all.
+
+`gen/gen_core_sim.py` therefore emits RTLIL, deletes the `$meminit_v2` cells
+(`strip_meminit`), and only then runs yosys. Output is an 11 KB `CoreSim.v`
+with bare `reg [31:0] mem [1048575:0]` arrays and no `initial` block;
+Verilator's `--x-initial fast` zeroes them at construction. The generator
+hard-fails if an `initial` survives.
+
+**Phase 7 must honour this**: any Amaranth `Memory` whose contents are meant
+to start undefined has to go through `strip_meminit`; any memory with *real*
+contents (dither tables, TMU LUTs) must not. Building the initialiser text is
+the slow part — ~35 s on `hyper-ms-lin`, ~55 s on the Mac, for those two RAMs
+alone — and it is why `rtl-core-sim` is not instant.
+
+### Driving the upstream Makefiles
+
+Command-line variables beat in-makefile `=` assignments *and* propagate to
+sub-makes through `MAKEFLAGS`, so nothing in the submodule is edited:
+
+```
+SIM_DIR=<amaranth/emu/sim>  SIM_MODEL=CoreSim
+SIM_STAMP=<…>/obj_dir/VCoreSim__ALL.a
+SIM_RTL=../../amaranth/rtl/CoreSim.v   # relative: upstream symlinks ../../$(SIM_RTL)
+SCALA_SRCS=                            # empty, or the stamp rule re-runs CoreSimGen
+```
+
+The copied `emu/sim/Makefile` keeps upstream's `VERILATOR_FLAGS`, `-m32`
+`CXX32` build, `OBJ_DIR` layout and object names (`sim_harness.o`,
+`verilated.o`, `voodoo_trace_writer.o`, `VCoreSim__ALL.a`) — the Glide
+`Makefile.sim` looks for those exact paths. What it drops is the `$(RTL_FILE)`
+rule, which would otherwise regenerate the *Spinal* RTL over the Amaranth
+one, and the `$readmemb` `sed` that went with it.
+
+### State on `hyper-ms-lin` (2026-09-20)
+
+Verified there, in this order:
+
+* `make rtl-core-sim` → `rtl/CoreSim.v`, 35 s.
+* `make sim-model` → Verilator + the whole `-m32` harness, 37 s. Ports and the
+  two public memory arrays confirmed in `VCoreSim.h` / `VCoreSim___024root.h`.
+* `make -C emu/sim smoke` → **passes**: bus read/write, `sim_idle_wait`,
+  fb + texture round-trips including the last word of each (4 MiB−4 and
+  8 MiB−4, which is what catches an array one size too small), and the
+  `swapCountReg` load path for all four values.
+
+**`make sim-build` does not link yet, and not because of anything here.**
+`hyper-ms-lin` has no 32-bit `zlib` / `libX11` / `libXext`, so the final
+`libglide2x.so` link fails with `cannot find -lz / -lX11 / -lXext`. Upstream
+hits exactly the same wall: SpinalVoodoo gets those from its nix devenv
+(`pkgs.pkgsi686Linux.{zlib,xorg.libX11,xorg.libXext}`) and nix is not
+installed on that box, so the Glide suite has evidently never been built
+there. Everything before the link — all 32-bit Glide objects, `libglide2x.a`,
+the harness, the model — builds clean. The fix is three packages:
+
+```
+sudo dpkg --add-architecture i386 && sudo apt-get update
+sudo apt-get install -y zlib1g-dev:i386 libx11-dev:i386 libxext-dev:i386
+```
+
+Until then `make -C emu/sim smoke` is the harness gate, and the
+screenshot-parity check against `test-output/` (plan 7.3) is blocked on the
+same three packages — for the Spinal build as much as for this one.
+
+### rsync
+
+The `AGENTS.md` Mac→Linux rsync needs three more excludes for this tree:
+`amaranth/.venv` (Mac wheels and a Mac interpreter), `amaranth/rtl`
+(generated) and `amaranth/emu/sim/obj_dir` (Verilator/`-m32` objects).
 
 ## Gotchas
 

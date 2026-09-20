@@ -4,10 +4,16 @@ rtl/
 # uv-managed virtualenv
 .venv/
 
+# Verilator + harness build products (amaranth/emu/sim/Makefile)
+emu/sim/obj_dir/
+
 # Gowin build products for the spike / console builds
 hw/spike/build/
 hw/spike/impl/
 hw/console/impl/
+
+# Diff harness build products (tools/diff/harness.py)
+build/
 
 # Python / pytest / cocotb leftovers
 __pycache__/

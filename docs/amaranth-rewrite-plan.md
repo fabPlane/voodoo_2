@@ -389,7 +389,34 @@ Spinal core does.
       build_console_sdram.tcl`, which `AGENTS.md` makes a Mac-fallback case.
       Details in `amaranth/hw/spike/RESULTS.md`; the user must load it with
       `hardware/tang-console-138k/program_debug_sram.sh` while holding MODE.
-- [ ] 0.4 diff harness proven on StreamWhile + Fpxx
+- [x] 0.4 diff harness proven on StreamWhile + Fpxx — **2026-09-20**.
+  - **Amaranth side done.** `amaranth/tools/diff/` + `make diff MOD=<Name>`
+    (`--seeds`, `--cycles`, `--valid-density`, `--ready-density`, `--reset-cycles`,
+    `--list`). It runs `GenOne` when `fpga/rtl/diff/<Name>_spinal.v` is missing or
+    older than any `.scala` under `fpga/src` / `ext/SpinalVoodoo/src`, elaborates the
+    registry's Amaranth factory to `<Name>_am`, emits an Amaranth `diff_top` that
+    instantiates both as `Instance()`s with shared inputs and an OR'd `mismatch`,
+    and drives it from a generic cocotb/Verilator stimulus driver.
+    **Measured clean at 1e6 cycles x 3 seeds each** (the plan's "done" bar):
+    `FpxxDiffWrap` (21 ports), `Fpxx2AFix` (9 ports, streams + a pipeline stage),
+    `StreamWhileDiffWrap` (7 ports); plus 1e6 x 3 more at
+    `--valid-density 0.9 --ready-density 0.12` for the two handshaked ones.
+    `make test` runs the same three at 20k x 3 via `amaranth/tests/diff/`.
+    Three things worth knowing before writing the next port:
+    (a) **Amaranth stops flattening at the signature member, Spinal does not.**
+    `In(stream.Signature(FpxxLayout(c)))` emits one packed `op__payload`; Spinal
+    emits `io_op_payload_{mant,exp,sign}`. `tools/diff/amports.py` walks the
+    signature *and* the `data.Layout` underneath it and pairs Spinal leaves with
+    bit slices, so ports do **not** have to be reshaped to match — and the
+    per-module override table in `tools/diff/registry.py` stays empty so far.
+    (b) The rest of the naming rule is mechanical and needed no exceptions:
+    Spinal path segments (from the committed `portmaps/*.json`) camelCase ->
+    snake_case, joined with `__`; `clk`->`clk`, `reset`->`rst`.
+    (c) **A plain Spinal `Reg(...)` has no reset; Amaranth's `Signal` does.** The
+    harness found this immediately (`StreamWhile.state`, then four more registers
+    in `lib/stream.py`) — it only shows up on a seed that resets a *running*
+    design, which is why the driver resets before every seed rather than once.
+    Every such register must be `reset_less=True`.
   - **Spinal side done (2026-09-20).** `fpga/src/voodoo/diff/GenOne.scala`
     (`scala-cli run . --main-class voodoo.diff.GenOne -- <Module> [outDir]`, 44 buildable
     entries, 2 stubs) generates `<Module>_spinal.v`; `DiffWrappers.scala` wraps the
@@ -399,10 +426,45 @@ Spinal core does.
     `verilator --lint-only` with 0 errors. Conventions and the harness inventory:
     `docs/amaranth/spinal-naming-and-harness.md`. Remaining: the Amaranth side
     (`gen_module.py`, `tools/diff/harness.py`, the stimulus driver).
-- [ ] 0.5 harness copy skeleton links
+- [x] 0.5 harness copy skeleton links — 2026-09-20. `amaranth/emu/sim/`
+      (Makefile + `harness/sim_harness.{h,cpp}` + `harness/sim_smoke.cpp`),
+      `avoodoo/core_sim_ports.py` (port contract, reusable by 7.2),
+      `avoodoo/core_sim.py` (**stub**), `gen/gen_core_sim.py`, Makefile targets
+      `rtl-core-sim` / `sim-model` / `sim-build` / `sim-run`. `sim_harness.h` is
+      byte-identical to upstream's, so the Glide tests link unchanged; the 56
+      zero-returning `sim_get_*` are untouched; the ~139 dead `#if 0` taps are
+      dropped (inventory stays in `docs/amaranth/spinal-naming-and-harness.md` §2.3).
+      **dbg bundle**: the 5 live debug scalars become outputs
+      (`dbg_pci_cmd_ready`, `dbg_frontdoor_cmd_ready`, `dbg_pci_fifo_free[6:0]`,
+      `dbg_sync_drained`, `dbg_pipeline_busy`), `swapCountReg` becomes
+      `dbg_swap_count` out + `dbg_swap_count_set`/`dbg_swap_count_we` in (costs
+      `sim_set_swap_count()` one clock; only trace-replay boundaries call it).
+      Names are flat because Amaranth joins nested signature paths with `__`.
+      **Memory backdoor**: option (a), Verilator `--public-flat-rw` public
+      arrays — Amaranth 0.5.10 cannot attach a `verilator public` attribute to
+      a `Memory` at all (no `attrs=` on `Memory`/`MemoryData`), and a port/DPI
+      path would cost an `eval()` per word on texture uploads. Amaranth+yosys
+      emit ONE `reg [31:0] mem [N-1:0]` where Spinal splits into
+      `ram_symbol0..3`, so bulk transfers get *faster*: paths are
+      `CoreSim__DOT__{fbWriteRam,texRam}__DOT__mem`, spelled once each in
+      `VOODOO_FB_MEM`/`VOODOO_TEX_MEM`, owned by `core_sim_ports.py`, and a
+      rename breaks `make -C emu/sim smoke` at compile time.
+      **Trap for Phase 7**: Amaranth always attaches an initialiser to a
+      `Memory` (even `init=[]`) and yosys expands it to one `initial` statement
+      per word — 3.1 M lines for the 4 MiB + 8 MiB sim RAMs. `gen_core_sim.py`
+      strips the `$meminit_v2` cells from the RTLIL before yosys; memories with
+      *real* contents (dither/TMU tables) must not be stripped.
+      On `hyper-ms-lin`: `rtl-core-sim` 35 s, `sim-model` 37 s, `make -C
+      emu/sim smoke` passes (bus, fb+tex round-trip to the last word of each,
+      swap-count load path). **`sim-build` is blocked, not by this work**: the
+      box has no 32-bit zlib/libX11/libXext, so `libglide2x.so` cannot link —
+      upstream's own Glide build fails identically there (it gets them from a
+      nix devenv that is not installed). Fix: `dpkg --add-architecture i386` +
+      `zlib1g-dev:i386 libx11-dev:i386 libxext-dev:i386`. The same gap blocks
+      the 7.3 screenshot comparison for the Spinal build too.
 
 ### Phase 1
-- [x] stream helpers  - [ ] membus + adapters  - [ ] fpxx  - [ ] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
+- [x] stream helpers  - [ ] membus + adapters  - [x] fpxx  - [ ] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
 - [x] 1.1 stream helpers — 2026-09-20. `amaranth/avoodoo/lib/stream.py` (+ `lib/fragment.py`,
       `bus/stream_while.py`), transliterated from the SpinalHDL 1.15.0 `spinal/lib/Stream.scala`,
       `Flow.scala`, `Counter.scala` and `Utils.scala` sources. 66 pysim tests in
@@ -439,6 +501,27 @@ Spinal core does.
       `avoodoo.bus.stream_while:StreamWhileDiffWrap` is the elaboratable counterpart of
       `fpga/src/voodoo/diff/DiffWrappers.scala`, ready for the 0.4 harness; it is not in
       `gen/gen_module.py`'s `REGISTRY` yet (use the `module:Class` spec).
+- [x] 1.3 fpxx — 2026-09-20. `amaranth/avoodoo/lib/fpxx.py` (`Fpxx.scala`, 259 lines)
+      and `fpxx2afix.py` (`Fpxx2AFix.scala`, 71). Both diff-clean against the Spinal
+      Verilog at **1e6 cycles x 3 seeds** (`make diff MOD=FpxxDiffWrap`,
+      `MOD=Fpxx2AFix`), `Fpxx2AFix` also at `--ready-density 0.12`; 23 pysim tests in
+      `tests/test_fpxx.py` pin the semantics against an independent Python model.
+      `FpxxLayout` is a `data.StructLayout` in the Scala's declaration order
+      (`mant`, `exp`, `sign`), which gives the IEEE packing for free;
+      `FpxxView` carries the Bundle's methods, with `set_nan`/`set_inf`/`set_zero`
+      returning statement lists so a caller writes `m.d.comb += v.set_nan()`.
+      Three upstream oddities are reproduced deliberately and covered by tests:
+      `is_subnormal()` is only `exp == 0` and so is **true for zero**;
+      `full_mant()` forces the hidden bit even for a denormal; and `Fpxx2AFix`
+      has **no NaN/Inf handling at all** — `exp = 255` drives `shift = -109`, so
+      both saturate by sign — while underflow converts to zero with `overflow`
+      *clear*. The pipeline payload registers are `reset_less=True`, matching
+      Spinal's plain `Reg` (0.4's finding); `StageLink` at `pipeStages = 1` is
+      a plain m2s stage, `n0_ready = n1_ready | !n1_valid`, read off
+      `Fpxx2AFix_spinal.v` rather than guessed.
+      Only the *output type* `AFix.SQ(20 bits, 30 bits)` touches
+      `avoodoo/lib/fixed.py` — there is no AFix arithmetic in this module, so
+      nothing here depends on the rounding/saturation surface (§9).
 
 ### Phase 2
 - [x] regdef  - [ ] register_bank  - [ ] address_remapper  - [ ] swap_buffer  - [ ] lfb  - [ ] cpu_frontdoor  - [ ] core_types
