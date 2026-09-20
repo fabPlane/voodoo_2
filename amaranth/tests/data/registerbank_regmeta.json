@@ -1,0 +1,931 @@
+{
+  "source": "fpga/src/voodoo/diff/GenOne.scala --dump-regmeta (RegisterBank(Config.voodoo1()))",
+  "simulation": false,
+  "note": "register/field 'name' comes from regif's SymbolName macro, i.e. the enclosing Scala val, so helper-built registers all read 'newRegAtWithCategory' / 'fifoNoSyncFloatReg'. Logical names live in regdef.py; match on addr + section + access + reset + doc.",
+  "registers": [
+    {"addr": 0, "addr_hex": "0x000", "name": "reg",
+     "fields": [
+      {"name": "pciFifoFree", "hi": 5, "lo": 0, "access": "RO", "reset": 63, "doc": "PCI FIFO freespace"},
+      {"name": "vRetrace", "hi": 6, "lo": 6, "access": "RO", "reset": 0, "doc": "Vertical retrace"},
+      {"name": "fbiBusy", "hi": 7, "lo": 7, "access": "RO", "reset": 0, "doc": "FBI graphics engine busy"},
+      {"name": "trexBusy", "hi": 8, "lo": 8, "access": "RO", "reset": 0, "doc": "TREX busy"},
+      {"name": "sstBusy", "hi": 9, "lo": 9, "access": "RO", "reset": 0, "doc": "SST-1 busy"},
+      {"name": "displayedBuffer", "hi": 11, "lo": 10, "access": "RO", "reset": 0, "doc": "Displayed buffer"},
+      {"name": "memFifoFree", "hi": 27, "lo": 12, "access": "RO", "reset": 65535, "doc": "Memory FIFO freespace"},
+      {"name": "swapsPending", "hi": 30, "lo": 28, "access": "RO", "reset": 0, "doc": "Swap buffers pending"},
+      {"name": "pciInterrupt", "hi": 31, "lo": 31, "access": "RO", "reset": 0, "doc": "PCI interrupt generated"}
+     ]},
+    {"addr": 8, "addr_hex": "0x008", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 15, "lo": 0, "access": "WO", "reset": 0, "doc": "Vertex A X coordinate"},
+      {"name": "--", "hi": 31, "lo": 16, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 12, "addr_hex": "0x00c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 15, "lo": 0, "access": "WO", "reset": 0, "doc": "Vertex A Y coordinate"},
+      {"name": "--", "hi": 31, "lo": 16, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 16, "addr_hex": "0x010", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 15, "lo": 0, "access": "WO", "reset": 0, "doc": "Vertex B X coordinate"},
+      {"name": "--", "hi": 31, "lo": 16, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 20, "addr_hex": "0x014", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 15, "lo": 0, "access": "WO", "reset": 0, "doc": "Vertex B Y coordinate"},
+      {"name": "--", "hi": 31, "lo": 16, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 24, "addr_hex": "0x018", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 15, "lo": 0, "access": "WO", "reset": 0, "doc": "Vertex C X coordinate"},
+      {"name": "--", "hi": 31, "lo": 16, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 28, "addr_hex": "0x01c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 15, "lo": 0, "access": "WO", "reset": 0, "doc": "Vertex C Y coordinate"},
+      {"name": "--", "hi": 31, "lo": 16, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 32, "addr_hex": "0x020", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 1044480, "doc": "Starting red value (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 36, "addr_hex": "0x024", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 1044480, "doc": "Starting green value (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 40, "addr_hex": "0x028", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 1044480, "doc": "Starting blue value (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 44, "addr_hex": "0x02c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Starting Z depth (20.12 fixed)"}
+     ]},
+    {"addr": 48, "addr_hex": "0x030", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Starting alpha value (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 52, "addr_hex": "0x034", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Starting S texture coord (14.18 fixed)"}
+     ]},
+    {"addr": 56, "addr_hex": "0x038", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Starting T texture coord (14.18 fixed)"}
+     ]},
+    {"addr": 60, "addr_hex": "0x03c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Starting W value (2.30 fixed)"}
+     ]},
+    {"addr": 64, "addr_hex": "0x040", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Red gradient dR/dX (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 68, "addr_hex": "0x044", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Green gradient dG/dX (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 72, "addr_hex": "0x048", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Blue gradient dB/dX (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 76, "addr_hex": "0x04c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Z gradient dZ/dX (20.12 fixed)"}
+     ]},
+    {"addr": 80, "addr_hex": "0x050", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Alpha gradient dA/dX (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 84, "addr_hex": "0x054", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "S texture gradient dS/dX (14.18 fixed)"}
+     ]},
+    {"addr": 88, "addr_hex": "0x058", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "T texture gradient dT/dX (14.18 fixed)"}
+     ]},
+    {"addr": 92, "addr_hex": "0x05c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "W gradient dW/dX (2.30 fixed)"}
+     ]},
+    {"addr": 96, "addr_hex": "0x060", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Red gradient dR/dY (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 100, "addr_hex": "0x064", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Green gradient dG/dY (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 104, "addr_hex": "0x068", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Blue gradient dB/dY (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 108, "addr_hex": "0x06c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Z gradient dZ/dY (20.12 fixed)"}
+     ]},
+    {"addr": 112, "addr_hex": "0x070", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Alpha gradient dA/dY (12.12 fixed)"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 116, "addr_hex": "0x074", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "S texture gradient dS/dY (14.18 fixed)"}
+     ]},
+    {"addr": 120, "addr_hex": "0x078", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "T texture gradient dT/dY (14.18 fixed)"}
+     ]},
+    {"addr": 124, "addr_hex": "0x07c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoNoSyncFloatReg", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "W gradient dW/dY (2.30 fixed)"}
+     ]},
+    {"addr": 128, "addr_hex": "0x080", "name": "reg",
+     "fields": [
+      {"name": "--", "hi": 31, "lo": 0, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 256, "addr_hex": "0x100", "name": "reg",
+     "fields": [
+      {"name": "--", "hi": 31, "lo": 0, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 260, "addr_hex": "0x104", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fbzColorPath", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "Color combine path control"}
+     ]},
+    {"addr": 264, "addr_hex": "0x108", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fogMode", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "Fog mode control"}
+     ]},
+    {"addr": 268, "addr_hex": "0x10c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "alphaMode", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "Alpha test and blend control"}
+     ]},
+    {"addr": 272, "addr_hex": "0x110", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "enableClipping", "hi": 0, "lo": 0, "access": "RW", "reset": 0, "doc": "Enable clipping rectangle"},
+      {"name": "enableChromaKey", "hi": 1, "lo": 1, "access": "RW", "reset": 0, "doc": "Enable chroma-keying"},
+      {"name": "enableStipple", "hi": 2, "lo": 2, "access": "RW", "reset": 0, "doc": "Enable stipple register masking"},
+      {"name": "wBufferSelect", "hi": 3, "lo": 3, "access": "RW", "reset": 0, "doc": "W-Buffer Select (0=Z-value, 1=W-value)"},
+      {"name": "enableDepthBuffer", "hi": 4, "lo": 4, "access": "RW", "reset": 0, "doc": "Enable depth-buffering"},
+      {"name": "depthFunction", "hi": 7, "lo": 5, "access": "RW", "reset": 0, "doc": "Depth-buffer function"},
+      {"name": "enableDithering", "hi": 8, "lo": 8, "access": "RW", "reset": 0, "doc": "Enable dithering"},
+      {"name": "rgbBufferMask", "hi": 9, "lo": 9, "access": "RW", "reset": 0, "doc": "RGB buffer write mask"},
+      {"name": "auxBufferMask", "hi": 10, "lo": 10, "access": "RW", "reset": 0, "doc": "Depth/alpha buffer write mask"},
+      {"name": "ditherAlgorithm", "hi": 11, "lo": 11, "access": "RW", "reset": 0, "doc": "Dither algorithm (0=4x4, 1=2x2)"},
+      {"name": "enableStipplePattern", "hi": 12, "lo": 12, "access": "RW", "reset": 0, "doc": "Enable Stipple pattern masking"},
+      {"name": "enableAlphaMask", "hi": 13, "lo": 13, "access": "RW", "reset": 0, "doc": "Enable Alpha-channel mask"},
+      {"name": "drawBuffer", "hi": 15, "lo": 14, "access": "RW", "reset": 0, "doc": "Draw buffer (0=Front, 1=Back, 2-3=Reserved)"},
+      {"name": "enableDepthBias", "hi": 16, "lo": 16, "access": "RW", "reset": 0, "doc": "Enable depth-biasing"},
+      {"name": "yOrigin", "hi": 17, "lo": 17, "access": "RW", "reset": 0, "doc": "Y origin (0=top, 1=bottom)"},
+      {"name": "enableAlphaPlanes", "hi": 18, "lo": 18, "access": "RW", "reset": 0, "doc": "Enable alpha planes"},
+      {"name": "enableDitherSubtract", "hi": 19, "lo": 19, "access": "RW", "reset": 0, "doc": "Enable alpha-blending dither subtraction"},
+      {"name": "depthSourceSelect", "hi": 20, "lo": 20, "access": "RW", "reset": 0, "doc": "Depth source (0=normal, 1=zaColor[15:0])"},
+      {"name": "reserved", "hi": 31, "lo": 21, "access": "RW", "reset": 0, "doc": "Reserved"}
+     ]},
+    {"addr": 276, "addr_hex": "0x114", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "writeFormat", "hi": 3, "lo": 0, "access": "RW", "reset": 0, "doc": "Linear frame buffer write format"},
+      {"name": "writeBufferSelect", "hi": 5, "lo": 4, "access": "RW", "reset": 0, "doc": "Write buffer select (0=front, 1=back, 2-3=reserved)"},
+      {"name": "readBufferSelect", "hi": 7, "lo": 6, "access": "RW", "reset": 0, "doc": "Read buffer select (0=front, 1=back, 2=depth/alpha, 3=reserved)"},
+      {"name": "pixelPipelineEnable", "hi": 8, "lo": 8, "access": "RW", "reset": 0, "doc": "Enable pixel pipeline for LFB writes"},
+      {"name": "rgbaLanes", "hi": 10, "lo": 9, "access": "RW", "reset": 0, "doc": "RGBA lanes (0=ARGB, 1=ABGR, 2=RGBA, 3=BGRA)"},
+      {"name": "wordSwapWrites", "hi": 11, "lo": 11, "access": "RW", "reset": 0, "doc": "16-bit word swap LFB writes"},
+      {"name": "byteSwizzleWrites", "hi": 12, "lo": 12, "access": "RW", "reset": 0, "doc": "Byte swizzle LFB writes"},
+      {"name": "yOrigin", "hi": 13, "lo": 13, "access": "RW", "reset": 0, "doc": "LFB Y origin (0=top, 1=bottom)"},
+      {"name": "wSelect", "hi": 14, "lo": 14, "access": "RW", "reset": 0, "doc": "LFB write W select (0=LFB, 1=zaColor[15:0])"},
+      {"name": "wordSwapReads", "hi": 15, "lo": 15, "access": "RW", "reset": 0, "doc": "16-bit word swap LFB reads"},
+      {"name": "byteSwizzleReads", "hi": 16, "lo": 16, "access": "RW", "reset": 0, "doc": "Byte swizzle LFB reads"},
+      {"name": "reserved", "hi": 31, "lo": 17, "access": "RW", "reset": 0, "doc": "Reserved"}
+     ]},
+    {"addr": 280, "addr_hex": "0x118", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "clipRightX", "hi": 9, "lo": 0, "access": "RW", "reset": 1023, "doc": "Right clip boundary"},
+      {"name": "--", "hi": 15, "lo": 10, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "clipLeftX", "hi": 25, "lo": 16, "access": "RW", "reset": 0, "doc": "Left clip boundary"},
+      {"name": "--", "hi": 31, "lo": 26, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 284, "addr_hex": "0x11c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "clipHighY", "hi": 9, "lo": 0, "access": "RW", "reset": 1023, "doc": "Bottom clip boundary"},
+      {"name": "--", "hi": 15, "lo": 10, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "clipLowY", "hi": 25, "lo": 16, "access": "RW", "reset": 0, "doc": "Top clip boundary"},
+      {"name": "--", "hi": 31, "lo": 26, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 288, "addr_hex": "0x120", "name": "reg",
+     "fields": [
+      {"name": "unload", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "NOP command data"}
+     ]},
+    {"addr": 292, "addr_hex": "0x124", "name": "reg",
+     "fields": [
+      {"name": "unload", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "Fastfill command data"}
+     ]},
+    {"addr": 296, "addr_hex": "0x128", "name": "reg",
+     "fields": [
+      {"name": "swapVsyncEnable", "hi": 0, "lo": 0, "access": "RW", "reset": 0, "doc": "Vsync synchronization enable"},
+      {"name": "swapInterval", "hi": 8, "lo": 1, "access": "RW", "reset": 0, "doc": "Swap interval (vsyncs to wait)"},
+      {"name": "--", "hi": 31, "lo": 9, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 300, "addr_hex": "0x12c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fogColor", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "RGBA fog color"}
+     ]},
+    {"addr": 304, "addr_hex": "0x130", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "zaColor", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Z/alpha constant for fills"}
+     ]},
+    {"addr": 308, "addr_hex": "0x134", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "chromaKey", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Chroma key color"}
+     ]},
+    {"addr": 320, "addr_hex": "0x140", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "stipple", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "Stipple pattern"}
+     ]},
+    {"addr": 324, "addr_hex": "0x144", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "color0", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "Constant color 0"}
+     ]},
+    {"addr": 328, "addr_hex": "0x148", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "color1", "hi": 31, "lo": 0, "access": "RW", "reset": 0, "doc": "Constant color 1"}
+     ]},
+    {"addr": 332, "addr_hex": "0x14c", "name": "statsPixelsIn",
+     "fields": [
+      {"name": "statsPixelsIn", "hi": 23, "lo": 0, "access": "RO", "reset": 0, "doc": "Pixels entering pipeline"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 336, "addr_hex": "0x150", "name": "statsChromaFail",
+     "fields": [
+      {"name": "statsChromaFail", "hi": 23, "lo": 0, "access": "RO", "reset": 0, "doc": "Pixels failed chroma key test"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 340, "addr_hex": "0x154", "name": "statsZFuncFail",
+     "fields": [
+      {"name": "statsZFuncFail", "hi": 23, "lo": 0, "access": "RO", "reset": 0, "doc": "Pixels failed Z test"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 344, "addr_hex": "0x158", "name": "statsAFuncFail",
+     "fields": [
+      {"name": "statsAFuncFail", "hi": 23, "lo": 0, "access": "RO", "reset": 0, "doc": "Pixels failed alpha test"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 348, "addr_hex": "0x15c", "name": "statsPixelsOut",
+     "fields": [
+      {"name": "statsPixelsOut", "hi": 23, "lo": 0, "access": "RO", "reset": 0, "doc": "Pixels written to framebuffer"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 352, "addr_hex": "0x160", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 0 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 0 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 1 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 1 value"}
+     ]},
+    {"addr": 356, "addr_hex": "0x164", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 2 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 2 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 3 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 3 value"}
+     ]},
+    {"addr": 360, "addr_hex": "0x168", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 4 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 4 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 5 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 5 value"}
+     ]},
+    {"addr": 364, "addr_hex": "0x16c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 6 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 6 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 7 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 7 value"}
+     ]},
+    {"addr": 368, "addr_hex": "0x170", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 8 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 8 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 9 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 9 value"}
+     ]},
+    {"addr": 372, "addr_hex": "0x174", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 10 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 10 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 11 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 11 value"}
+     ]},
+    {"addr": 376, "addr_hex": "0x178", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 12 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 12 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 13 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 13 value"}
+     ]},
+    {"addr": 380, "addr_hex": "0x17c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 14 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 14 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 15 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 15 value"}
+     ]},
+    {"addr": 384, "addr_hex": "0x180", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 16 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 16 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 17 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 17 value"}
+     ]},
+    {"addr": 388, "addr_hex": "0x184", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 18 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 18 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 19 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 19 value"}
+     ]},
+    {"addr": 392, "addr_hex": "0x188", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 20 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 20 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 21 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 21 value"}
+     ]},
+    {"addr": 396, "addr_hex": "0x18c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 22 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 22 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 23 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 23 value"}
+     ]},
+    {"addr": 400, "addr_hex": "0x190", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 24 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 24 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 25 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 25 value"}
+     ]},
+    {"addr": 404, "addr_hex": "0x194", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 26 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 26 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 27 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 27 value"}
+     ]},
+    {"addr": 408, "addr_hex": "0x198", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 28 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 28 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 29 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 29 value"}
+     ]},
+    {"addr": 412, "addr_hex": "0x19c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 30 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 30 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 31 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 31 value"}
+     ]},
+    {"addr": 416, "addr_hex": "0x1a0", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 32 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 32 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 33 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 33 value"}
+     ]},
+    {"addr": 420, "addr_hex": "0x1a4", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 34 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 34 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 35 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 35 value"}
+     ]},
+    {"addr": 424, "addr_hex": "0x1a8", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 36 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 36 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 37 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 37 value"}
+     ]},
+    {"addr": 428, "addr_hex": "0x1ac", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 38 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 38 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 39 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 39 value"}
+     ]},
+    {"addr": 432, "addr_hex": "0x1b0", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 40 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 40 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 41 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 41 value"}
+     ]},
+    {"addr": 436, "addr_hex": "0x1b4", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 42 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 42 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 43 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 43 value"}
+     ]},
+    {"addr": 440, "addr_hex": "0x1b8", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 44 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 44 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 45 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 45 value"}
+     ]},
+    {"addr": 444, "addr_hex": "0x1bc", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 46 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 46 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 47 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 47 value"}
+     ]},
+    {"addr": 448, "addr_hex": "0x1c0", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 48 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 48 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 49 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 49 value"}
+     ]},
+    {"addr": 452, "addr_hex": "0x1c4", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 50 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 50 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 51 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 51 value"}
+     ]},
+    {"addr": 456, "addr_hex": "0x1c8", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 52 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 52 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 53 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 53 value"}
+     ]},
+    {"addr": 460, "addr_hex": "0x1cc", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 54 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 54 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 55 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 55 value"}
+     ]},
+    {"addr": 464, "addr_hex": "0x1d0", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 56 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 56 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 57 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 57 value"}
+     ]},
+    {"addr": 468, "addr_hex": "0x1d4", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 58 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 58 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 59 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 59 value"}
+     ]},
+    {"addr": 472, "addr_hex": "0x1d8", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 60 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 60 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 61 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 61 value"}
+     ]},
+    {"addr": 476, "addr_hex": "0x1dc", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "entry0Dfog", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Fog entry 62 delta"},
+      {"name": "entry0Fog", "hi": 15, "lo": 8, "access": "WO", "reset": 0, "doc": "Fog entry 62 value"},
+      {"name": "entry1Dfog", "hi": 23, "lo": 16, "access": "WO", "reset": 0, "doc": "Fog entry 63 delta"},
+      {"name": "entry1Fog", "hi": 31, "lo": 24, "access": "WO", "reset": 0, "doc": "Fog entry 63 value"}
+     ]},
+    {"addr": 512, "addr_hex": "0x200", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fbiInit4_pciReadWaitStates", "hi": 0, "lo": 0, "access": "RW", "reset": 0, "doc": "PCI read wait states: 0=1 wait state, 1=2 wait states"},
+      {"name": "--", "hi": 31, "lo": 1, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 520, "addr_hex": "0x208", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "backPorch", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Display back porch timing"}
+     ]},
+    {"addr": 524, "addr_hex": "0x20c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "hDisp", "hi": 11, "lo": 0, "access": "WO", "reset": 0, "doc": "Horizontal display width - 1"},
+      {"name": "--", "hi": 15, "lo": 12, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "vDisp", "hi": 27, "lo": 16, "access": "WO", "reset": 0, "doc": "Vertical display height"},
+      {"name": "--", "hi": 31, "lo": 28, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 528, "addr_hex": "0x210", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fbiInit0_vgaPassthrough", "hi": 0, "lo": 0, "access": "RW", "reset": 0, "doc": "VGA passthrough: 0=VGA blocked, 1=VGA passed"},
+      {"name": "fbiInit0_graphicsReset", "hi": 1, "lo": 1, "access": "RW", "reset": 0, "doc": "Graphics reset"},
+      {"name": "--", "hi": 31, "lo": 2, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 532, "addr_hex": "0x214", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "--", "hi": 0, "lo": 0, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "fbiInit1_pciWriteWaitStates", "hi": 1, "lo": 1, "access": "RW", "reset": 0, "doc": "PCI write wait states: 0=fast, 1=slow"},
+      {"name": "fbiInit1_multiSst", "hi": 2, "lo": 2, "access": "RW", "reset": 0, "doc": "Multi-SST (SLI) mode [V1]"},
+      {"name": "--", "hi": 3, "lo": 3, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "fbiInit1_videoTilesX", "hi": 7, "lo": 4, "access": "RW", "reset": 10, "doc": "Video tiles in X / 2 (stride = val * 64 pixels)"},
+      {"name": "fbiInit1_videoReset", "hi": 8, "lo": 8, "access": "RW", "reset": 0, "doc": "Video timing reset"},
+      {"name": "--", "hi": 31, "lo": 9, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 536, "addr_hex": "0x218", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "--", "hi": 8, "lo": 0, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "fbiInit2_swapAlgorithm", "hi": 10, "lo": 9, "access": "RW", "reset": 0, "doc": "Swap algorithm: 0=DAC vsync, 1=DAC data, 2=PCI FIFO stall, 3=SLI sync"},
+      {"name": "fbiInit2_bufferOffset", "hi": 19, "lo": 11, "access": "RW", "reset": 0, "doc": "Buffer offset in 4KB units"},
+      {"name": "--", "hi": 31, "lo": 20, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 540, "addr_hex": "0x21c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fbiInit3_remapEnable", "hi": 0, "lo": 0, "access": "RW", "reset": 0, "doc": "Enable register address remapping"},
+      {"name": "--", "hi": 21, "lo": 1, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "fbiInit3_yOriginSwap", "hi": 31, "lo": 22, "access": "RW", "reset": 0, "doc": "Y origin swap subtraction value"}
+     ]},
+    {"addr": 544, "addr_hex": "0x220", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "hSyncOn", "hi": 7, "lo": 0, "access": "WO", "reset": 0, "doc": "Horizontal sync start"},
+      {"name": "--", "hi": 15, "lo": 8, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "hSyncOff", "hi": 25, "lo": 16, "access": "WO", "reset": 0, "doc": "Horizontal sync end"},
+      {"name": "--", "hi": 31, "lo": 26, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 548, "addr_hex": "0x224", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "vSyncOn", "hi": 15, "lo": 0, "access": "WO", "reset": 0, "doc": "Vertical sync start (lines)"},
+      {"name": "vSyncOff", "hi": 31, "lo": 16, "access": "WO", "reset": 0, "doc": "Vertical sync end (lines)"}
+     ]},
+    {"addr": 552, "addr_hex": "0x228", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "clutData", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Gamma CLUT entry write"}
+     ]},
+    {"addr": 556, "addr_hex": "0x22c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "dacData", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "DAC register data"}
+     ]},
+    {"addr": 560, "addr_hex": "0x230", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "maxRgbDelta", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Max RGB difference for video filtering"}
+     ]},
+    {"addr": 580, "addr_hex": "0x244", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "--", "hi": 13, "lo": 0, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "fbiInit5_multiCvg", "hi": 14, "lo": 14, "access": "RW", "reset": 0, "doc": "Multi-chip coverage (SLI for V2)"},
+      {"name": "--", "hi": 31, "lo": 15, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 584, "addr_hex": "0x248", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "--", "hi": 29, "lo": 0, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "fbiInit6_blockWidthExtend", "hi": 30, "lo": 30, "access": "RW", "reset": 0, "doc": "Extends block width calculation"},
+      {"name": "--", "hi": 31, "lo": 31, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 588, "addr_hex": "0x24c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "--", "hi": 7, "lo": 0, "access": "NA", "reset": 0, "doc": "Reserved"},
+      {"name": "fbiInit7_cmdFifoEnable", "hi": 8, "lo": 8, "access": "RW", "reset": 0, "doc": "Enable command FIFO mode [V2+]"},
+      {"name": "--", "hi": 31, "lo": 9, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 768, "addr_hex": "0x300", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "textureMode", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Texture mode"}
+     ]},
+    {"addr": 772, "addr_hex": "0x304", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "tLOD", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "LOD configuration"}
+     ]},
+    {"addr": 776, "addr_hex": "0x308", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "tDetail", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "Detail texture params"}
+     ]},
+    {"addr": 780, "addr_hex": "0x30c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "texBaseAddr", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Texture base address"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 784, "addr_hex": "0x310", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "texBaseAddr1", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Texture base address for LOD 1"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 788, "addr_hex": "0x314", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "texBaseAddr2", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Texture base address for LOD 2"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 792, "addr_hex": "0x318", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "texBaseAddr38", "hi": 23, "lo": 0, "access": "WO", "reset": 0, "doc": "Texture base address for LOD 3 through 8"},
+      {"name": "--", "hi": 31, "lo": 24, "access": "NA", "reset": 0, "doc": "reserved"}
+     ]},
+    {"addr": 796, "addr_hex": "0x31c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "trexInit0", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "TMU init 0"}
+     ]},
+    {"addr": 800, "addr_hex": "0x320", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "trexInit1", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "TMU init 1"}
+     ]},
+    {"addr": 804, "addr_hex": "0x324", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Y0"}
+     ]},
+    {"addr": 808, "addr_hex": "0x328", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Y1"}
+     ]},
+    {"addr": 812, "addr_hex": "0x32c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Y2"}
+     ]},
+    {"addr": 816, "addr_hex": "0x330", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Y3"}
+     ]},
+    {"addr": 820, "addr_hex": "0x334", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 I0"}
+     ]},
+    {"addr": 824, "addr_hex": "0x338", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 I1"}
+     ]},
+    {"addr": 828, "addr_hex": "0x33c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 I2"}
+     ]},
+    {"addr": 832, "addr_hex": "0x340", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 I3"}
+     ]},
+    {"addr": 836, "addr_hex": "0x344", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Q0"}
+     ]},
+    {"addr": 840, "addr_hex": "0x348", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Q1"}
+     ]},
+    {"addr": 844, "addr_hex": "0x34c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Q2"}
+     ]},
+    {"addr": 848, "addr_hex": "0x350", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 0 Q3"}
+     ]},
+    {"addr": 852, "addr_hex": "0x354", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Y0"}
+     ]},
+    {"addr": 856, "addr_hex": "0x358", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Y1"}
+     ]},
+    {"addr": 860, "addr_hex": "0x35c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Y2"}
+     ]},
+    {"addr": 864, "addr_hex": "0x360", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Y3"}
+     ]},
+    {"addr": 868, "addr_hex": "0x364", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 I0"}
+     ]},
+    {"addr": 872, "addr_hex": "0x368", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 I1"}
+     ]},
+    {"addr": 876, "addr_hex": "0x36c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 I2"}
+     ]},
+    {"addr": 880, "addr_hex": "0x370", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 I3"}
+     ]},
+    {"addr": 884, "addr_hex": "0x374", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Q0"}
+     ]},
+    {"addr": 888, "addr_hex": "0x378", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Q1"}
+     ]},
+    {"addr": 892, "addr_hex": "0x37c", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Q2"}
+     ]},
+    {"addr": 896, "addr_hex": "0x380", "name": "newRegAtWithCategory",
+     "fields": [
+      {"name": "fifoRegBits", "hi": 31, "lo": 0, "access": "WO", "reset": 0, "doc": "NCC table 1 Q3"}
+     ]}
+  ],
+  "categories": [
+    {"addr": 8, "addr_hex": "0x008", "fifoBypass": false, "syncRequired": false},
+    {"addr": 12, "addr_hex": "0x00c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 16, "addr_hex": "0x010", "fifoBypass": false, "syncRequired": false},
+    {"addr": 20, "addr_hex": "0x014", "fifoBypass": false, "syncRequired": false},
+    {"addr": 24, "addr_hex": "0x018", "fifoBypass": false, "syncRequired": false},
+    {"addr": 28, "addr_hex": "0x01c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 32, "addr_hex": "0x020", "fifoBypass": false, "syncRequired": false},
+    {"addr": 36, "addr_hex": "0x024", "fifoBypass": false, "syncRequired": false},
+    {"addr": 40, "addr_hex": "0x028", "fifoBypass": false, "syncRequired": false},
+    {"addr": 44, "addr_hex": "0x02c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 48, "addr_hex": "0x030", "fifoBypass": false, "syncRequired": false},
+    {"addr": 52, "addr_hex": "0x034", "fifoBypass": false, "syncRequired": false},
+    {"addr": 56, "addr_hex": "0x038", "fifoBypass": false, "syncRequired": false},
+    {"addr": 60, "addr_hex": "0x03c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 64, "addr_hex": "0x040", "fifoBypass": false, "syncRequired": false},
+    {"addr": 68, "addr_hex": "0x044", "fifoBypass": false, "syncRequired": false},
+    {"addr": 72, "addr_hex": "0x048", "fifoBypass": false, "syncRequired": false},
+    {"addr": 76, "addr_hex": "0x04c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 80, "addr_hex": "0x050", "fifoBypass": false, "syncRequired": false},
+    {"addr": 84, "addr_hex": "0x054", "fifoBypass": false, "syncRequired": false},
+    {"addr": 88, "addr_hex": "0x058", "fifoBypass": false, "syncRequired": false},
+    {"addr": 92, "addr_hex": "0x05c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 96, "addr_hex": "0x060", "fifoBypass": false, "syncRequired": false},
+    {"addr": 100, "addr_hex": "0x064", "fifoBypass": false, "syncRequired": false},
+    {"addr": 104, "addr_hex": "0x068", "fifoBypass": false, "syncRequired": false},
+    {"addr": 108, "addr_hex": "0x06c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 112, "addr_hex": "0x070", "fifoBypass": false, "syncRequired": false},
+    {"addr": 116, "addr_hex": "0x074", "fifoBypass": false, "syncRequired": false},
+    {"addr": 120, "addr_hex": "0x078", "fifoBypass": false, "syncRequired": false},
+    {"addr": 124, "addr_hex": "0x07c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 128, "addr_hex": "0x080", "fifoBypass": false, "syncRequired": false},
+    {"addr": 136, "addr_hex": "0x088", "fifoBypass": false, "syncRequired": false},
+    {"addr": 140, "addr_hex": "0x08c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 144, "addr_hex": "0x090", "fifoBypass": false, "syncRequired": false},
+    {"addr": 148, "addr_hex": "0x094", "fifoBypass": false, "syncRequired": false},
+    {"addr": 152, "addr_hex": "0x098", "fifoBypass": false, "syncRequired": false},
+    {"addr": 156, "addr_hex": "0x09c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 160, "addr_hex": "0x0a0", "fifoBypass": false, "syncRequired": false},
+    {"addr": 164, "addr_hex": "0x0a4", "fifoBypass": false, "syncRequired": false},
+    {"addr": 168, "addr_hex": "0x0a8", "fifoBypass": false, "syncRequired": false},
+    {"addr": 172, "addr_hex": "0x0ac", "fifoBypass": false, "syncRequired": false},
+    {"addr": 176, "addr_hex": "0x0b0", "fifoBypass": false, "syncRequired": false},
+    {"addr": 180, "addr_hex": "0x0b4", "fifoBypass": false, "syncRequired": false},
+    {"addr": 184, "addr_hex": "0x0b8", "fifoBypass": false, "syncRequired": false},
+    {"addr": 188, "addr_hex": "0x0bc", "fifoBypass": false, "syncRequired": false},
+    {"addr": 192, "addr_hex": "0x0c0", "fifoBypass": false, "syncRequired": false},
+    {"addr": 196, "addr_hex": "0x0c4", "fifoBypass": false, "syncRequired": false},
+    {"addr": 200, "addr_hex": "0x0c8", "fifoBypass": false, "syncRequired": false},
+    {"addr": 204, "addr_hex": "0x0cc", "fifoBypass": false, "syncRequired": false},
+    {"addr": 208, "addr_hex": "0x0d0", "fifoBypass": false, "syncRequired": false},
+    {"addr": 212, "addr_hex": "0x0d4", "fifoBypass": false, "syncRequired": false},
+    {"addr": 216, "addr_hex": "0x0d8", "fifoBypass": false, "syncRequired": false},
+    {"addr": 220, "addr_hex": "0x0dc", "fifoBypass": false, "syncRequired": false},
+    {"addr": 224, "addr_hex": "0x0e0", "fifoBypass": false, "syncRequired": false},
+    {"addr": 228, "addr_hex": "0x0e4", "fifoBypass": false, "syncRequired": false},
+    {"addr": 232, "addr_hex": "0x0e8", "fifoBypass": false, "syncRequired": false},
+    {"addr": 236, "addr_hex": "0x0ec", "fifoBypass": false, "syncRequired": false},
+    {"addr": 240, "addr_hex": "0x0f0", "fifoBypass": false, "syncRequired": false},
+    {"addr": 244, "addr_hex": "0x0f4", "fifoBypass": false, "syncRequired": false},
+    {"addr": 248, "addr_hex": "0x0f8", "fifoBypass": false, "syncRequired": false},
+    {"addr": 252, "addr_hex": "0x0fc", "fifoBypass": false, "syncRequired": false},
+    {"addr": 256, "addr_hex": "0x100", "fifoBypass": false, "syncRequired": false},
+    {"addr": 260, "addr_hex": "0x104", "fifoBypass": false, "syncRequired": false},
+    {"addr": 264, "addr_hex": "0x108", "fifoBypass": false, "syncRequired": false},
+    {"addr": 268, "addr_hex": "0x10c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 272, "addr_hex": "0x110", "fifoBypass": false, "syncRequired": true},
+    {"addr": 276, "addr_hex": "0x114", "fifoBypass": false, "syncRequired": true},
+    {"addr": 280, "addr_hex": "0x118", "fifoBypass": false, "syncRequired": true},
+    {"addr": 284, "addr_hex": "0x11c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 288, "addr_hex": "0x120", "fifoBypass": false, "syncRequired": true},
+    {"addr": 292, "addr_hex": "0x124", "fifoBypass": false, "syncRequired": true},
+    {"addr": 296, "addr_hex": "0x128", "fifoBypass": false, "syncRequired": true},
+    {"addr": 300, "addr_hex": "0x12c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 304, "addr_hex": "0x130", "fifoBypass": false, "syncRequired": true},
+    {"addr": 308, "addr_hex": "0x134", "fifoBypass": false, "syncRequired": true},
+    {"addr": 320, "addr_hex": "0x140", "fifoBypass": false, "syncRequired": true},
+    {"addr": 324, "addr_hex": "0x144", "fifoBypass": false, "syncRequired": true},
+    {"addr": 328, "addr_hex": "0x148", "fifoBypass": false, "syncRequired": true},
+    {"addr": 352, "addr_hex": "0x160", "fifoBypass": false, "syncRequired": true},
+    {"addr": 356, "addr_hex": "0x164", "fifoBypass": false, "syncRequired": true},
+    {"addr": 360, "addr_hex": "0x168", "fifoBypass": false, "syncRequired": true},
+    {"addr": 364, "addr_hex": "0x16c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 368, "addr_hex": "0x170", "fifoBypass": false, "syncRequired": true},
+    {"addr": 372, "addr_hex": "0x174", "fifoBypass": false, "syncRequired": true},
+    {"addr": 376, "addr_hex": "0x178", "fifoBypass": false, "syncRequired": true},
+    {"addr": 380, "addr_hex": "0x17c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 384, "addr_hex": "0x180", "fifoBypass": false, "syncRequired": true},
+    {"addr": 388, "addr_hex": "0x184", "fifoBypass": false, "syncRequired": true},
+    {"addr": 392, "addr_hex": "0x188", "fifoBypass": false, "syncRequired": true},
+    {"addr": 396, "addr_hex": "0x18c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 400, "addr_hex": "0x190", "fifoBypass": false, "syncRequired": true},
+    {"addr": 404, "addr_hex": "0x194", "fifoBypass": false, "syncRequired": true},
+    {"addr": 408, "addr_hex": "0x198", "fifoBypass": false, "syncRequired": true},
+    {"addr": 412, "addr_hex": "0x19c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 416, "addr_hex": "0x1a0", "fifoBypass": false, "syncRequired": true},
+    {"addr": 420, "addr_hex": "0x1a4", "fifoBypass": false, "syncRequired": true},
+    {"addr": 424, "addr_hex": "0x1a8", "fifoBypass": false, "syncRequired": true},
+    {"addr": 428, "addr_hex": "0x1ac", "fifoBypass": false, "syncRequired": true},
+    {"addr": 432, "addr_hex": "0x1b0", "fifoBypass": false, "syncRequired": true},
+    {"addr": 436, "addr_hex": "0x1b4", "fifoBypass": false, "syncRequired": true},
+    {"addr": 440, "addr_hex": "0x1b8", "fifoBypass": false, "syncRequired": true},
+    {"addr": 444, "addr_hex": "0x1bc", "fifoBypass": false, "syncRequired": true},
+    {"addr": 448, "addr_hex": "0x1c0", "fifoBypass": false, "syncRequired": true},
+    {"addr": 452, "addr_hex": "0x1c4", "fifoBypass": false, "syncRequired": true},
+    {"addr": 456, "addr_hex": "0x1c8", "fifoBypass": false, "syncRequired": true},
+    {"addr": 460, "addr_hex": "0x1cc", "fifoBypass": false, "syncRequired": true},
+    {"addr": 464, "addr_hex": "0x1d0", "fifoBypass": false, "syncRequired": true},
+    {"addr": 468, "addr_hex": "0x1d4", "fifoBypass": false, "syncRequired": true},
+    {"addr": 472, "addr_hex": "0x1d8", "fifoBypass": false, "syncRequired": true},
+    {"addr": 476, "addr_hex": "0x1dc", "fifoBypass": false, "syncRequired": true},
+    {"addr": 512, "addr_hex": "0x200", "fifoBypass": true, "syncRequired": false},
+    {"addr": 520, "addr_hex": "0x208", "fifoBypass": true, "syncRequired": false},
+    {"addr": 524, "addr_hex": "0x20c", "fifoBypass": true, "syncRequired": false},
+    {"addr": 528, "addr_hex": "0x210", "fifoBypass": true, "syncRequired": false},
+    {"addr": 532, "addr_hex": "0x214", "fifoBypass": true, "syncRequired": false},
+    {"addr": 536, "addr_hex": "0x218", "fifoBypass": true, "syncRequired": false},
+    {"addr": 540, "addr_hex": "0x21c", "fifoBypass": true, "syncRequired": false},
+    {"addr": 544, "addr_hex": "0x220", "fifoBypass": true, "syncRequired": false},
+    {"addr": 548, "addr_hex": "0x224", "fifoBypass": true, "syncRequired": false},
+    {"addr": 552, "addr_hex": "0x228", "fifoBypass": true, "syncRequired": false},
+    {"addr": 556, "addr_hex": "0x22c", "fifoBypass": true, "syncRequired": false},
+    {"addr": 560, "addr_hex": "0x230", "fifoBypass": true, "syncRequired": false},
+    {"addr": 580, "addr_hex": "0x244", "fifoBypass": true, "syncRequired": false},
+    {"addr": 584, "addr_hex": "0x248", "fifoBypass": true, "syncRequired": false},
+    {"addr": 588, "addr_hex": "0x24c", "fifoBypass": true, "syncRequired": false},
+    {"addr": 768, "addr_hex": "0x300", "fifoBypass": false, "syncRequired": false},
+    {"addr": 772, "addr_hex": "0x304", "fifoBypass": false, "syncRequired": false},
+    {"addr": 776, "addr_hex": "0x308", "fifoBypass": false, "syncRequired": false},
+    {"addr": 780, "addr_hex": "0x30c", "fifoBypass": false, "syncRequired": false},
+    {"addr": 784, "addr_hex": "0x310", "fifoBypass": false, "syncRequired": false},
+    {"addr": 788, "addr_hex": "0x314", "fifoBypass": false, "syncRequired": false},
+    {"addr": 792, "addr_hex": "0x318", "fifoBypass": false, "syncRequired": false},
+    {"addr": 796, "addr_hex": "0x31c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 800, "addr_hex": "0x320", "fifoBypass": false, "syncRequired": true},
+    {"addr": 804, "addr_hex": "0x324", "fifoBypass": false, "syncRequired": true},
+    {"addr": 808, "addr_hex": "0x328", "fifoBypass": false, "syncRequired": true},
+    {"addr": 812, "addr_hex": "0x32c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 816, "addr_hex": "0x330", "fifoBypass": false, "syncRequired": true},
+    {"addr": 820, "addr_hex": "0x334", "fifoBypass": false, "syncRequired": true},
+    {"addr": 824, "addr_hex": "0x338", "fifoBypass": false, "syncRequired": true},
+    {"addr": 828, "addr_hex": "0x33c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 832, "addr_hex": "0x340", "fifoBypass": false, "syncRequired": true},
+    {"addr": 836, "addr_hex": "0x344", "fifoBypass": false, "syncRequired": true},
+    {"addr": 840, "addr_hex": "0x348", "fifoBypass": false, "syncRequired": true},
+    {"addr": 844, "addr_hex": "0x34c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 848, "addr_hex": "0x350", "fifoBypass": false, "syncRequired": true},
+    {"addr": 852, "addr_hex": "0x354", "fifoBypass": false, "syncRequired": true},
+    {"addr": 856, "addr_hex": "0x358", "fifoBypass": false, "syncRequired": true},
+    {"addr": 860, "addr_hex": "0x35c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 864, "addr_hex": "0x360", "fifoBypass": false, "syncRequired": true},
+    {"addr": 868, "addr_hex": "0x364", "fifoBypass": false, "syncRequired": true},
+    {"addr": 872, "addr_hex": "0x368", "fifoBypass": false, "syncRequired": true},
+    {"addr": 876, "addr_hex": "0x36c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 880, "addr_hex": "0x370", "fifoBypass": false, "syncRequired": true},
+    {"addr": 884, "addr_hex": "0x374", "fifoBypass": false, "syncRequired": true},
+    {"addr": 888, "addr_hex": "0x378", "fifoBypass": false, "syncRequired": true},
+    {"addr": 892, "addr_hex": "0x37c", "fifoBypass": false, "syncRequired": true},
+    {"addr": 896, "addr_hex": "0x380", "fifoBypass": false, "syncRequired": true}
+  ],
+  "floatAliases": [
+    {"addr": 136, "addr_hex": "0x088", "targetAddr": 8, "targetAddr_hex": "0x008", "intBits": 12, "fracBits": 4, "shift": 26},
+    {"addr": 140, "addr_hex": "0x08c", "targetAddr": 12, "targetAddr_hex": "0x00c", "intBits": 12, "fracBits": 4, "shift": 26},
+    {"addr": 144, "addr_hex": "0x090", "targetAddr": 16, "targetAddr_hex": "0x010", "intBits": 12, "fracBits": 4, "shift": 26},
+    {"addr": 148, "addr_hex": "0x094", "targetAddr": 20, "targetAddr_hex": "0x014", "intBits": 12, "fracBits": 4, "shift": 26},
+    {"addr": 152, "addr_hex": "0x098", "targetAddr": 24, "targetAddr_hex": "0x018", "intBits": 12, "fracBits": 4, "shift": 26},
+    {"addr": 156, "addr_hex": "0x09c", "targetAddr": 28, "targetAddr_hex": "0x01c", "intBits": 12, "fracBits": 4, "shift": 26},
+    {"addr": 160, "addr_hex": "0x0a0", "targetAddr": 32, "targetAddr_hex": "0x020", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 164, "addr_hex": "0x0a4", "targetAddr": 36, "targetAddr_hex": "0x024", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 168, "addr_hex": "0x0a8", "targetAddr": 40, "targetAddr_hex": "0x028", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 172, "addr_hex": "0x0ac", "targetAddr": 44, "targetAddr_hex": "0x02c", "intBits": 20, "fracBits": 12, "shift": 18},
+    {"addr": 176, "addr_hex": "0x0b0", "targetAddr": 48, "targetAddr_hex": "0x030", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 180, "addr_hex": "0x0b4", "targetAddr": 52, "targetAddr_hex": "0x034", "intBits": 14, "fracBits": 18, "shift": 12},
+    {"addr": 184, "addr_hex": "0x0b8", "targetAddr": 56, "targetAddr_hex": "0x038", "intBits": 14, "fracBits": 18, "shift": 12},
+    {"addr": 188, "addr_hex": "0x0bc", "targetAddr": 60, "targetAddr_hex": "0x03c", "intBits": 2, "fracBits": 30, "shift": 0},
+    {"addr": 192, "addr_hex": "0x0c0", "targetAddr": 64, "targetAddr_hex": "0x040", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 196, "addr_hex": "0x0c4", "targetAddr": 68, "targetAddr_hex": "0x044", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 200, "addr_hex": "0x0c8", "targetAddr": 72, "targetAddr_hex": "0x048", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 204, "addr_hex": "0x0cc", "targetAddr": 76, "targetAddr_hex": "0x04c", "intBits": 20, "fracBits": 12, "shift": 18},
+    {"addr": 208, "addr_hex": "0x0d0", "targetAddr": 80, "targetAddr_hex": "0x050", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 212, "addr_hex": "0x0d4", "targetAddr": 84, "targetAddr_hex": "0x054", "intBits": 14, "fracBits": 18, "shift": 12},
+    {"addr": 216, "addr_hex": "0x0d8", "targetAddr": 88, "targetAddr_hex": "0x058", "intBits": 14, "fracBits": 18, "shift": 12},
+    {"addr": 220, "addr_hex": "0x0dc", "targetAddr": 92, "targetAddr_hex": "0x05c", "intBits": 2, "fracBits": 30, "shift": 0},
+    {"addr": 224, "addr_hex": "0x0e0", "targetAddr": 96, "targetAddr_hex": "0x060", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 228, "addr_hex": "0x0e4", "targetAddr": 100, "targetAddr_hex": "0x064", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 232, "addr_hex": "0x0e8", "targetAddr": 104, "targetAddr_hex": "0x068", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 236, "addr_hex": "0x0ec", "targetAddr": 108, "targetAddr_hex": "0x06c", "intBits": 20, "fracBits": 12, "shift": 18},
+    {"addr": 240, "addr_hex": "0x0f0", "targetAddr": 112, "targetAddr_hex": "0x070", "intBits": 12, "fracBits": 12, "shift": 18},
+    {"addr": 244, "addr_hex": "0x0f4", "targetAddr": 116, "targetAddr_hex": "0x074", "intBits": 14, "fracBits": 18, "shift": 12},
+    {"addr": 248, "addr_hex": "0x0f8", "targetAddr": 120, "targetAddr_hex": "0x078", "intBits": 14, "fracBits": 18, "shift": 12},
+    {"addr": 252, "addr_hex": "0x0fc", "targetAddr": 124, "targetAddr_hex": "0x07c", "intBits": 2, "fracBits": 30, "shift": 0}
+  ],
+  "commandAddresses": [128, 256, 288, 292, 296]
+}

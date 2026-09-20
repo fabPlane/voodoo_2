@@ -44,6 +44,9 @@ import voodoo.texture.{Tmu, TmuNoTextureCache, TmuTexelDecoder, TmuTextureCache}
   * Options:
   *   --list          print the registry (buildable entries and stubs) and exit
   *   --all           generate every buildable entry into `outDir`
+  *   --dump-regmeta  elaborate RegisterBank(c) and write its register/decode table as JSON
+  *                   (default `rtl/diff/RegisterBank_regmeta.json`) — the ground truth that the
+  *                   Amaranth `avoodoo.frontend.regdef` table is cross-checked against
   *   --async-reset   use ASYNC/HIGH reset (upstream `GenSupport.simVerilog` default) instead of
   *                   the SYNC/HIGH default used here
   *
@@ -290,11 +293,21 @@ object GenOne {
     val asyncReset = args.contains("--async-reset")
     val positional = args.filterNot(_.startsWith("--"))
 
+    if (args.contains("--dump-regmeta")) {
+      val out = positional.headOption.getOrElse("rtl/diff/RegisterBank_regmeta.json")
+      RegisterBankMeta.dumpJson(c, out)
+      println(s"[GenOne] wrote $out")
+      return
+    }
+
     if (args.contains("--list") || (positional.isEmpty && !args.contains("--all"))) {
       printList()
       if (positional.isEmpty && !args.contains("--all") && !args.contains("--list")) {
         println()
-        println("usage: GenOne <ModuleName> [outDir]   (or --all [outDir], --list)")
+        println(
+          "usage: GenOne <ModuleName> [outDir]   " +
+            "(or --all [outDir], --list, --dump-regmeta [outFile])"
+        )
         sys.exit(1)
       }
       return
@@ -333,10 +346,25 @@ object GenOne {
   * real address decode table rather than a toy one.
   */
 object RegisterBankMeta {
+
+  /** One `busif.slices` field, flattened to plain Scala values. */
+  case class FieldDump(
+      name: String,
+      hi: Int,
+      lo: Int,
+      access: String,
+      resetValue: BigInt,
+      doc: String
+  )
+
+  /** One `busif.slices` entry (a register), flattened to plain Scala values. */
+  case class RegDump(addr: BigInt, name: String, fields: Seq[FieldDump])
+
   case class Meta(
       categories: Map[BigInt, RegisterCategory],
       floatAliases: Map[BigInt, PciFifo.FloatAliasConfig],
-      commandAddresses: Seq[BigInt]
+      commandAddresses: Seq[BigInt],
+      registers: Seq[RegDump]
   )
 
   private var cached: Option[Meta] = None
@@ -352,11 +380,103 @@ object RegisterBankMeta {
       captured = Meta(
         categories = rb.busif.getCategories,
         floatAliases = rb.busif.getFloatAliases,
-        commandAddresses = rb.busif.getCommandStreamReady.keys.toSeq.sorted
+        commandAddresses = rb.busif.getCommandStreamReady.keys.toSeq.sorted,
+        registers = rb.busif.slices.toSeq
+          .map { slice =>
+            RegDump(
+              addr = slice.getAddr(),
+              name = slice.getName(),
+              fields = slice.getFields().map { f =>
+                FieldDump(
+                  name = f.getName(),
+                  hi = f.getSection().max,
+                  lo = f.getSection().min,
+                  access = f.getAccessType().toString,
+                  resetValue = f.getResetValue(),
+                  doc = f.getDoc()
+                )
+              }
+            )
+          }
+          .sortBy(_.addr)
       )
       rb
     }
     cached = Some(captured)
     captured
+  }
+
+  private def esc(s: String): String =
+    s.flatMap {
+      case '"'            => "\\\""
+      case '\\'           => "\\\\"
+      case '\n'           => "\\n"
+      case ch if ch < ' ' => f"\\u${ch.toInt}%04x"
+      case ch             => ch.toString
+    }
+
+  private def hex(a: BigInt): String = f"0x$a%03x"
+
+  /** Write the elaborated register/decode table as JSON.
+    *
+    * This is the ground truth for `amaranth/avoodoo/frontend/regdef.py`; the committed copy
+    * lives at `amaranth/tests/data/registerbank_regmeta.json` so `pytest` needs no scala-cli.
+    * Note the elaboration runs WITHOUT `GenerationFlags.simulation`, so the sim-only debug
+    * registers (0x240 debugBusy, 0x250 writePathDebug) are absent here by construction.
+    */
+  def dumpJson(c: Config, path: String): Unit = {
+    val m = get(c)
+    val sb = new StringBuilder
+    sb ++= "{\n"
+    sb ++= "  \"source\": \"fpga/src/voodoo/diff/GenOne.scala --dump-regmeta (RegisterBank(Config.voodoo1()))\",\n"
+    sb ++= "  \"simulation\": false,\n"
+    sb ++= "  \"note\": \"register/field 'name' comes from regif's SymbolName macro, i.e. the " +
+      "enclosing Scala val, so helper-built registers all read 'newRegAtWithCategory' / " +
+      "'fifoNoSyncFloatReg'. Logical names live in regdef.py; match on addr + section + " +
+      "access + reset + doc.\",\n"
+
+    sb ++= "  \"registers\": [\n"
+    sb ++= m.registers
+      .map { r =>
+        val fs = r.fields
+          .map { f =>
+            s"""      {"name": "${esc(f.name)}", "hi": ${f.hi}, "lo": ${f.lo}, """ +
+              s""""access": "${esc(f.access)}", "reset": ${f.resetValue}, "doc": "${esc(f.doc)}"}"""
+          }
+          .mkString(",\n")
+        s"""    {"addr": ${r.addr}, "addr_hex": "${hex(r.addr)}", "name": "${esc(r.name)}",\n""" +
+          s"""     "fields": [\n$fs\n     ]}"""
+      }
+      .mkString(",\n")
+    sb ++= "\n  ],\n"
+
+    sb ++= "  \"categories\": [\n"
+    sb ++= m.categories.toSeq
+      .sortBy(_._1)
+      .map { case (a, cat) =>
+        s"""    {"addr": $a, "addr_hex": "${hex(a)}", "fifoBypass": ${cat.fifoBypass}, """ +
+          s""""syncRequired": ${cat.syncRequired}}"""
+      }
+      .mkString(",\n")
+    sb ++= "\n  ],\n"
+
+    sb ++= "  \"floatAliases\": [\n"
+    sb ++= m.floatAliases.toSeq
+      .sortBy(_._1)
+      .map { case (a, cfg) =>
+        s"""    {"addr": $a, "addr_hex": "${hex(a)}", "targetAddr": ${cfg.targetAddr}, """ +
+          s""""targetAddr_hex": "${hex(cfg.targetAddr)}", "intBits": ${cfg.intBits}, """ +
+          s""""fracBits": ${cfg.fracBits}, "shift": ${30 - cfg.fracBits}}"""
+      }
+      .mkString(",\n")
+    sb ++= "\n  ],\n"
+
+    sb ++= "  \"commandAddresses\": ["
+    sb ++= m.commandAddresses.map(_.toString).mkString(", ")
+    sb ++= "]\n}\n"
+
+    val out = Paths.get(path)
+    Option(out.getParent).foreach(Files.createDirectories(_))
+    Files.write(out, sb.toString.getBytes("UTF-8"))
   }
 }
