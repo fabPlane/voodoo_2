@@ -97,19 +97,6 @@ REGISTRY: dict[str, DiffEntry] = {
         factory="avoodoo.lib.afix_ops:AfixOps",
         note="AFix op-by-op reference, 282 ports, Config.voodoo1() formats "
              "(fpga/src/voodoo/diff/AfixOps.scala -> avoodoo/lib/fixed.py)",
-        pending=(
-            "TODO(plan 0.2): the Amaranth mirror `avoodoo/lib/afix_ops.py` does not "
-            "exist yet. `avoodoo/lib/fixed.py` (AFixShape/AFixValue) has landed, so "
-            "the mirror is a transliteration of AfixOps.scala's seven sections onto "
-            "it; it belongs to the fixed-point agent, not to the harness. Once the "
-            "file exists, delete this `pending=` line and `make diff MOD=AfixOps` "
-            "runs: AfixOps is purely combinational, so --valid-density/--ready-density "
-            "are ignored and every input is randomised each cycle. Port names are "
-            "component-level (no io_ prefix): a_vertex -> a_vertex, addSat_texhi -> "
-            "add_sat__texhi is WRONG -- AfixOps has no bundle nesting, so each port is "
-            "a single path segment and the rule gives add_sat_texhi. Check against "
-            "fpga/src/voodoo/diff/portmaps/AfixOps.json before trusting it."
-        ),
     ),
 }
 

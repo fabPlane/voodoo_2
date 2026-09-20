@@ -44,6 +44,7 @@ __all__ = [
     "AFixShape",
     "AFixValue",
     "afix_mux",
+    "sat_unsigned",
     "round_bigint",
     "rounded_bounds",
     "round_shape",
@@ -104,7 +105,17 @@ def round_bigint(value: int, drop: int, rt: RoundType) -> int:
     if rt is RoundType.ROUND_HALF_DOWN:
         # RoundType.ROUNDDOWN: ties toward -inf == ceil(i - 2**(drop-1))
         return round_bigint(value - (1 << (drop - 1)), drop, RoundType.CEIL)
-    raise ValueError(f"unsupported RoundType {rt!r}")
+    if rt is RoundType.FLOOR_TO_ZERO:
+        # RoundType.FLOORTOZERO: truncate -- which is what `scaled` already is
+        return scaled
+    if rt is RoundType.CEIL_TO_INF:
+        # RoundType.CEILTOINF: away from zero
+        return scaled + (1 if dropped_bits else 0) if positive else (
+            scaled - (1 if dropped_bits else 0))
+    raise NotImplementedError(
+        f"{rt} is never reached by the core (§1.2, §4) and AfixOps only reaches it at "
+        f"drop == 0, where every mode is the identity; refusing to guess its semantics"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -542,9 +553,24 @@ class AFixValue(ValueCastable):
             shifted = (self._raw + half) >> drop
         elif rt is RoundType.ROUND_HALF_DOWN:
             shifted = (self._raw + (half - 1)) >> drop
+        elif rt is RoundType.FLOOR_TO_ZERO:
+            # toward zero: floor for non-negatives, floor + 1 where bits drop
+            shifted = self._biased(unit - 1, when_negative=True) >> drop
+        elif rt is RoundType.CEIL_TO_INF:
+            # away from zero: ceil for non-negatives, floor for negatives
+            shifted = self._biased(unit - 1, when_negative=False) >> drop
         else:  # pragma: no cover - guarded by round_bigint above
-            raise ValueError(f"unsupported RoundType {rt!r}")
+            raise NotImplementedError(f"unsupported RoundType {rt!r}")
         return self._with(out, shifted)
+
+    def _biased(self, bias: int, *, when_negative: bool) -> Value:
+        """``raw + bias`` on the negative half only, or on the non-negative half."""
+        if not self._shape.signed:
+            return self._raw if when_negative else self._raw + bias
+        negative = self._raw < 0
+        if when_negative:
+            return Mux(negative, self._raw + bias, self._raw)
+        return Mux(negative, self._raw, self._raw + bias)
 
     def floor(self, exp: int = 0) -> "AFixValue":
         return self._round(RoundType.FLOOR, exp)
@@ -557,6 +583,42 @@ class AFixValue(ValueCastable):
 
     def round_half_down(self, exp: int = 0, align: bool = False) -> "AFixValue":
         return self._round(RoundType.ROUND_HALF_DOWN, exp, align)
+
+    def floor_to_zero(self, exp: int = 0, align: bool = False) -> "AFixValue":
+        return self._round(RoundType.FLOOR_TO_ZERO, exp, align)
+
+    def ceil_to_inf(self, exp: int = 0, align: bool = False) -> "AFixValue":
+        return self._round(RoundType.CEIL_TO_INF, exp, align)
+
+    def round(self, exp: int = 0, align: bool = False) -> "AFixValue":
+        """``.round(exp, align)`` — the *global default* rounding, i.e. FLOOR.
+
+        Nothing in this design overrides ``AFixRounding`` (§1.3), so ``.round``
+        is plain floor, not a half-rounding.  Confirmed against
+        ``AfixOps_spinal.v``, where ``round0_vertex`` is a bare ``>>> 4`` and
+        carries floor's 12-bit bound-derived width rather than ceil's 13.
+        """
+        return self._round(RoundType.FLOOR, exp, align)
+
+    def sat_bits(self, drop_bits: int) -> "AFixValue":
+        """``AFix.sat(m: Int)`` — clamp as if ``m`` MSBs were gone; format kept.
+
+        Spinal hands the raw word to ``SInt.sat``/``UInt.sat`` (which return
+        ``bit_width - m`` bits) and resizes the result back into the unchanged
+        AFix format, so the bounds and the emitted width do not move.
+        """
+        shape = self._shape
+        keep = shape.bit_width - drop_bits
+        if keep < 0:
+            raise ValueError(f"sat({drop_bits}) drops more bits than {shape} has")
+        if shape.signed:
+            lo, hi = -(1 << (keep - 1)), (1 << (keep - 1)) - 1
+        else:
+            lo, hi = 0, (1 << keep) - 1
+        if drop_bits == 0:
+            return AFixValue(shape, self._raw)
+        clamped = Mux(self._raw > hi, hi, Mux(self._raw < lo, lo, self._raw))
+        return AFixValue(shape, _fit(clamped, shape))
 
     # -- saturation (§6.5) -------------------------------------------------
 
@@ -643,10 +705,20 @@ class AFixValue(ValueCastable):
         if not isinstance(other, AFixValue):
             # x := <UInt>/<SInt> is a raw bit copy with no scaling (§5.5).
             return [self._raw.eq(_fit_bits(Value.cast(other), self._shape))]
+        converted = other.converted_to(self._shape, truncated=truncated,
+                                       saturated=saturated, rounding=rounding)
+        return [self._raw.eq(converted.raw)]
 
-        target = self._shape
+    def converted_to(self, target, *, truncated: bool = False, saturated: bool = False,
+                     rounding: RoundType = RoundType.FLOOR) -> "AFixValue":
+        """The value ``:=`` would store in ``target``, as an :class:`AFixValue`.
+
+        Same rules as :meth:`eq` (§5.5); useful when the destination is a port
+        rather than an existing AFix.
+        """
+        target = _as_shape(target)
         tagged = truncated or saturated
-        src = other
+        src = self
         if target.exp > src._shape.exp and not tagged:
             raise ValueError(
                 f"precision would be lost: assigning exp={src._shape.exp} into exp={target.exp} "
@@ -660,13 +732,13 @@ class AFixValue(ValueCastable):
         if saturated:
             src = src.sat(target.max_raw, target.min_raw, target.exp)
         elif truncated:
-            return [self._raw.eq(_fit(src.raw, target))]  # overflow: wrap
+            return AFixValue(target, _fit(src.raw, target))  # overflow: wrap
 
         if not target.covers(src._shape) and not tagged:
             raise ValueError(
                 f"target range {target} does not cover source range {src._shape}"
             )
-        return [self._raw.eq(_convert_exact(src, target))]
+        return AFixValue(target, _convert_exact(src, target))
 
     def __repr__(self) -> str:
         return f"AFixValue({self._shape!r}, {self._raw!r})"
@@ -706,6 +778,20 @@ def _convert_exact(src: AFixValue, target: AFixShape) -> Value:
         raise ValueError(f"cannot convert exp={src.afix_shape.exp} into exp={target.exp} exactly")
     raw = src.raw << shift if shift else src.raw
     return _fit(raw, target)
+
+
+def sat_unsigned(value: Value, drop_bits: int) -> Value:
+    """``UInt.sat(m)``: clamp into ``width - m`` unsigned bits.
+
+    Not an AFix operation — ``RegisterBank:207`` (``io.pciFifoFree.sat(1)``)
+    calls it on a plain ``UInt``.
+    """
+    value = Value.cast(value)
+    width = len(value) - drop_bits
+    if width < 0:
+        raise ValueError(f"sat({drop_bits}) drops more bits than the value has")
+    limit = (1 << width) - 1
+    return Mux(value > limit, limit, value)[:width]
 
 
 def afix_mux(sel, if_true: AFixValue, if_false: AFixValue) -> AFixValue:

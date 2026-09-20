@@ -15,25 +15,12 @@ Three layers:
    including negatives, exact halves, saturation at both bounds, and the
    width traps of §8.
 
-TODO (plan 0.4 / §10.2 note): once ``amaranth/tools/diff/`` and the Spinal-side
-``fpga/src/voodoo/diff/`` micro-modules exist, wire an ``AfixOps`` lockstep
-test in beside this file.  The ports that micro-module should expose, on the
-real core formats of §3, are:
-
-    io_a, io_b                      SQ(16,4) / SQ(34,8) operands (raw bits)
-    io_c                            SQ(24,12) third operand (mixed exp)
-    io_sel                          Bool, for Mux
-    io_add, io_sub, io_mul, io_neg  a+b, a-b, a*b, -a
-    io_ge, io_eq                    a >= b, a === b
-    io_min, io_max                  a.min(b), a.max(b)
-    io_mux                          Mux(sel, -a, a)
-    io_floor, io_ceil, io_roundHalfDown        a.floor(0) / .ceil(0) / .roundHalfDown(0)
-    io_fixVertex, io_fixCoeff, io_fixColorMul  a.fixTo(SQ(16,4)/SQ(34,8)/QFormat(19,8,true))
-    io_sat0, io_sat12               c.sat(255, 0, 0 exp) / c.sat(255, 0, 12 exp)
-    io_truncated                    (a*b + c).truncated assigned into SQ(34,8)
-    io_asUInt, io_asSInt            a.floor(0).asUInt / .asSInt
-
-Do not add ``tools/diff`` here; another task owns it.
+The fourth layer lives next door: ``tests/diff/test_diff_afix_ops.py`` runs
+``avoodoo/lib/afix_ops.py`` against SpinalHDL's own elaboration of
+``fpga/src/voodoo/diff/AfixOps.scala`` under Verilator (282 ports; the full
+gate is ``make diff MOD=AfixOps``).  That is the check that these semantics
+match *Spinal*; the sweeps here are the check that they match the written
+spec and stay fast enough to run on every commit.
 """
 
 import random
@@ -63,6 +50,17 @@ from avoodoo.lib.fixed import (
 )
 
 CFG = Config.voodoo1()
+
+#: The modes with defined semantics; ROUND_HALF_TO_EVEN and SCRAP exist only so
+#: a ``fixTo`` naming them elaborates at drop == 0 (see the dedicated test).
+ROUND_TYPES = [
+    RoundType.FLOOR,
+    RoundType.CEIL,
+    RoundType.ROUND_HALF_UP,
+    RoundType.ROUND_HALF_DOWN,
+    RoundType.FLOOR_TO_ZERO,
+    RoundType.CEIL_TO_INF,
+]
 
 # --- the formats the core actually builds (doc §3) -------------------------
 
@@ -250,7 +248,7 @@ def test_round_bigint_matches_plain_arithmetic():
     """
     for drop in range(1, 7):
         for value in range(-300, 301):
-            for rt in RoundType:
+            for rt in ROUND_TYPES:
                 assert round_bigint(value, drop, rt) == model.round_bigint(value, drop, rt)
 
 
@@ -360,7 +358,7 @@ def test_unary_shape_algebra_matches_model_for_every_format():
         ref = to_model(shape)
         assert as_tuple(neg_shape(shape)) == as_tuple(model.neg_shape(ref)), name
         for exp in (-30, -12, -8, -4, 0, 4):
-            for rt in RoundType:
+            for rt in ROUND_TYPES:
                 assert as_tuple(round_shape(shape, exp, rt)) == as_tuple(
                     model.round_shape(ref, exp, rt)), (name, exp, rt)
             for hi, lo in ((255, 0), (255, -255), (0, 0), (1023, -1024)):
@@ -874,6 +872,116 @@ def test_const_and_literals():
     assert AFixShape(1, -2, 0).const_trunc(0.0).raw.value == 0
     assert AFixShape(1, -2, 0).const_trunc(0.9).raw.value == 0
     assert AFixShape(1, -2, 0).const_trunc(-0.9).raw.value == 0
+
+
+# ===========================================================================
+# the modes AfixOps exercises beyond the core's own four
+# ===========================================================================
+
+
+def test_round_is_the_global_default_which_is_floor():
+    """``.round(0, false)`` is plain floor here (§1.3), not a half-rounding.
+
+    ``AfixOps_spinal.v`` settles it: ``round0_vertex`` is a bare ``>>> 4`` and
+    is 12 bits wide, i.e. it carries floor's ``(2047, -2048)`` bounds rather
+    than ceil's 13-bit ``(2048, -2048)``.
+    """
+    vertex = AFixShape.from_q(SQ(16, 4))
+    value = AFixValue(vertex, Signal(vertex.as_shape()))
+    assert value.round(0).afix_shape == round_shape(vertex, 0, RoundType.FLOOR)
+    assert value.round(0).afix_shape.bit_width == 12
+
+
+def test_toward_zero_and_away_from_zero_bounds():
+    vertex = AFixShape.from_q(SQ(16, 4))
+    assert rounded_bounds(vertex, 0, RoundType.FLOOR_TO_ZERO) == (2047, -2048)
+    assert rounded_bounds(vertex, 0, RoundType.CEIL_TO_INF) == (2048, -2048)
+    assert round_shape(vertex, 0, RoundType.FLOOR_TO_ZERO).bit_width == 12
+    assert round_shape(vertex, 0, RoundType.CEIL_TO_INF).bit_width == 13
+
+
+def test_unreached_round_types_refuse_to_guess():
+    """ROUNDTOEVEN/SCRAP exist for ``fixTo``'s sake but are identity-only."""
+    for rt in (RoundType.ROUND_HALF_TO_EVEN, RoundType.SCRAP):
+        assert round_bigint(1234, 0, rt) == 1234      # drop == 0 is the identity
+        assert round_bigint(1234, -3, rt) == 1234     # drop < 0 too (§8.5)
+        with pytest.raises(NotImplementedError):
+            round_bigint(1234, 2, rt)
+
+
+def test_sat_bits_keeps_the_format():
+    """``AFix.sat(m)`` narrows the reachable values, not the format (§4)."""
+    vertex = AFixShape.from_q(SQ(16, 4))
+    value = AFixValue(vertex, Signal(vertex.as_shape()))
+    assert value.sat_bits(1).afix_shape == vertex
+    assert len(value.sat_bits(1).raw) == 16
+    u8 = AFixShape.from_q(UQ(8, 0))
+    assert len(AFixValue(u8, Signal(8)).sat_bits(1).raw) == 8
+
+
+@pytest.mark.parametrize("name,shape", [
+    ("vertex", AFixShape.from_q(SQ(16, 4))),
+    ("w", AFixShape.from_q(SQ(32, 30))),
+    ("colormul", AFixShape.from_q(QFormat(19, 8, True))),
+    ("u8", AFixShape.from_q(UQ(8, 0))),
+])
+def test_sim_extra_rounding_and_sat_bits(name, shape):
+    """``round``/``floorToZero``/``ceilToInf``/``sat(m)`` against the model."""
+    rng = random.Random(0xE7A3 ^ len(name))
+    signed = shape.signed
+
+    def exprs(ins):
+        a = ins["a"]
+        out = {"sat_bits1": a.sat_bits(1), "sat_bits2": a.sat_bits(2)}
+        if signed:
+            out |= {
+                "round0": a.round(0),
+                "floor_to_zero0": a.floor_to_zero(0),
+                "ceil_to_inf0": a.ceil_to_inf(0),
+            }
+        return out
+
+    m, sigs, outs, _ = build({"a": shape}, exprs)
+    ref = to_model(shape)
+    drop = 0 - shape.exp
+    vectors = [{"a": v} for v in raw_samples(shape, rng, 40)]
+    if drop > 0:  # straddle zero, where toward/away-from-zero differ from floor
+        for candidate in (-1, 0, 1, (1 << drop) - 1, -(1 << drop) + 1, 1 << drop):
+            if shape.min_raw <= candidate <= shape.max_raw:
+                vectors.append({"a": candidate})
+    while len(vectors) < 200:
+        vectors.append({"a": rng.randint(shape.min_raw, shape.max_raw)})
+
+    def check(vector, got):
+        mv = model.ModelValue(ref, vector["a"])
+        assert got["sat_bits1"] == mv.sat_bits(1).raw, (name, vector)
+        assert got["sat_bits2"] == mv.sat_bits(2).raw, (name, vector)
+        if signed:
+            assert got["round0"] == mv.round(0).raw, (name, vector)
+            assert got["floor_to_zero0"] == mv.floor_to_zero(0).raw, (name, vector)
+            assert got["ceil_to_inf0"] == mv.ceil_to_inf(0).raw, (name, vector)
+
+    run(m, sigs, outs, vectors, check)
+
+
+def test_sim_uint_sat():
+    """``RegisterBank:207`` — ``io.pciFifoFree.sat(1)``, a plain UInt shrink."""
+    from avoodoo.lib.fixed import sat_unsigned
+
+    source = Signal(7)
+    out = Signal(6)
+    m = Module()
+    m.d.comb += out.eq(sat_unsigned(source, 1))
+
+    sim = Simulator(m)
+
+    async def testbench(ctx):
+        for value in range(128):
+            ctx.set(source, value)
+            assert ctx.get(out) == model.sat_uint(value, 7, 1), value
+
+    sim.add_testbench(testbench)
+    sim.run()
 
 
 def test_align_is_not_implemented_on_purpose():

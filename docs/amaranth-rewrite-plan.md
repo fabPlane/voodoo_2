@@ -377,13 +377,23 @@ Spinal core does.
       express AFix's `(maxRaw, minRaw)` bounds — see `docs/amaranth/afix-semantics.md`
       §10.1). `amaranth/avoodoo/lib/fixed.py` (range-based `AFixShape`/`AFixValue`,
       mirroring SpinalHDL 1.15.0 `AFix.scala`) + `fixed_model.py` (independent pure-Python
-      reference) + `amaranth/tests/test_fixed.py` (62 tests: doc tables, shape sweeps over
+      reference) + `amaranth/tests/test_fixed.py` (71 tests: doc tables, shape sweeps over
       every core format pair, pysim sweeps per op). The doc's traps are reproduced and
       tested: 13-bit `ceil(0)`/`roundHalfDown(0)` widths, `UQ(0, 8)` as a zero-bit constant
       zero, truncate-toward-zero `BigInt./`, `fixTo` with `drop < 0` skipping rounding,
       `asUInt` clamping negatives, `sat` flipping to unsigned. `QFormat` grew no
-      `fraction <= width` check so `UQ(0, 8)` stays expressible. Diff test against a Spinal
-      `AfixOps` micro-module still owed (0.4; wanted port list is in `test_fixed.py`).
+      `fraction <= width` check so `UQ(0, 8)` stays expressible.
+      **Diff-verified against SpinalHDL 1.15.0**: `avoodoo/lib/afix_ops.py` mirrors
+      `fpga/src/voodoo/diff/AfixOps.scala` and `make diff MOD=AfixOps` is clean over
+      282 ports x 1e6 cycles x 3 seeds (~2 min), with `tests/diff/test_diff_afix_ops.py`
+      as the short version in `make test`. Every bound-derived output width matched the
+      committed port map on the first run. Two semantics the doc left open were settled
+      from `AfixOps_spinal.v` and are now in `fixed.py`: `.round(exp, align)` is the
+      **global default rounding, i.e. plain floor** (`round0_vertex` is a bare `>>> 4`,
+      12 bits, not ceil's 13), and `AFix.sat(m: Int)` **keeps the format** and only
+      clamps the value to what `bit_width - m` bits could hold. `floorToZero`/`ceilToInf`
+      are implemented; `ROUNDTOEVEN`/`SCRAP` raise rather than guess (AfixOps only
+      reaches them at `drop == 0`, where every mode is the identity).
 - [x] 0.3 Gowin compatibility spike — **built, awaiting hardware load**.
       `avoodoo/gowin/spike_blinky.py` + `amaranth/hw/spike/`; Gowin EDA 1.9.11.03
       on GW5AST-138C, 27 s, bitstream generated. No errors on escaped identifiers

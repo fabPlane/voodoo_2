@@ -47,12 +47,24 @@ __all__ = [
 
 
 class RoundType(enum.Enum):
-    """The four ``spinal.core.RoundType`` values the core can reach (§1.2)."""
+    """``spinal.core.RoundType`` (§1.2).
+
+    The core reaches only the first four.  ``FLOOR_TO_ZERO``/``CEIL_TO_INF``
+    are implemented because ``fpga/src/voodoo/diff/AfixOps.scala`` exercises
+    them; ``ROUND_HALF_TO_EVEN`` and ``SCRAP`` exist so a ``fixTo`` naming them
+    elaborates, but AfixOps only ever reaches those at ``drop == 0`` (where
+    every mode is the identity) and :func:`round_bigint` refuses them beyond
+    that rather than guessing at semantics nothing checks.
+    """
 
     FLOOR = "floor"
     CEIL = "ceil"
     ROUND_HALF_UP = "roundup"
     ROUND_HALF_DOWN = "rounddown"
+    FLOOR_TO_ZERO = "floortozero"
+    CEIL_TO_INF = "ceiltoinf"
+    ROUND_HALF_TO_EVEN = "roundtoeven"
+    SCRAP = "scrap"
 
 
 # --------------------------------------------------------------------------
@@ -78,7 +90,14 @@ def round_bigint(value: int, drop: int, rt: RoundType) -> int:
         return (value + half) >> drop              # ties -> +inf
     if rt is RoundType.ROUND_HALF_DOWN:
         return -((half - value) >> drop)           # ceil((v - half)/unit), ties -> -inf
-    raise ValueError(f"unsupported RoundType {rt!r}")
+    if rt is RoundType.FLOOR_TO_ZERO:
+        return -((-value) >> drop) if value < 0 else value >> drop      # toward zero
+    if rt is RoundType.CEIL_TO_INF:
+        return value >> drop if value < 0 else -((-value) >> drop)      # away from zero
+    raise NotImplementedError(
+        f"{rt} is never reached by the core or by AfixOps at drop > 0; "
+        f"its semantics are deliberately not guessed at (spec §1.2)"
+    )
 
 
 def _trunc_div(numer: int, denom: int) -> int:
@@ -281,6 +300,21 @@ def sat_shape(shape: ModelShape, sat_max: int, sat_min: int, exp: int | None = N
     return ModelShape(min(sat_max, shape.max_raw), max(sat_min, shape.min_raw), shape.exp)
 
 
+def sat_bits_range(shape: ModelShape, drop_bits: int) -> tuple[int, int]:
+    """Value range ``SInt.sat(m)``/``UInt.sat(m)`` clamps a raw word to."""
+    keep = shape.bit_width - drop_bits
+    if keep < 0:
+        raise ValueError(f"sat({drop_bits}) drops more bits than {shape} has")
+    if shape.signed:
+        return -(1 << (keep - 1)), (1 << (keep - 1)) - 1
+    return 0, (1 << keep) - 1
+
+
+def sat_uint(value: int, width: int, drop_bits: int) -> int:
+    """``UInt.sat(m)``: clamp into ``width - m`` unsigned bits (RegisterBank:207)."""
+    return min(max(value, 0), (1 << (width - drop_bits)) - 1)
+
+
 def holding_shape(shapes) -> ModelShape:
     shapes = list(shapes)
     exp = min(s.exp for s in shapes)
@@ -394,6 +428,27 @@ class ModelValue:
 
     def round_half_down(self, exp: int = 0) -> "ModelValue":
         return self._round(RoundType.ROUND_HALF_DOWN, exp)
+
+    def floor_to_zero(self, exp: int = 0) -> "ModelValue":
+        return self._round(RoundType.FLOOR_TO_ZERO, exp)
+
+    def ceil_to_inf(self, exp: int = 0) -> "ModelValue":
+        return self._round(RoundType.CEIL_TO_INF, exp)
+
+    def round(self, exp: int = 0) -> "ModelValue":
+        """``.round(exp, align)`` — uses the global default rounding, FLOOR (§1.3)."""
+        return self._round(RoundType.FLOOR, exp)
+
+    def sat_bits(self, drop_bits: int) -> "ModelValue":
+        """``AFix.sat(m: Int)``: clamp as if ``m`` MSBs were gone, **format kept**.
+
+        Spinal hands the raw word to ``SInt.sat``/``UInt.sat``, which return
+        ``bit_width - m`` bits, and then resizes back into the unchanged AFix
+        format -- so the bounds (and the emitted width) do not move, only the
+        reachable values do.
+        """
+        lo, hi = sat_bits_range(self.shape, drop_bits)
+        return ModelValue(self.shape, min(max(self.raw, lo), hi))
 
     # -- saturation --------------------------------------------------------
 
