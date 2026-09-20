@@ -45,7 +45,8 @@ $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 		--freq 50 --json $< --write $@ --device $(DEVICE) --vopt cst=$(CST)
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).fs: $(BUILD_DIR)/%-pnr.json
-	$(GOWIN_PACK) --cpu_as_gpio -d $(PACK_DEVICE) -o $@ $<
+	$(GOWIN_PACK) --cpu_as_gpio --ready_as_gpio --done_as_gpio \
+		-d $(PACK_DEVICE) -o $@ $<
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).bin: $(BUILD_DIR)/%$(OPEN_SUFFIX).fs fs_to_bin.py
 	python3 fs_to_bin.py $< $@

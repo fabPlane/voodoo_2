@@ -14,6 +14,8 @@ if [ ! -f "$BITSTREAM" ]; then
     echo "Bitstream not found: $BITSTREAM" >&2
     exit 1
 fi
+BITSTREAM_DIR=$(CDPATH= cd -- "$(dirname -- "$BITSTREAM")" && pwd)
+BITSTREAM="$BITSTREAM_DIR/$(basename -- "$BITSTREAM")"
 
 echo "Hold the case MODE button now and keep holding until the LEDs alternate." >&2
 exec "$PROGRAMMER" \
@@ -21,4 +23,4 @@ exec "$PROGRAMMER" \
     --operation_index 2 \
     --cable-index 4 \
     --frequency 2.5MHz \
-    --fsFile "$BITSTREAM"
+    -f "$BITSTREAM"
