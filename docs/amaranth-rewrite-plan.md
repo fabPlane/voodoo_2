@@ -404,7 +404,8 @@ Spinal core does.
       Ran on the Mac, not Linux: `hyper-ms-lin` was mid `gw_sh
       build_console_sdram.tcl`, which `AGENTS.md` makes a Mac-fallback case.
       Details in `amaranth/hw/spike/RESULTS.md`; the user must load it with
-      `hardware/tang-console-138k/program_debug_sram.sh` while holding MODE.
+      `hardware/tang-console-138k/program_debug_sram.sh` with both case buttons
+      released. Holding MODE blocks FPGA startup after programming.
 - [x] 0.4 diff harness proven on StreamWhile + Fpxx — **2026-09-20**.
   - **Amaranth side done.** `amaranth/tools/diff/` + `make diff MOD=<Name>`
     (`--seeds`, `--cycles`, `--valid-density`, `--ready-density`, `--reset-cycles`,
@@ -480,7 +481,7 @@ Spinal core does.
       the 7.3 screenshot comparison for the Spinal build too.
 
 ### Phase 1
-- [x] stream helpers  - [ ] membus + adapters  - [x] fpxx  - [ ] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
+- [x] stream helpers  - [ ] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
 - [x] 1.1 stream helpers — 2026-09-20. `amaranth/avoodoo/lib/stream.py` (+ `lib/fragment.py`,
       `bus/stream_while.py`), transliterated from the SpinalHDL 1.15.0 `spinal/lib/Stream.scala`,
       `Flow.scala`, `Counter.scala` and `Utils.scala` sources. 66 pysim tests in
@@ -538,9 +539,101 @@ Spinal core does.
       Only the *output type* `AFix.SQ(20 bits, 30 bits)` touches
       `avoodoo/lib/fixed.py` — there is no AFix arithmetic in this module, so
       nothing here depends on the rounding/saturation surface (§9).
+- [x] 1.4 cdc + pipeline — 2026-09-20. `amaranth/avoodoo/lib/pipeline.py` and
+      `lib/cdc.py`, transliterated from the SpinalHDL 1.15.0
+      `spinal/lib/misc/pipeline/*.scala`, `spinal/lib/CrossClock.scala`,
+      `spinal/lib/Utils.scala` and `spinal/core/ClockDomain.scala` sources.
+      37 + 22 pysim tests in `tests/test_pipeline.py` / `tests/test_cdc.py`;
+      `make test` 598 green.
+      **pipeline.** Only two files in the tree import `spinal.lib.misc.pipeline`:
+      `pixel/ColorCombine.scala` (34 `Payload`s, `n0..n8`, eight default
+      `StageLink`s, `driveFrom`/`driveTo`, `Builder(links)`) and
+      `math/Fpxx2AFix.scala` (`arbitrateFrom`/`arbitrateTo`, seven `insert`s,
+      `StageLink` or `DirectLink` on `pipeStages`, `Builder(c01)`).
+      `RegisterBank.scala` and `BmbBusInterface.scala` were on the brief as
+      pipeline users but are **not** — what they use is
+      `spinal.lib.bus.regif`'s `newCommandRegWithPayload`, which Phase 2.2/1.6
+      owns. Ported: `Payload`, `Node` (lazy valid/ready/cancel + the `is_*`
+      status accessors, `insert`, stream and flow arbitration), `StageLink`
+      (`collapseBubble`, `holdPayload`), `DirectLink`, `CtrlLink`
+      (`haltWhen`/`duplicateWhen`/`terminateWhen`/`forgetOneWhen`/
+      `ignoreReadyWhen`/`throwWhen`/`bypass`), `S2MLink`, and `Builder` with
+      Spinal's two propagation passes. Skipped: `ForkLink`, `JoinLink`,
+      `NodesBuilder`, `StagePipeline`, `StageCtrlPipeline`, `forkStream`/
+      `forkFlow`.
+      **Structure matched.** A `StageLink` whose upstream node has a `ready`
+      is bit-for-bit `Stream.m2sPipe(collapsBubble = true)` per live payload
+      (`up.ready = down.ready | !down.valid`, valid reg with sync reset,
+      payload regs with **no** reset); with no `ready` anywhere it takes its
+      other branch and emits an unconditional Flow-style load, so adding an
+      `arbitrateTo` at the tail silently rewrites every register in the chain.
+      Payload registers only span a payload's first to last *touched* node
+      (`matches = down.fromUp ∩ up.fromDown`, and a read counts as a touch):
+      `ColorCombine` is 8 valid registers, latency 8, and **150** of the naive
+      272 (34 payloads x 8 links) payload stage registers —
+      `test_color_combine_skeleton_registers` rebuilds the skeleton and its
+      liveness map and asserts both. The same pruning reproduces
+      `Fpxx2AFix`'s hand-written stage exactly (3 of 6 inserted payloads
+      registered), so a module written with the builder and
+      `avoodoo/lib/fpxx2afix.py` are the same netlist.
+      **halt/throw.** `haltWhen` clears `down.valid` and `up.ready`, a
+      combinational path back to the pipeline's input `ready` through every
+      collapse-bubble link. `throwWhen` is terminate + cancel + forgetOne, and
+      the forgetOne is the load-bearing half: it propagates into the
+      *upstream* `StageLink` as `down.valid clearWhen(forgetOne)` emitted
+      before the `when(up.isReady)` reload, so a thrown transaction leaves a
+      *stalled* chain instead of reappearing when the condition drops (a bare
+      `terminateWhen` would jam). `cancel` does **not** cross a `StageLink`
+      upward, so a throw removes one transaction, it is not a flush. A
+      4-`CtrlLink`/3-`StageLink` chain with a halt and a throw is compared
+      every cycle against a Python model transcribed from the Scala equations,
+      over 4 seeds x 900 cycles.
+      **cdc.** All 56 `BufferCC` call sites are the plain two-flop form — no
+      `bufferDepth` argument anywhere and no `CrossClockBufferDepth` tag on any
+      clock domain, so `finalBufferDepth` is 2 throughout, matching
+      `amaranth.lib.cdc.FFSynchronizer`'s default. 53 pass an `init`, 3 do not
+      (`TangConsole138k.scala` :172/:275/:280), and the difference is
+      structural: `Reg(t, init)` under the design's SYNC/HIGH
+      `ClockDomainConfig` is a *resettable* flop pair, `Reg(t)` has no reset at
+      all, so `buffer_cc(init=None)` maps to `reset_less = True` and those
+      three come out with a defined 0 at power-on where Spinal has X — the
+      diff harness needs to know about exactly those three.
+      `ClockDomain(clock =, reset =, config = ClockDomain.current.config)` is
+      the only construction form used (6 sites) and
+      `CoreGowinGen.scala`'s `SpinalConfig` makes that
+      `ClockDomainConfig(resetKind = SYNC, resetActiveLevel = HIGH)`, which is
+      an Amaranth `ClockDomain` at its defaults — so `clock_domain()` needs no
+      polarity juggling. `ClockingArea` is `DomainRenamer({"sync": name})`.
+      `ResetCtrl` is never called by name but is reached implicitly:
+      `crossClockBufferPushToPopResetGen` defaults to **true**, so all six
+      `StreamFifoCC`s (HdmiScanout pixel FIFO + the five
+      `AxiLite4ClockCrossing` channel FIFOs) and both `PulseCCByToggle`s build
+      an async-assert/sync-deassert reset synchroniser on their output domain
+      from the *input* domain's reset — `buffered_reset_domain()`, the same
+      three lines `stream.FifoCC` already open-codes.
+      **Phase 8 note (timing).** Amaranth's `ResetSynchronizer` is the same
+      circuit with the same 2-cycle release, but Spinal instantiates a
+      separate `BufferCC` module carrying `keep_hierarchy = "TRUE"` and hands
+      back a `Bool`, while Amaranth inlines the flops and drives
+      `ResetSignal(domain)` itself — so the Console netlist comparison has to
+      be at flop level, not module level. More importantly Spinal's
+      `crossClockDomain` / `crossClockBuffer` / `crossClockFalsePath` tags
+      become SDC through its constraint generator and Amaranth emits nothing
+      of the kind: the false-path and max-delay exceptions (including the six
+      `GowinDdrNativeClockCrossing` bundled-data payload registers) must stay
+      hand-written in `fpga/hw/gowin/console/*.sdc`, and 8.3 has to re-check
+      that the flop names the SDC matches are the ones Amaranth emits.
+      `cross_clock_payload()` and `SYNC_FF_ATTRS` put an `async_reg` attribute
+      on those flops so they are at least findable.
+      **Undetermined from source:** whether Spinal's
+      `ContextSwapper.outsideCondScopeData` placement of the lazily-created
+      valid/ready/status signals can move emitted Verilog in a way a
+      statement-order-faithful port cannot match (it hoists the declaration,
+      not the assignments, so it should not — only the Phase 4 `ColorCombine`
+      lockstep diff will prove it).
 
 ### Phase 2
-- [x] regdef  - [ ] register_bank  - [ ] address_remapper  - [ ] swap_buffer  - [ ] lfb  - [ ] cpu_frontdoor  - [ ] core_types
+- [x] regdef  - [ ] register_bank  - [x] address_remapper  - [x] swap_buffer  - [ ] lfb  - [ ] cpu_frontdoor  - [ ] core_types
 - [x] 2.1 regdef — 2026-09-20. `amaranth/avoodoo/frontend/regdef.py`: 136 registers (2 of them
       simulation-only), 279 fields, 30 float aliases, 5 command streams, 158 PciFifo decode
       entries (143 FIFO=Yes, 71 Sync=Yes, 15 FIFO=No), all as frozen dataclasses with no
@@ -557,12 +650,32 @@ Spinal core does.
       cannot express — gammaLut via `clutData`, the YIQ palette path on NCC I/Q writes with
       data[31] set, the twelve 50-bit float shadow registers, the triangleCMD payload
       assembly — are recorded per register in `Register.effects` for 2.2 to implement.
+- [x] 2.3 address_remapper + swap_buffer — 2026-09-20. Both 1:1, both through the full
+      §4.2 gate on the Mac: `make diff MOD=SwapBuffer` and `MOD=AddressRemapper`, 3 seeds
+      x 1e6 cycles, no mismatch; `tests/diff/` runs them at 20k in `make test`.
+      `swap_buffer.py` adds one thing the Scala has not got: an optional
+      `dbg_load_port=True` that exposes `swap_count_set`/`swap_count_we`, the real-port
+      replacement for the Verilator harness's poke at
+      `…controlPlane_swapBuffer__DOT__swapCountReg` (`core_sim_ports.DBG_PORTS`). It is off
+      by default, so the diffed port list is identical to the Scala's. `Stream(NoData)`
+      needed a decision: `stream.Signature(unsigned(0))` keeps a zero-width `payload`
+      member, which yosys emits as `input [-1:0] cmd__payload` — a port Spinal does not
+      have and the harness cannot pair — so `swap_buffer.NoDataStreamSignature` declares
+      only `valid`/`ready`. It belongs in `lib/stream.py`; `fastfillCMD` is the other
+      `NoData` stream. `RegisterBank.bmbParams` / `externalBmbParams` live in
+      `address_remapper.py` until 2.2 lands. Two findings: the Scala `AddressRemapper`'s
+      bit-21-set-but-out-of-range branch (`inputAddr & ~(1 << 21)`, then `.resized` to 12
+      bits) is indistinguishable from plain truncation, so the only real translation is the
+      remap table; and `SwapBufferFormalTest`'s first two `cover` statements are
+      unreachable as written (`cover(io.cmd.ready && state === Sampling)` contradicts the
+      asserted `cmd.ready === (state === Idle)`) — they have never failed only because
+      `FormalConfig.withBMC` runs sby in `bmc` mode, which ignores `cover`.
 
 ### Phase 3
 - [ ] triangle_setup  - [ ] rasterizer  - [ ] span_walker  - [ ] fastfill (3 files)  - [ ] write
 
 ### Phase 4
-- [ ] color_combine  - [ ] fog  - [x] dither tables  - [ ] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
+- [ ] color_combine  - [ ] fog  - [x] dither tables  - [x] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
 - [x] **dither tables — formula-generated, no data pasted** (2026-09-20).
       `amaranth/avoodoo/pixel/dither_tables.py` builds all eight 86Box tables
       (`rb4x4`/`g4x4`/`rb2x2`/`g2x2` + the four `dithersub` ones, 10 240 entries,
@@ -579,6 +692,36 @@ Spinal core does.
       remainder, reproduces them exactly. The API matches the Scala object
       (eight `lookup*`, four `*_packed` ROM images, `packed_index` =
       `Dither.packedAddr`) so `pixel/dither.py` can be a 1:1 port.
+- [x] **dither module** (2026-09-20). `amaranth/avoodoo/pixel/dither.py`
+      (`Dither.scala`, 118 lines): three `amaranth.lib.memory.Memory` ROMs of
+      5120 x 5/6/5 initialised from `dither_tables.rb_packed`/`g_packed`, read
+      latency 1, same register stages and signal names. **Diff-clean at 1e6
+      cycles x 3 seeds** (`make diff MOD=Dither`, 14 ports paired) and again at
+      `--valid-density 0.9 --ready-density 0.12`; `tests/diff/test_diff_dither.py`
+      runs both at 20k in `make test`. `tests/test_dither.py` (7 tests, 6 s)
+      ports `DitherTest.scala`'s three cases — 4x4 and 2x2 exhaustive over all
+      4·4·256 / 2·2·256 cells, and the disabled-bypass truncation — plus two the
+      Scala does not have: a full-rate streaming pass over every combination
+      (pins "one result per cycle, latency 1") and a randomised handshake run
+      compared every cycle against a cycle-accurate model of the expanded
+      `streamReadSync`.
+      Three things worth carrying into `framebuffer_access.py`, which has the
+      same ROM idiom (`ditherAddr`, `dsubRbRom`/`dsubGRom`):
+      (a) **the two clock enables differ**, and the Scala source hides it —
+      `Mem.streamReadSync` expands to ROM read registers enabled by
+      `addrStream.fire` but `retValid` + the four `linked` registers enabled by
+      `addrStream.ready` (`Dither_spinal.v` is the ground truth; the Scala reads
+      as if the R channel used `ready` for both). Unobservable at full rate,
+      which is why the backpressure diff run is the one that matters.
+      (b) `retValid` is a `RegInit(False)` but the four `linked` registers are
+      plain `RegNextWhen`, so only the latter are `reset_less=True` (plan §6).
+      The ROM read-data registers have no reset on either side either; the
+      outputs still match from reset because the enables do.
+      (c) `from __future__ import annotations` and `wiring.Component`'s
+      class-level member annotations are mutually exclusive — Amaranth sees the
+      annotations as strings and raises "does not have signature member
+      annotations" — so the members go to `super().__init__()`, as in
+      `frontend/swap_buffer.py`.
 
 ### Phase 5
 - [x] tex_layout_tables  - [ ] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [ ] texture_mem  - [ ] texture_mem_subsystem
