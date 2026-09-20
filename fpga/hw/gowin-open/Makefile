@@ -7,7 +7,7 @@ YOSYS        ?= yosys
 NEXTPNR      ?= nextpnr-himbaechel
 GOWIN_PACK   ?= gowin_pack
 
-DEMOS        := blinky blinky_local button_toggle button_latch bram_test uart_hello gpio_probe gpio_probe_key1
+DEMOS        := blinky blinky_local button_toggle button_latch reset_toggle reset_shift bram_test uart_hello gpio_probe gpio_probe_key1
 BUILD_DIR    := build
 CST          := tang_console_138k_open.cst
 OPEN_SUFFIX  := -open
@@ -49,6 +49,8 @@ $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 # GW5AST global-clock network can be tested independently.
 $(BUILD_DIR)/blinky_local-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
 $(BUILD_DIR)/button_toggle-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
+$(BUILD_DIR)/reset_toggle-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
+$(BUILD_DIR)/reset_shift-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).fs: $(BUILD_DIR)/%-pnr.json
 	$(GOWIN_PACK) --cpu_as_gpio --sspi_as_gpio --mspi_as_gpio \
