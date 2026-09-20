@@ -93,6 +93,8 @@ __all__ = [
     "Fifo",
     "queue",
     "queue_with_occupancy",
+    "DISTRIBUTED_RAM_ATTRS",
+    "spinal_fifo_ram_attrs",
     "FifoCC",
     "queue_cc",
     "Counter",
@@ -1021,6 +1023,22 @@ def arbiter_on(m, sources, *, arbitration="lowerFirst", lock="transactionLock",
 # StreamFifo
 # --------------------------------------------------------------------------
 
+#: The attribute ``force_distributed_fifo_ram.py`` stamps on wide, shallow
+#: FIFO arrays in the Spinal Console build.
+DISTRIBUTED_RAM_ATTRS = {"syn_ramstyle": "distributed_ram"}
+
+
+def spinal_fifo_ram_attrs(width: int, depth: int) -> dict:
+    """``force_distributed_fifo_ram.should_force(width, depth)`` as ``mem_attrs``.
+
+    Returns :data:`DISTRIBUTED_RAM_ATTRS` for ``width >= 24 and depth <= 64``
+    (the Spinal build's rule) and ``{}`` otherwise, so a port can write
+    ``Fifo(shape, depth, mem_attrs=spinal_fifo_ram_attrs(len(shape), depth))``
+    and get the same BSRAM/SSRAM split the Spinal bitstream has. ``width`` is
+    the packed payload width in bits.
+    """
+    return dict(DISTRIBUTED_RAM_ATTRS) if (width >= 24 and depth <= 64) else {}
+
 
 class Fifo(wiring.Component):
     """``spinal.lib.StreamFifo`` (the 1.8.2 redesign shipped in 1.15.0).
@@ -1052,11 +1070,22 @@ class Fifo(wiring.Component):
       visibility but is a different netlist;
     * ``full`` is computed against ``popOnIo``, not ``pop``, so the usable
       capacity is ``depth`` -- the output register does not add a slot.
+
+    ``mem_attrs`` is forwarded to :class:`amaranth.lib.memory.Memory` as its
+    ``attrs`` and lands on the RAM array in the emitted Verilog. It replaces
+    ``fpga/hw/gowin/console/force_distributed_fifo_ram.py``, which rewrites
+    the Spinal Verilog after the fact to put ``syn_ramstyle = "distributed_ram"``
+    on every FIFO array with ``width >= 24 and depth <= 64`` (Gowin maps a
+    WxD SDP RAM onto ``ceil(W/9)`` BSRAM blocks, so the wide, shallow
+    ``FramebufferPlaneReader`` FIFOs would blow the 138K's 340-block cap). In
+    the Amaranth tree the attribute is set at the instantiation instead --
+    see :func:`spinal_fifo_ram_attrs` for the same rule as a helper. Plan 0.3
+    verified that Gowin EDA honours the attribute from Amaranth's Verilog.
     """
 
     def __init__(self, payload_shape, depth, *, latency=2, with_async_read=None,
                  with_bypass=None, allow_extra_msb=True, use_vec=False,
-                 for_fmax=False):
+                 for_fmax=False, mem_attrs=None):
         if depth < 0:
             raise ValueError("depth must be >= 0")
         if not 0 <= latency <= 2:
@@ -1074,6 +1103,7 @@ class Fifo(wiring.Component):
             raise ValueError("withBypass requires withAsyncRead")
         self.allow_extra_msb = bool(allow_extra_msb)
         self.with_extra_msb = self.allow_extra_msb and _is_pow2(depth)
+        self.mem_attrs = dict(mem_attrs) if mem_attrs else {}
         super().__init__({
             "push": In(stream.Signature(payload_shape)),
             "pop": Out(stream.Signature(payload_shape)),
@@ -1170,7 +1200,8 @@ class Fifo(wiring.Component):
                 m.d.sync += counter.eq(0)
             m.d.comb += occupancy.eq(counter)
 
-        mem = memory.Memory(shape=self._shape, depth=depth, init=[])
+        mem = memory.Memory(shape=self._shape, depth=depth, init=[],
+                            attrs=self.mem_attrs or None)
         m.submodules.ram = mem
 
         # push side
@@ -1232,9 +1263,9 @@ class Fifo(wiring.Component):
         return m
 
 
-def queue(m, source, depth, *, latency=2, flush=None, name=None):
+def queue(m, source, depth, *, latency=2, flush=None, mem_attrs=None, name=None):
     """``source.queue(size, latency)`` -> the FIFO's pop stream."""
-    f = Fifo(payload_shape_of(source), depth, latency=latency)
+    f = Fifo(payload_shape_of(source), depth, latency=latency, mem_attrs=mem_attrs)
     _attach(m, f, name)
     connect_stream(m, f.push, source)
     if flush is not None:
@@ -1242,9 +1273,10 @@ def queue(m, source, depth, *, latency=2, flush=None, name=None):
     return f.pop
 
 
-def queue_with_occupancy(m, source, depth, *, latency=2, flush=None, name=None):
+def queue_with_occupancy(m, source, depth, *, latency=2, flush=None, mem_attrs=None,
+                         name=None):
     """``source.queueWithOccupancy(size)`` -> ``(pop, occupancy)``."""
-    f = Fifo(payload_shape_of(source), depth, latency=latency)
+    f = Fifo(payload_shape_of(source), depth, latency=latency, mem_attrs=mem_attrs)
     _attach(m, f, name)
     connect_stream(m, f.push, source)
     if flush is not None:
@@ -1292,11 +1324,12 @@ class FifoCC(wiring.Component):
     """
 
     def __init__(self, payload_shape, depth, *, push_domain="sync", pop_domain="sync",
-                 with_pop_buffered_reset=True):
+                 with_pop_buffered_reset=True, mem_attrs=None):
         if not (_is_pow2(depth) and depth >= 2):
             raise ValueError("StreamFifoCC depth must be a power of two >= 2")
         self._shape = payload_shape
         self.depth = depth
+        self.mem_attrs = dict(mem_attrs) if mem_attrs else {}
         self.push_domain = push_domain
         self.pop_domain = pop_domain
         self.with_pop_buffered_reset = bool(with_pop_buffered_reset)
@@ -1325,7 +1358,8 @@ class FifoCC(wiring.Component):
             m.submodules.pop_reset = cdc.ResetSynchronizer(
                 ResetSignal(self.push_domain), domain=pop_dom)
 
-        mem = memory.Memory(shape=self._shape, depth=depth, init=[])
+        mem = memory.Memory(shape=self._shape, depth=depth, init=[],
+                            attrs=self.mem_attrs or None)
         m.submodules.ram = mem
 
         push_to_pop_gray = Signal(w, name="pushToPopGray")
@@ -1412,11 +1446,12 @@ class FifoCC(wiring.Component):
 
 
 def queue_cc(m, source, depth, *, push_domain="sync", pop_domain="sync",
-             with_pop_buffered_reset=True, name=None):
+             with_pop_buffered_reset=True, mem_attrs=None, name=None):
     """``source.queue(size, pushClock, popClock)``."""
     f = FifoCC(payload_shape_of(source), depth, push_domain=push_domain,
                pop_domain=pop_domain,
-               with_pop_buffered_reset=with_pop_buffered_reset)
+               with_pop_buffered_reset=with_pop_buffered_reset,
+               mem_attrs=mem_attrs)
     _attach(m, f, name)
     connect_stream(m, f.push, source)
     return f.pop

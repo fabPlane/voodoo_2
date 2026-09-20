@@ -1069,3 +1069,52 @@ def test_add_fragment_last_counted_marks_every_nth_beat():
 
     run(m, tb)
     assert seen[:8] == [0, 0, 0, 1, 0, 0, 0, 1]
+
+
+# ---------------------------------------------------------------------------
+# RAM-style attributes (replaces force_distributed_fifo_ram.py)
+# ---------------------------------------------------------------------------
+
+
+def test_fifo_mem_attrs_reach_the_verilog():
+    from amaranth.back import verilog
+
+    # FramebufferPlaneReader's shape: 124-bit x 64-deep.
+    dut = st.Fifo(unsigned(124), 64, mem_attrs=st.spinal_fifo_ram_attrs(124, 64))
+    text = verilog.convert(dut, name="Fifo124x64")
+    assert 'syn_ramstyle = "distributed_ram"' in text
+
+    plain = verilog.convert(st.Fifo(unsigned(124), 64), name="Fifo124x64")
+    assert "syn_ramstyle" not in plain
+
+
+def test_spinal_fifo_ram_attrs_matches_should_force():
+    """Same rule as fpga/hw/gowin/console/force_distributed_fifo_ram.py."""
+    forced = st.DISTRIBUTED_RAM_ATTRS
+    assert st.spinal_fifo_ram_attrs(124, 64) == forced
+    assert st.spinal_fifo_ram_attrs(24, 4) == forced
+    assert st.spinal_fifo_ram_attrs(23, 4) == {}
+    assert st.spinal_fifo_ram_attrs(124, 65) == {}
+    # returns a fresh dict so callers may mutate it
+    assert st.spinal_fifo_ram_attrs(124, 64) is not forced
+
+
+def test_fifo_cc_and_queue_helpers_accept_mem_attrs():
+    from amaranth.back import verilog
+
+    cc = st.FifoCC(unsigned(32), 8, push_domain="push", pop_domain="pop",
+                   with_pop_buffered_reset=False, mem_attrs=st.DISTRIBUTED_RAM_ATTRS)
+    assert 'syn_ramstyle = "distributed_ram"' in verilog.convert(cc, name="FifoCC")
+
+    m = Module()
+    a, b = st.Stream(unsigned(32)), st.Stream(unsigned(32))
+    pa = st.queue(m, a, 8, mem_attrs=st.DISTRIBUTED_RAM_ATTRS, name="qa")
+    pb, _occ = st.queue_with_occupancy(m, b, 8, mem_attrs=st.DISTRIBUTED_RAM_ATTRS,
+                                       name="qb")
+    m.d.comb += [pa.ready.eq(1), pb.ready.eq(1)]
+    # attrs travelled through both wrappers; behaviour is unchanged (the
+    # cycle-accurate model tests above cover that)
+    assert m.submodules.qa.mem_attrs == st.DISTRIBUTED_RAM_ATTRS
+    assert m.submodules.qb.mem_attrs == st.DISTRIBUTED_RAM_ATTRS
+    assert verilog.convert(m, ports=[a.valid, a.ready, b.valid, b.ready],
+                           name="Queues").count("distributed_ram") == 2
