@@ -790,7 +790,8 @@ Spinal core does.
       `FormalConfig.withBMC` runs sby in `bmc` mode, which ignores `cover`.
 
 ### Phase 3
-- [x] triangle_setup  - [ ] rasterizer  - [ ] span_walker  - [ ] fastfill (3 files)  - [x] write
+- [x] triangle_setup  - [ ] rasterizer  - [x] span_walker  - [ ] fastfill (3 files)  - [x] write
+  - span_walker — **2026-09-20**. `avoodoo/raster/span_walker.py` (+ its `object SpanWalker` layouts; the TriangleSetup/Rasterizer record types it consumes are in `core/core_types.py`). `make diff MOD=SpanWalker` **clean at 1e6 cycles x seeds 1,2,3** (1090 s on the Mac); `tests/diff/test_diff_span_walker.py` (20k x 3, plus a ready-density 0.1 run) and `tests/test_span_walker.py` (8 tests: cycle-accurate Python reference model on `fixed_model`, the ClipDisabled regression literal `(0, 1, 0)`, the clip-left clamp, the in-module formal span invariants, the FormalDut sequencing invariants, a `Reg`-vs-`RegInit` reset_less audit, and a port-name/width cross-check against `SpanWalker_spinal.v`). First diff run caught the `AFixValue` layout-member signedness bug in `lib/fixed.py` (fixed by p1-fixed). Not ported: `SpanWalkerFormalTest`'s two literal `xEnd` constants — the RTL (Spinal and this port alike) emits `visibleEndPix - 1`, which the upstream *simulation* regression agrees with; see the test module docstring.
 - [x] **triangle_setup** (2026-09-20). `amaranth/avoodoo/raster/triangle_setup.py` (498
       Scala lines), plus `avoodoo/vertex.py` (the `package object voodoo` vertex helpers
       from `Bundles.scala`) and `triangle_setup_input_layout` appended to
