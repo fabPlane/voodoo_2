@@ -1,0 +1,246 @@
+{
+  "module": "StreamWhile_spinal",
+  "source": "StreamWhile_spinal.v",
+  "generator": "SpinalHDL v1.15.0    git head : 05a01af3d3345aa0afcaad8e0186dde13a359db2",
+  "clock_domain": {
+    "clock": "clk",
+    "reset": "reset",
+    "reset_kind": "sync",
+    "reset_active_level": "high"
+  },
+  "counts": {
+    "ports": 9,
+    "input_bits": 12,
+    "output_bits": 11
+  },
+  "ports": [
+    {
+      "name": "start_valid",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "start",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "start",
+      "bundle_path": [
+        "start"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "start_ready",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "start",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "start",
+      "bundle_path": [
+        "start"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "start_payload",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 8,
+      "msb": 7,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "start",
+        "payload"
+      ],
+      "role": "payload",
+      "stream": "start",
+      "bundle_path": [
+        "start"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "payload",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "output_valid",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "output",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "output",
+      "bundle_path": [
+        "output"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "output_ready",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "output",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "output",
+      "bundle_path": [
+        "output"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "output_payload",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 8,
+      "msb": 7,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "output",
+        "payload"
+      ],
+      "role": "payload",
+      "stream": "output",
+      "bundle_path": [
+        "output"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "payload",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "running",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "running"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "running",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "clk",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "clk"
+      ],
+      "role": "clock",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clk",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "reset",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "reset"
+      ],
+      "role": "reset",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reset",
+      "trailing_index_kind": null
+    }
+  ],
+  "streams": {
+    "start": {
+      "kind": "stream",
+      "valid": "start_valid",
+      "ready": "start_ready",
+      "payload": [
+        "start_payload"
+      ]
+    },
+    "output": {
+      "kind": "stream",
+      "valid": "output_valid",
+      "ready": "output_ready",
+      "payload": [
+        "output_payload"
+      ]
+    }
+  },
+  "scalars": [
+    "running"
+  ]
+}

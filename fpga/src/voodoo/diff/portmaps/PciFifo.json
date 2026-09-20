@@ -1,0 +1,1633 @@
+{
+  "module": "PciFifo_spinal",
+  "source": "PciFifo_spinal.v",
+  "generator": "SpinalHDL v1.15.0    git head : 05a01af3d3345aa0afcaad8e0186dde13a359db2",
+  "clock_domain": {
+    "clock": "clk",
+    "reset": "reset",
+    "reset_kind": "sync",
+    "reset_active_level": "high"
+  },
+  "counts": {
+    "ports": 56,
+    "input_bits": 179,
+    "output_bits": 232
+  },
+  "ports": [
+    {
+      "name": "io_cpuSide_cmd_valid",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_ready",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_payload_last",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "payload",
+        "last"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [
+        "last"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "last",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_payload_fragment_source",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "source"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "source"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "source",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_payload_fragment_opcode",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": 0,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "opcode"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "opcode"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "opcode",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_payload_fragment_address",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "address"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "address"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "address",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_payload_fragment_length",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "length"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "length"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "length",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_payload_fragment_data",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "data"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "data"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "data",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_cmd_payload_fragment_mask",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "mask"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_cmd",
+      "bundle_path": [
+        "cpuSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "mask"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "mask",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_rsp_valid",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "rsp",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "io_cpuSide_rsp",
+      "bundle_path": [
+        "cpuSide",
+        "rsp"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_rsp_ready",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "rsp",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "io_cpuSide_rsp",
+      "bundle_path": [
+        "cpuSide",
+        "rsp"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_rsp_payload_last",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "rsp",
+        "payload",
+        "last"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_rsp",
+      "bundle_path": [
+        "cpuSide",
+        "rsp"
+      ],
+      "field_path": [
+        "last"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "last",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_rsp_payload_fragment_source",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "rsp",
+        "payload",
+        "fragment",
+        "source"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_rsp",
+      "bundle_path": [
+        "cpuSide",
+        "rsp"
+      ],
+      "field_path": [
+        "fragment",
+        "source"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "source",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_rsp_payload_fragment_opcode",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 1,
+      "msb": 0,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "rsp",
+        "payload",
+        "fragment",
+        "opcode"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_rsp",
+      "bundle_path": [
+        "cpuSide",
+        "rsp"
+      ],
+      "field_path": [
+        "fragment",
+        "opcode"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "opcode",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_cpuSide_rsp_payload_fragment_data",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "cpuSide",
+        "rsp",
+        "payload",
+        "fragment",
+        "data"
+      ],
+      "role": "payload",
+      "stream": "io_cpuSide_rsp",
+      "bundle_path": [
+        "cpuSide",
+        "rsp"
+      ],
+      "field_path": [
+        "fragment",
+        "data"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "data",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_valid",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_ready",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_payload_last",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "payload",
+        "last"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [
+        "last"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "last",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_payload_fragment_source",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "source"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "source"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "source",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_payload_fragment_opcode",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 1,
+      "msb": 0,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "opcode"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "opcode"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "opcode",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_payload_fragment_address",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "address"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "address"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "address",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_payload_fragment_length",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "length"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "length"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "length",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_payload_fragment_data",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "data"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "data"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "data",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_cmd_payload_fragment_mask",
+      "direction": "output",
+      "verilog_type": "reg",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "cmd",
+        "payload",
+        "fragment",
+        "mask"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_cmd",
+      "bundle_path": [
+        "regSide",
+        "cmd"
+      ],
+      "field_path": [
+        "fragment",
+        "mask"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "mask",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_rsp_valid",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "rsp",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "io_regSide_rsp",
+      "bundle_path": [
+        "regSide",
+        "rsp"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_rsp_ready",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "rsp",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "io_regSide_rsp",
+      "bundle_path": [
+        "regSide",
+        "rsp"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_rsp_payload_last",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "rsp",
+        "payload",
+        "last"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_rsp",
+      "bundle_path": [
+        "regSide",
+        "rsp"
+      ],
+      "field_path": [
+        "last"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "last",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_rsp_payload_fragment_source",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "rsp",
+        "payload",
+        "fragment",
+        "source"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_rsp",
+      "bundle_path": [
+        "regSide",
+        "rsp"
+      ],
+      "field_path": [
+        "fragment",
+        "source"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "source",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_rsp_payload_fragment_opcode",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": 0,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "rsp",
+        "payload",
+        "fragment",
+        "opcode"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_rsp",
+      "bundle_path": [
+        "regSide",
+        "rsp"
+      ],
+      "field_path": [
+        "fragment",
+        "opcode"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "opcode",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_regSide_rsp_payload_fragment_data",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "regSide",
+        "rsp",
+        "payload",
+        "fragment",
+        "data"
+      ],
+      "role": "payload",
+      "stream": "io_regSide_rsp",
+      "bundle_path": [
+        "regSide",
+        "rsp"
+      ],
+      "field_path": [
+        "fragment",
+        "data"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "data",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texWrite_valid",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texWrite",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "io_texWrite",
+      "bundle_path": [
+        "texWrite"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texWrite_ready",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texWrite",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "io_texWrite",
+      "bundle_path": [
+        "texWrite"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texWrite_payload_pciAddr",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 23,
+      "msb": 22,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texWrite",
+        "payload",
+        "pciAddr"
+      ],
+      "role": "payload",
+      "stream": "io_texWrite",
+      "bundle_path": [
+        "texWrite"
+      ],
+      "field_path": [
+        "pciAddr"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "pciAddr",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texWrite_payload_data",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texWrite",
+        "payload",
+        "data"
+      ],
+      "role": "payload",
+      "stream": "io_texWrite",
+      "bundle_path": [
+        "texWrite"
+      ],
+      "field_path": [
+        "data"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "data",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texWrite_payload_mask",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texWrite",
+        "payload",
+        "mask"
+      ],
+      "role": "payload",
+      "stream": "io_texWrite",
+      "bundle_path": [
+        "texWrite"
+      ],
+      "field_path": [
+        "mask"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "mask",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texDrain_valid",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texDrain",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "io_texDrain",
+      "bundle_path": [
+        "texDrain"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texDrain_ready",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texDrain",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "io_texDrain",
+      "bundle_path": [
+        "texDrain"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texDrain_payload_pciAddr",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 23,
+      "msb": 22,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texDrain",
+        "payload",
+        "pciAddr"
+      ],
+      "role": "payload",
+      "stream": "io_texDrain",
+      "bundle_path": [
+        "texDrain"
+      ],
+      "field_path": [
+        "pciAddr"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "pciAddr",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texDrain_payload_data",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texDrain",
+        "payload",
+        "data"
+      ],
+      "role": "payload",
+      "stream": "io_texDrain",
+      "bundle_path": [
+        "texDrain"
+      ],
+      "field_path": [
+        "data"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "data",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_texDrain_payload_mask",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "texDrain",
+        "payload",
+        "mask"
+      ],
+      "role": "payload",
+      "stream": "io_texDrain",
+      "bundle_path": [
+        "texDrain"
+      ],
+      "field_path": [
+        "mask"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "mask",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_pipelineBusy",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "pipelineBusy"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "pipelineBusy",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_commandReady_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "commandReady",
+        "0"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [
+        {
+          "position": 1,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "io_commandReady_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "commandReady",
+        "1"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [
+        {
+          "position": 1,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "io_commandReady_2",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "commandReady",
+        "2"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [
+        {
+          "position": 1,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "io_commandReady_3",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "commandReady",
+        "3"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [
+        {
+          "position": 1,
+          "index": 3
+        }
+      ],
+      "trailing_index": 3,
+      "leaf": "3",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "io_commandReady_4",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "commandReady",
+        "4"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [
+        {
+          "position": 1,
+          "index": 4
+        }
+      ],
+      "trailing_index": 4,
+      "leaf": "4",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "io_fifoEmpty",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "fifoEmpty"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fifoEmpty",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_pciFifoFree",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 7,
+      "msb": 6,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "pciFifoFree"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "pciFifoFree",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_wasEnqueued",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "wasEnqueued"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "wasEnqueued",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_wasEnqueuedAddr",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "wasEnqueuedAddr"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "wasEnqueuedAddr",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_syncDrained",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "syncDrained"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "syncDrained",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_floatShadow_valid",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "floatShadow",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "io_floatShadow",
+      "bundle_path": [
+        "floatShadow"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_floatShadow_payload_address",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "floatShadow",
+        "payload",
+        "address"
+      ],
+      "role": "payload",
+      "stream": "io_floatShadow",
+      "bundle_path": [
+        "floatShadow"
+      ],
+      "field_path": [
+        "address"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "address",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "io_floatShadow_payload_raw",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 50,
+      "msb": 49,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": true,
+      "path": [
+        "floatShadow",
+        "payload",
+        "raw"
+      ],
+      "role": "payload",
+      "stream": "io_floatShadow",
+      "bundle_path": [
+        "floatShadow"
+      ],
+      "field_path": [
+        "raw"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "raw",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "clk",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "clk"
+      ],
+      "role": "clock",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clk",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "reset",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "reset"
+      ],
+      "role": "reset",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reset",
+      "trailing_index_kind": null
+    }
+  ],
+  "streams": {
+    "io_cpuSide_cmd": {
+      "kind": "stream",
+      "valid": "io_cpuSide_cmd_valid",
+      "ready": "io_cpuSide_cmd_ready",
+      "payload": [
+        "io_cpuSide_cmd_payload_last",
+        "io_cpuSide_cmd_payload_fragment_source",
+        "io_cpuSide_cmd_payload_fragment_opcode",
+        "io_cpuSide_cmd_payload_fragment_address",
+        "io_cpuSide_cmd_payload_fragment_length",
+        "io_cpuSide_cmd_payload_fragment_data",
+        "io_cpuSide_cmd_payload_fragment_mask"
+      ]
+    },
+    "io_cpuSide_rsp": {
+      "kind": "stream",
+      "valid": "io_cpuSide_rsp_valid",
+      "ready": "io_cpuSide_rsp_ready",
+      "payload": [
+        "io_cpuSide_rsp_payload_last",
+        "io_cpuSide_rsp_payload_fragment_source",
+        "io_cpuSide_rsp_payload_fragment_opcode",
+        "io_cpuSide_rsp_payload_fragment_data"
+      ]
+    },
+    "io_regSide_cmd": {
+      "kind": "stream",
+      "valid": "io_regSide_cmd_valid",
+      "ready": "io_regSide_cmd_ready",
+      "payload": [
+        "io_regSide_cmd_payload_last",
+        "io_regSide_cmd_payload_fragment_source",
+        "io_regSide_cmd_payload_fragment_opcode",
+        "io_regSide_cmd_payload_fragment_address",
+        "io_regSide_cmd_payload_fragment_length",
+        "io_regSide_cmd_payload_fragment_data",
+        "io_regSide_cmd_payload_fragment_mask"
+      ]
+    },
+    "io_regSide_rsp": {
+      "kind": "stream",
+      "valid": "io_regSide_rsp_valid",
+      "ready": "io_regSide_rsp_ready",
+      "payload": [
+        "io_regSide_rsp_payload_last",
+        "io_regSide_rsp_payload_fragment_source",
+        "io_regSide_rsp_payload_fragment_opcode",
+        "io_regSide_rsp_payload_fragment_data"
+      ]
+    },
+    "io_texWrite": {
+      "kind": "stream",
+      "valid": "io_texWrite_valid",
+      "ready": "io_texWrite_ready",
+      "payload": [
+        "io_texWrite_payload_pciAddr",
+        "io_texWrite_payload_data",
+        "io_texWrite_payload_mask"
+      ]
+    },
+    "io_texDrain": {
+      "kind": "stream",
+      "valid": "io_texDrain_valid",
+      "ready": "io_texDrain_ready",
+      "payload": [
+        "io_texDrain_payload_pciAddr",
+        "io_texDrain_payload_data",
+        "io_texDrain_payload_mask"
+      ]
+    },
+    "io_floatShadow": {
+      "kind": "flow",
+      "valid": "io_floatShadow_valid",
+      "ready": null,
+      "payload": [
+        "io_floatShadow_payload_address",
+        "io_floatShadow_payload_raw"
+      ]
+    }
+  },
+  "scalars": [
+    "io_pipelineBusy",
+    "io_commandReady_0",
+    "io_commandReady_1",
+    "io_commandReady_2",
+    "io_commandReady_3",
+    "io_commandReady_4",
+    "io_fifoEmpty",
+    "io_pciFifoFree",
+    "io_wasEnqueued",
+    "io_wasEnqueuedAddr",
+    "io_syncDrained"
+  ]
+}

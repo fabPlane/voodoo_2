@@ -1,0 +1,8661 @@
+{
+  "module": "Rasterizer_spinal",
+  "source": "Rasterizer_spinal.v",
+  "generator": "SpinalHDL v1.15.0    git head : 05a01af3d3345aa0afcaad8e0186dde13a359db2",
+  "clock_domain": {
+    "clock": "clk",
+    "reset": "reset",
+    "reset_kind": "sync",
+    "reset_active_level": "high"
+  },
+  "counts": {
+    "ports": 259,
+    "input_bits": 2550,
+    "output_bits": 1222
+  },
+  "ports": [
+    {
+      "name": "i_valid",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_ready",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_0_a",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "0",
+        "a"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "0",
+        "a"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 0
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "a",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_0_b",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "0",
+        "b"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "0",
+        "b"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 0
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "b",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_0_c",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "0",
+        "c"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "0",
+        "c"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 0
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "c",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_1_a",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "1",
+        "a"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "1",
+        "a"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 1
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "a",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_1_b",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "1",
+        "b"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "1",
+        "b"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 1
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "b",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_1_c",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "1",
+        "c"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "1",
+        "c"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 1
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "c",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_2_a",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "2",
+        "a"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "2",
+        "a"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 2
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "a",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_2_b",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "2",
+        "b"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "2",
+        "b"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 2
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "b",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_coeffs_2_c",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "coeffs",
+        "2",
+        "c"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "coeffs",
+        "2",
+        "c"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 2
+        }
+      ],
+      "trailing_index": null,
+      "leaf": "c",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_xrange_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 16,
+      "msb": 15,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "xrange",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "xrange",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_xrange_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 16,
+      "msb": 15,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "xrange",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "xrange",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_yrange_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 16,
+      "msb": 15,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "yrange",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "yrange",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_yrange_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 16,
+      "msb": 15,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "yrange",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "yrange",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_edgeStart_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "edgeStart",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "edgeStart",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_edgeStart_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "edgeStart",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "edgeStart",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_edgeStart_2",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 34,
+      "msb": 33,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "edgeStart",
+        "2"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "edgeStart",
+        "2"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_redGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "redGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "redGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_redGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "redGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "redGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_redGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "redGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "redGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_greenGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "greenGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "greenGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_greenGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "greenGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "greenGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_greenGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "greenGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "greenGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_blueGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "blueGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "blueGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_blueGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "blueGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "blueGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_blueGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "blueGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "blueGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_depthGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "depthGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "depthGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_depthGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "depthGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "depthGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_depthGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "depthGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "depthGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_alphaGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "alphaGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "alphaGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_alphaGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "alphaGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "alphaGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_alphaGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "alphaGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "alphaGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_wGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "wGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "wGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_wGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "wGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "wGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_wGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "wGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "wGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_sGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "sGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "sGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_sGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "sGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "sGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_sGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "sGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "sGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_tGrad_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "tGrad",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "tGrad",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_grads_tGrad_d_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "tGrad",
+        "d",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "tGrad",
+        "d",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_grads_tGrad_d_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "grads",
+        "tGrad",
+        "d",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "grads",
+        "tGrad",
+        "d",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_hiAlpha_start",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "hiAlpha",
+        "start"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "hiAlpha",
+        "start"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "start",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_hiAlpha_dAdX",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "hiAlpha",
+        "dAdX"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "hiAlpha",
+        "dAdX"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dAdX",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_hiAlpha_dAdY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "hiAlpha",
+        "dAdY"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "hiAlpha",
+        "dAdY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dAdY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_texHi_sStart",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "texHi",
+        "sStart"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "texHi",
+        "sStart"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "sStart",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_texHi_tStart",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "texHi",
+        "tStart"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "texHi",
+        "tStart"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tStart",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_texHi_dSdX",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "texHi",
+        "dSdX"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "texHi",
+        "dSdX"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dSdX",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_texHi_dTdX",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "texHi",
+        "dTdX"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "texHi",
+        "dTdX"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dTdX",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_texHi_dSdY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "texHi",
+        "dSdY"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "texHi",
+        "dSdY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dSdY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_texHi_dTdY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "texHi",
+        "dTdY"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "texHi",
+        "dTdY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dTdY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_rgbSel",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "rgbSel"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "rgbSel"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbSel",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaSel",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaSel"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaSel"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaSel",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_localSelect",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": 0,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "localSelect"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "localSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "localSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaLocalSelect",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaLocalSelect"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaLocalSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaLocalSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_localSelectOverride",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "localSelectOverride"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "localSelectOverride"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "localSelectOverride",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_zeroOther",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "zeroOther"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "zeroOther"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "zeroOther",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_subClocal",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "subClocal"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "subClocal"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "subClocal",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_mselect",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "mselect"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "mselect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "mselect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_reverseBlend",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "reverseBlend"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "reverseBlend"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reverseBlend",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_add",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "add"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "add"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "add",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_invertOutput",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "invertOutput"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "invertOutput"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "invertOutput",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaZeroOther",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaZeroOther"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaZeroOther"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaZeroOther",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaSubClocal",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaSubClocal"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaSubClocal"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaSubClocal",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaMselect",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaMselect"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaMselect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaMselect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaReverseBlend",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaReverseBlend"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaReverseBlend"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaReverseBlend",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaAdd",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaAdd"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaAdd"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaAdd",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_alphaInvertOutput",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "alphaInvertOutput"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "alphaInvertOutput"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaInvertOutput",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_paramAdjust",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "paramAdjust"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "paramAdjust"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "paramAdjust",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fbzColorPath_textureEnable",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fbzColorPath",
+        "textureEnable"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fbzColorPath",
+        "textureEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "textureEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fogMode_fogEnable",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fogMode",
+        "fogEnable"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fogMode",
+        "fogEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fogMode_fogAdd",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fogMode",
+        "fogAdd"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fogMode",
+        "fogAdd"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogAdd",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fogMode_fogMult",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fogMode",
+        "fogMult"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fogMode",
+        "fogMult"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogMult",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fogMode_fogModeSelect",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fogMode",
+        "fogModeSelect"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fogMode",
+        "fogModeSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogModeSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_fogMode_fogConstant",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "fogMode",
+        "fogConstant"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "fogMode",
+        "fogConstant"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogConstant",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_alphaTestEnable",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "alphaTestEnable"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "alphaTestEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaTestEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_alphaFunc",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "alphaFunc"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "alphaFunc"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaFunc",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_alphaBlendEnable",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "alphaBlendEnable"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "alphaBlendEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaBlendEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_enableAntiAlias",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "enableAntiAlias"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "enableAntiAlias"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "enableAntiAlias",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_reserved1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "reserved1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "reserved1"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reserved1",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_rgbSrcFact",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "rgbSrcFact"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "rgbSrcFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbSrcFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_rgbDstFact",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "rgbDstFact"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "rgbDstFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbDstFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_aSrcFact",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "aSrcFact"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "aSrcFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "aSrcFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_aDstFact",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "aDstFact"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "aDstFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "aDstFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_alphaMode_alphaRef",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 8,
+      "msb": 7,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "alphaMode",
+        "alphaRef"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "alphaMode",
+        "alphaRef"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaRef",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_enableClipping",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "enableClipping"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "enableClipping"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "enableClipping",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_clipLeft",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "clipLeft"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "clipLeft"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipLeft",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_clipRight",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "clipRight"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "clipRight"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipRight",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_clipLowY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "clipLowY"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "clipLowY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipLowY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_clipHighY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "clipHighY"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "clipHighY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipHighY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmuTextureMode",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmuTextureMode"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmuTextureMode"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmuTextureMode",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmuTexBaseAddr",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmuTexBaseAddr"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmuTexBaseAddr"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmuTexBaseAddr",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmuTexBaseAddr1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmuTexBaseAddr1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmuTexBaseAddr1"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmuTexBaseAddr1",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmuTexBaseAddr2",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmuTexBaseAddr2"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmuTexBaseAddr2"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmuTexBaseAddr2",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmuTexBaseAddr38",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmuTexBaseAddr38"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmuTexBaseAddr38"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmuTexBaseAddr38",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmuTLOD",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 27,
+      "msb": 26,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmuTLOD"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmuTLOD"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmuTLOD",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmudSdX",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmudSdX"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmudSdX"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmudSdX",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmudTdX",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmudTdX"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmudTdX"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmudTdX",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmudSdY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmudSdY"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmudSdY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmudSdY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_tmudTdY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "tmudTdY"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "tmudTdY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tmudTdY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_2",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "2"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "2"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_3",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "3"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "3"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 3
+        }
+      ],
+      "trailing_index": 3,
+      "leaf": "3",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_4",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "4"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "4"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 4
+        }
+      ],
+      "trailing_index": 4,
+      "leaf": "4",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_5",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "5"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "5"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 5
+        }
+      ],
+      "trailing_index": 5,
+      "leaf": "5",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_6",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "6"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "6"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 6
+        }
+      ],
+      "trailing_index": 6,
+      "leaf": "6",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_7",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "7"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "7"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 7
+        }
+      ],
+      "trailing_index": 7,
+      "leaf": "7",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texBase_8",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texBase",
+        "8"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texBase",
+        "8"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 8
+        }
+      ],
+      "trailing_index": 8,
+      "leaf": "8",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_2",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "2"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "2"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_3",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "3"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "3"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 3
+        }
+      ],
+      "trailing_index": 3,
+      "leaf": "3",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_4",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "4"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "4"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 4
+        }
+      ],
+      "trailing_index": 4,
+      "leaf": "4",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_5",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "5"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "5"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 5
+        }
+      ],
+      "trailing_index": 5,
+      "leaf": "5",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_6",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "6"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "6"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 6
+        }
+      ],
+      "trailing_index": 6,
+      "leaf": "6",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_7",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "7"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "7"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 7
+        }
+      ],
+      "trailing_index": 7,
+      "leaf": "7",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texEnd_8",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texEnd",
+        "8"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texEnd",
+        "8"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 8
+        }
+      ],
+      "trailing_index": 8,
+      "leaf": "8",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_0",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_1",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_2",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "2"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "2"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_3",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "3"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "3"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 3
+        }
+      ],
+      "trailing_index": 3,
+      "leaf": "3",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_4",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "4"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "4"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 4
+        }
+      ],
+      "trailing_index": 4,
+      "leaf": "4",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_5",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "5"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "5"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 5
+        }
+      ],
+      "trailing_index": 5,
+      "leaf": "5",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_6",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "6"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "6"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 6
+        }
+      ],
+      "trailing_index": 6,
+      "leaf": "6",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_7",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "7"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "7"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 7
+        }
+      ],
+      "trailing_index": 7,
+      "leaf": "7",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "i_payload_config_texTables_texShift_8",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "i",
+        "payload",
+        "config",
+        "texTables",
+        "texShift",
+        "8"
+      ],
+      "role": "payload",
+      "stream": "i",
+      "bundle_path": [
+        "i"
+      ],
+      "field_path": [
+        "config",
+        "texTables",
+        "texShift",
+        "8"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 8
+        }
+      ],
+      "trailing_index": 8,
+      "leaf": "8",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_valid",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_ready",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_redGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "redGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "redGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "redGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_greenGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "greenGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "greenGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "greenGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_blueGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "blueGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "blueGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "blueGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_depthGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "depthGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "depthGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "depthGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_alphaGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "alphaGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "alphaGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_wGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "wGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "wGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "wGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_sGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "sGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "sGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "sGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_grads_tGrad",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 48,
+      "msb": 47,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "grads",
+        "tGrad"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "grads",
+        "tGrad"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tGrad",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_alphaGradHi",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 46,
+      "msb": 45,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "alphaGradHi"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "alphaGradHi"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaGradHi",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_coords_0",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "coords",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "coords",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_coords_1",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "coords",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "coords",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 3,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_textureEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "textureEnable"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "textureEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "textureEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_textureMode",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 12,
+      "msb": 11,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "textureMode"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "textureMode"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "textureMode",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_texBaseAddr",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texBaseAddr"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texBaseAddr"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "texBaseAddr",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_texBaseAddr1",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texBaseAddr1"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texBaseAddr1"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "texBaseAddr1",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_texBaseAddr2",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texBaseAddr2"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texBaseAddr2"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "texBaseAddr2",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_texBaseAddr38",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 24,
+      "msb": 23,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texBaseAddr38"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texBaseAddr38"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "texBaseAddr38",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_tLOD",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 27,
+      "msb": 26,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "tLOD"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "tLOD"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "tLOD",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_dSdX",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "dSdX"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "dSdX"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dSdX",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_dTdX",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "dTdX"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "dTdX"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dTdX",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_dSdY",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "dSdY"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "dSdY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dSdY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_dTdY",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 32,
+      "msb": 31,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "dTdY"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "dTdY"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "dTdY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_0",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_1",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_2",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "2"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "2"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_3",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "3"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "3"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 3
+        }
+      ],
+      "trailing_index": 3,
+      "leaf": "3",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_4",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "4"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "4"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 4
+        }
+      ],
+      "trailing_index": 4,
+      "leaf": "4",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_5",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "5"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "5"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 5
+        }
+      ],
+      "trailing_index": 5,
+      "leaf": "5",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_6",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "6"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "6"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 6
+        }
+      ],
+      "trailing_index": 6,
+      "leaf": "6",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_7",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "7"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "7"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 7
+        }
+      ],
+      "trailing_index": 7,
+      "leaf": "7",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texBase_8",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "8"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texBase",
+        "8"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 8
+        }
+      ],
+      "trailing_index": 8,
+      "leaf": "8",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_0",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_1",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_2",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "2"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "2"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_3",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "3"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "3"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 3
+        }
+      ],
+      "trailing_index": 3,
+      "leaf": "3",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_4",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "4"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "4"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 4
+        }
+      ],
+      "trailing_index": 4,
+      "leaf": "4",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_5",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "5"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "5"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 5
+        }
+      ],
+      "trailing_index": 5,
+      "leaf": "5",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_6",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "6"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "6"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 6
+        }
+      ],
+      "trailing_index": 6,
+      "leaf": "6",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_7",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "7"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "7"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 7
+        }
+      ],
+      "trailing_index": 7,
+      "leaf": "7",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texEnd_8",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 22,
+      "msb": 21,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "8"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texEnd",
+        "8"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 8
+        }
+      ],
+      "trailing_index": 8,
+      "leaf": "8",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_0",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "0"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "0"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 0
+        }
+      ],
+      "trailing_index": 0,
+      "leaf": "0",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_1",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "1"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "1"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 1
+        }
+      ],
+      "trailing_index": 1,
+      "leaf": "1",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_2",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "2"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "2"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 2
+        }
+      ],
+      "trailing_index": 2,
+      "leaf": "2",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_3",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "3"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "3"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 3
+        }
+      ],
+      "trailing_index": 3,
+      "leaf": "3",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_4",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "4"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "4"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 4
+        }
+      ],
+      "trailing_index": 4,
+      "leaf": "4",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_5",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "5"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "5"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 5
+        }
+      ],
+      "trailing_index": 5,
+      "leaf": "5",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_6",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "6"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "6"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 6
+        }
+      ],
+      "trailing_index": 6,
+      "leaf": "6",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_7",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "7"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "7"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 7
+        }
+      ],
+      "trailing_index": 7,
+      "leaf": "7",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_tmuConfig_texTables_texShift_8",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "8"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "tmuConfig",
+        "texTables",
+        "texShift",
+        "8"
+      ],
+      "indices": [
+        {
+          "position": 5,
+          "index": 8
+        }
+      ],
+      "trailing_index": 8,
+      "leaf": "8",
+      "trailing_index_kind": "vec_index"
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_rgbSel",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "rgbSel"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "rgbSel"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbSel",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaSel",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSel"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSel"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaSel",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_localSelect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": 0,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelect"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "localSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaLocalSelect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaLocalSelect"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaLocalSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaLocalSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_localSelectOverride",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelectOverride"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelectOverride"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "localSelectOverride",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_zeroOther",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "zeroOther"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "zeroOther"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "zeroOther",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_subClocal",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "subClocal"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "subClocal"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "subClocal",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_mselect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "mselect"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "mselect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "mselect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_reverseBlend",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "reverseBlend"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "reverseBlend"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reverseBlend",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_add",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "add"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "add"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "add",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_invertOutput",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "invertOutput"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "invertOutput"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "invertOutput",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaZeroOther",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaZeroOther"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaZeroOther"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaZeroOther",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaSubClocal",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSubClocal"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSubClocal"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaSubClocal",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaMselect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaMselect"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaMselect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaMselect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaReverseBlend",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaReverseBlend"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaReverseBlend"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaReverseBlend",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaAdd",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaAdd"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaAdd"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaAdd",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_alphaInvertOutput",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaInvertOutput"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaInvertOutput"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaInvertOutput",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_paramAdjust",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "paramAdjust"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "paramAdjust"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "paramAdjust",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fbzColorPath_textureEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "textureEnable"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "textureEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "textureEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fogMode_fogEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogEnable"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fogMode_fogAdd",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogAdd"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogAdd"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogAdd",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fogMode_fogMult",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogMult"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogMult"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogMult",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fogMode_fogModeSelect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogModeSelect"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogModeSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogModeSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_fogMode_fogConstant",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogConstant"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogConstant"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogConstant",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_alphaTestEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaTestEnable"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaTestEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaTestEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_alphaFunc",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaFunc"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaFunc"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaFunc",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_alphaBlendEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaBlendEnable"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaBlendEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaBlendEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_enableAntiAlias",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "enableAntiAlias"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "enableAntiAlias"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "enableAntiAlias",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_reserved1",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "reserved1"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "reserved1"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reserved1",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_rgbSrcFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "rgbSrcFact"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "rgbSrcFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbSrcFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_rgbDstFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "rgbDstFact"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "rgbDstFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbDstFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_aSrcFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "aSrcFact"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "aSrcFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "aSrcFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_aDstFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "aDstFact"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "aDstFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "aDstFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "o_payload_pixelConfig_alphaMode_alphaRef",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 8,
+      "msb": 7,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "o",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaRef"
+      ],
+      "role": "payload",
+      "stream": "o",
+      "bundle_path": [
+        "o"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaRef"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaRef",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_valid",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "valid"
+      ],
+      "role": "valid",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "valid",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_ready",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "ready"
+      ],
+      "role": "ready",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "ready",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_xStart",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 16,
+      "msb": 15,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "xStart"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "xStart"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "xStart",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_xEnd",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 16,
+      "msb": 15,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "xEnd"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "xEnd"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "xEnd",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_y",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 16,
+      "msb": 15,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "y"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "y"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "y",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_rgbSel",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "rgbSel"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "rgbSel"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbSel",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaSel",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSel"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSel"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaSel",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_localSelect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": 0,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelect"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "localSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaLocalSelect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaLocalSelect"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaLocalSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaLocalSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_localSelectOverride",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelectOverride"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "localSelectOverride"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "localSelectOverride",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_zeroOther",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "zeroOther"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "zeroOther"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "zeroOther",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_subClocal",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "subClocal"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "subClocal"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "subClocal",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_mselect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "mselect"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "mselect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "mselect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_reverseBlend",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "reverseBlend"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "reverseBlend"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reverseBlend",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_add",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "add"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "add"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "add",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_invertOutput",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "invertOutput"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "invertOutput"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "invertOutput",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaZeroOther",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaZeroOther"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaZeroOther"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaZeroOther",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaSubClocal",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSubClocal"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaSubClocal"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaSubClocal",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaMselect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaMselect"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaMselect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaMselect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaReverseBlend",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaReverseBlend"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaReverseBlend"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaReverseBlend",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaAdd",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaAdd"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaAdd"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaAdd",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaInvertOutput",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaInvertOutput"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "alphaInvertOutput"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaInvertOutput",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_paramAdjust",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "paramAdjust"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "paramAdjust"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "paramAdjust",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fbzColorPath_textureEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fbzColorPath",
+        "textureEnable"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fbzColorPath",
+        "textureEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "textureEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fogMode_fogEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogEnable"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fogMode_fogAdd",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogAdd"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogAdd"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogAdd",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fogMode_fogMult",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogMult"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogMult"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogMult",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fogMode_fogModeSelect",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogModeSelect"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogModeSelect"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogModeSelect",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_fogMode_fogConstant",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "fogMode",
+        "fogConstant"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "fogMode",
+        "fogConstant"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "fogConstant",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_alphaTestEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaTestEnable"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaTestEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaTestEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_alphaFunc",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 3,
+      "msb": 2,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaFunc"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaFunc"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaFunc",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_alphaBlendEnable",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaBlendEnable"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaBlendEnable"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaBlendEnable",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_enableAntiAlias",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "enableAntiAlias"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "enableAntiAlias"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "enableAntiAlias",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_reserved1",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 2,
+      "msb": 1,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "reserved1"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "reserved1"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reserved1",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_rgbSrcFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "rgbSrcFact"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "rgbSrcFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbSrcFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_rgbDstFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "rgbDstFact"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "rgbDstFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "rgbDstFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_aSrcFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "aSrcFact"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "aSrcFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "aSrcFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_aDstFact",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 4,
+      "msb": 3,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "aDstFact"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "aDstFact"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "aDstFact",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "prefetchSpan_payload_pixelConfig_alphaMode_alphaRef",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 8,
+      "msb": 7,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "prefetchSpan",
+        "payload",
+        "pixelConfig",
+        "alphaMode",
+        "alphaRef"
+      ],
+      "role": "payload",
+      "stream": "prefetchSpan",
+      "bundle_path": [
+        "prefetchSpan"
+      ],
+      "field_path": [
+        "pixelConfig",
+        "alphaMode",
+        "alphaRef"
+      ],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "alphaRef",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "enableClipping",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "enableClipping"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "enableClipping",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "clipLeft",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "clipLeft"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipLeft",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "clipRight",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "clipRight"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipRight",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "clipLowY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "clipLowY"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipLowY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "clipHighY",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 10,
+      "msb": 9,
+      "lsb": 0,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "clipHighY"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clipHighY",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "running",
+      "direction": "output",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "running"
+      ],
+      "role": "none",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "running",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "clk",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "clk"
+      ],
+      "role": "clock",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "clk",
+      "trailing_index_kind": null
+    },
+    {
+      "name": "reset",
+      "direction": "input",
+      "verilog_type": "wire",
+      "width": 1,
+      "msb": null,
+      "lsb": null,
+      "signed": false,
+      "io_bundle": false,
+      "path": [
+        "reset"
+      ],
+      "role": "reset",
+      "stream": null,
+      "bundle_path": [],
+      "field_path": [],
+      "indices": [],
+      "trailing_index": null,
+      "leaf": "reset",
+      "trailing_index_kind": null
+    }
+  ],
+  "streams": {
+    "i": {
+      "kind": "stream",
+      "valid": "i_valid",
+      "ready": "i_ready",
+      "payload": [
+        "i_payload_coeffs_0_a",
+        "i_payload_coeffs_0_b",
+        "i_payload_coeffs_0_c",
+        "i_payload_coeffs_1_a",
+        "i_payload_coeffs_1_b",
+        "i_payload_coeffs_1_c",
+        "i_payload_coeffs_2_a",
+        "i_payload_coeffs_2_b",
+        "i_payload_coeffs_2_c",
+        "i_payload_xrange_0",
+        "i_payload_xrange_1",
+        "i_payload_yrange_0",
+        "i_payload_yrange_1",
+        "i_payload_edgeStart_0",
+        "i_payload_edgeStart_1",
+        "i_payload_edgeStart_2",
+        "i_payload_grads_redGrad_start",
+        "i_payload_grads_redGrad_d_0",
+        "i_payload_grads_redGrad_d_1",
+        "i_payload_grads_greenGrad_start",
+        "i_payload_grads_greenGrad_d_0",
+        "i_payload_grads_greenGrad_d_1",
+        "i_payload_grads_blueGrad_start",
+        "i_payload_grads_blueGrad_d_0",
+        "i_payload_grads_blueGrad_d_1",
+        "i_payload_grads_depthGrad_start",
+        "i_payload_grads_depthGrad_d_0",
+        "i_payload_grads_depthGrad_d_1",
+        "i_payload_grads_alphaGrad_start",
+        "i_payload_grads_alphaGrad_d_0",
+        "i_payload_grads_alphaGrad_d_1",
+        "i_payload_grads_wGrad_start",
+        "i_payload_grads_wGrad_d_0",
+        "i_payload_grads_wGrad_d_1",
+        "i_payload_grads_sGrad_start",
+        "i_payload_grads_sGrad_d_0",
+        "i_payload_grads_sGrad_d_1",
+        "i_payload_grads_tGrad_start",
+        "i_payload_grads_tGrad_d_0",
+        "i_payload_grads_tGrad_d_1",
+        "i_payload_hiAlpha_start",
+        "i_payload_hiAlpha_dAdX",
+        "i_payload_hiAlpha_dAdY",
+        "i_payload_texHi_sStart",
+        "i_payload_texHi_tStart",
+        "i_payload_texHi_dSdX",
+        "i_payload_texHi_dTdX",
+        "i_payload_texHi_dSdY",
+        "i_payload_texHi_dTdY",
+        "i_payload_config_fbzColorPath_rgbSel",
+        "i_payload_config_fbzColorPath_alphaSel",
+        "i_payload_config_fbzColorPath_localSelect",
+        "i_payload_config_fbzColorPath_alphaLocalSelect",
+        "i_payload_config_fbzColorPath_localSelectOverride",
+        "i_payload_config_fbzColorPath_zeroOther",
+        "i_payload_config_fbzColorPath_subClocal",
+        "i_payload_config_fbzColorPath_mselect",
+        "i_payload_config_fbzColorPath_reverseBlend",
+        "i_payload_config_fbzColorPath_add",
+        "i_payload_config_fbzColorPath_invertOutput",
+        "i_payload_config_fbzColorPath_alphaZeroOther",
+        "i_payload_config_fbzColorPath_alphaSubClocal",
+        "i_payload_config_fbzColorPath_alphaMselect",
+        "i_payload_config_fbzColorPath_alphaReverseBlend",
+        "i_payload_config_fbzColorPath_alphaAdd",
+        "i_payload_config_fbzColorPath_alphaInvertOutput",
+        "i_payload_config_fbzColorPath_paramAdjust",
+        "i_payload_config_fbzColorPath_textureEnable",
+        "i_payload_config_fogMode_fogEnable",
+        "i_payload_config_fogMode_fogAdd",
+        "i_payload_config_fogMode_fogMult",
+        "i_payload_config_fogMode_fogModeSelect",
+        "i_payload_config_fogMode_fogConstant",
+        "i_payload_config_alphaMode_alphaTestEnable",
+        "i_payload_config_alphaMode_alphaFunc",
+        "i_payload_config_alphaMode_alphaBlendEnable",
+        "i_payload_config_alphaMode_enableAntiAlias",
+        "i_payload_config_alphaMode_reserved1",
+        "i_payload_config_alphaMode_rgbSrcFact",
+        "i_payload_config_alphaMode_rgbDstFact",
+        "i_payload_config_alphaMode_aSrcFact",
+        "i_payload_config_alphaMode_aDstFact",
+        "i_payload_config_alphaMode_alphaRef",
+        "i_payload_config_enableClipping",
+        "i_payload_config_clipLeft",
+        "i_payload_config_clipRight",
+        "i_payload_config_clipLowY",
+        "i_payload_config_clipHighY",
+        "i_payload_config_tmuTextureMode",
+        "i_payload_config_tmuTexBaseAddr",
+        "i_payload_config_tmuTexBaseAddr1",
+        "i_payload_config_tmuTexBaseAddr2",
+        "i_payload_config_tmuTexBaseAddr38",
+        "i_payload_config_tmuTLOD",
+        "i_payload_config_tmudSdX",
+        "i_payload_config_tmudTdX",
+        "i_payload_config_tmudSdY",
+        "i_payload_config_tmudTdY",
+        "i_payload_config_texTables_texBase_0",
+        "i_payload_config_texTables_texBase_1",
+        "i_payload_config_texTables_texBase_2",
+        "i_payload_config_texTables_texBase_3",
+        "i_payload_config_texTables_texBase_4",
+        "i_payload_config_texTables_texBase_5",
+        "i_payload_config_texTables_texBase_6",
+        "i_payload_config_texTables_texBase_7",
+        "i_payload_config_texTables_texBase_8",
+        "i_payload_config_texTables_texEnd_0",
+        "i_payload_config_texTables_texEnd_1",
+        "i_payload_config_texTables_texEnd_2",
+        "i_payload_config_texTables_texEnd_3",
+        "i_payload_config_texTables_texEnd_4",
+        "i_payload_config_texTables_texEnd_5",
+        "i_payload_config_texTables_texEnd_6",
+        "i_payload_config_texTables_texEnd_7",
+        "i_payload_config_texTables_texEnd_8",
+        "i_payload_config_texTables_texShift_0",
+        "i_payload_config_texTables_texShift_1",
+        "i_payload_config_texTables_texShift_2",
+        "i_payload_config_texTables_texShift_3",
+        "i_payload_config_texTables_texShift_4",
+        "i_payload_config_texTables_texShift_5",
+        "i_payload_config_texTables_texShift_6",
+        "i_payload_config_texTables_texShift_7",
+        "i_payload_config_texTables_texShift_8"
+      ]
+    },
+    "o": {
+      "kind": "stream",
+      "valid": "o_valid",
+      "ready": "o_ready",
+      "payload": [
+        "o_payload_grads_redGrad",
+        "o_payload_grads_greenGrad",
+        "o_payload_grads_blueGrad",
+        "o_payload_grads_depthGrad",
+        "o_payload_grads_alphaGrad",
+        "o_payload_grads_wGrad",
+        "o_payload_grads_sGrad",
+        "o_payload_grads_tGrad",
+        "o_payload_alphaGradHi",
+        "o_payload_coords_0",
+        "o_payload_coords_1",
+        "o_payload_tmuConfig_textureEnable",
+        "o_payload_tmuConfig_textureMode",
+        "o_payload_tmuConfig_texBaseAddr",
+        "o_payload_tmuConfig_texBaseAddr1",
+        "o_payload_tmuConfig_texBaseAddr2",
+        "o_payload_tmuConfig_texBaseAddr38",
+        "o_payload_tmuConfig_tLOD",
+        "o_payload_tmuConfig_dSdX",
+        "o_payload_tmuConfig_dTdX",
+        "o_payload_tmuConfig_dSdY",
+        "o_payload_tmuConfig_dTdY",
+        "o_payload_tmuConfig_texTables_texBase_0",
+        "o_payload_tmuConfig_texTables_texBase_1",
+        "o_payload_tmuConfig_texTables_texBase_2",
+        "o_payload_tmuConfig_texTables_texBase_3",
+        "o_payload_tmuConfig_texTables_texBase_4",
+        "o_payload_tmuConfig_texTables_texBase_5",
+        "o_payload_tmuConfig_texTables_texBase_6",
+        "o_payload_tmuConfig_texTables_texBase_7",
+        "o_payload_tmuConfig_texTables_texBase_8",
+        "o_payload_tmuConfig_texTables_texEnd_0",
+        "o_payload_tmuConfig_texTables_texEnd_1",
+        "o_payload_tmuConfig_texTables_texEnd_2",
+        "o_payload_tmuConfig_texTables_texEnd_3",
+        "o_payload_tmuConfig_texTables_texEnd_4",
+        "o_payload_tmuConfig_texTables_texEnd_5",
+        "o_payload_tmuConfig_texTables_texEnd_6",
+        "o_payload_tmuConfig_texTables_texEnd_7",
+        "o_payload_tmuConfig_texTables_texEnd_8",
+        "o_payload_tmuConfig_texTables_texShift_0",
+        "o_payload_tmuConfig_texTables_texShift_1",
+        "o_payload_tmuConfig_texTables_texShift_2",
+        "o_payload_tmuConfig_texTables_texShift_3",
+        "o_payload_tmuConfig_texTables_texShift_4",
+        "o_payload_tmuConfig_texTables_texShift_5",
+        "o_payload_tmuConfig_texTables_texShift_6",
+        "o_payload_tmuConfig_texTables_texShift_7",
+        "o_payload_tmuConfig_texTables_texShift_8",
+        "o_payload_pixelConfig_fbzColorPath_rgbSel",
+        "o_payload_pixelConfig_fbzColorPath_alphaSel",
+        "o_payload_pixelConfig_fbzColorPath_localSelect",
+        "o_payload_pixelConfig_fbzColorPath_alphaLocalSelect",
+        "o_payload_pixelConfig_fbzColorPath_localSelectOverride",
+        "o_payload_pixelConfig_fbzColorPath_zeroOther",
+        "o_payload_pixelConfig_fbzColorPath_subClocal",
+        "o_payload_pixelConfig_fbzColorPath_mselect",
+        "o_payload_pixelConfig_fbzColorPath_reverseBlend",
+        "o_payload_pixelConfig_fbzColorPath_add",
+        "o_payload_pixelConfig_fbzColorPath_invertOutput",
+        "o_payload_pixelConfig_fbzColorPath_alphaZeroOther",
+        "o_payload_pixelConfig_fbzColorPath_alphaSubClocal",
+        "o_payload_pixelConfig_fbzColorPath_alphaMselect",
+        "o_payload_pixelConfig_fbzColorPath_alphaReverseBlend",
+        "o_payload_pixelConfig_fbzColorPath_alphaAdd",
+        "o_payload_pixelConfig_fbzColorPath_alphaInvertOutput",
+        "o_payload_pixelConfig_fbzColorPath_paramAdjust",
+        "o_payload_pixelConfig_fbzColorPath_textureEnable",
+        "o_payload_pixelConfig_fogMode_fogEnable",
+        "o_payload_pixelConfig_fogMode_fogAdd",
+        "o_payload_pixelConfig_fogMode_fogMult",
+        "o_payload_pixelConfig_fogMode_fogModeSelect",
+        "o_payload_pixelConfig_fogMode_fogConstant",
+        "o_payload_pixelConfig_alphaMode_alphaTestEnable",
+        "o_payload_pixelConfig_alphaMode_alphaFunc",
+        "o_payload_pixelConfig_alphaMode_alphaBlendEnable",
+        "o_payload_pixelConfig_alphaMode_enableAntiAlias",
+        "o_payload_pixelConfig_alphaMode_reserved1",
+        "o_payload_pixelConfig_alphaMode_rgbSrcFact",
+        "o_payload_pixelConfig_alphaMode_rgbDstFact",
+        "o_payload_pixelConfig_alphaMode_aSrcFact",
+        "o_payload_pixelConfig_alphaMode_aDstFact",
+        "o_payload_pixelConfig_alphaMode_alphaRef"
+      ]
+    },
+    "prefetchSpan": {
+      "kind": "stream",
+      "valid": "prefetchSpan_valid",
+      "ready": "prefetchSpan_ready",
+      "payload": [
+        "prefetchSpan_payload_xStart",
+        "prefetchSpan_payload_xEnd",
+        "prefetchSpan_payload_y",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_rgbSel",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaSel",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_localSelect",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaLocalSelect",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_localSelectOverride",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_zeroOther",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_subClocal",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_mselect",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_reverseBlend",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_add",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_invertOutput",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaZeroOther",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaSubClocal",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaMselect",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaReverseBlend",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaAdd",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_alphaInvertOutput",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_paramAdjust",
+        "prefetchSpan_payload_pixelConfig_fbzColorPath_textureEnable",
+        "prefetchSpan_payload_pixelConfig_fogMode_fogEnable",
+        "prefetchSpan_payload_pixelConfig_fogMode_fogAdd",
+        "prefetchSpan_payload_pixelConfig_fogMode_fogMult",
+        "prefetchSpan_payload_pixelConfig_fogMode_fogModeSelect",
+        "prefetchSpan_payload_pixelConfig_fogMode_fogConstant",
+        "prefetchSpan_payload_pixelConfig_alphaMode_alphaTestEnable",
+        "prefetchSpan_payload_pixelConfig_alphaMode_alphaFunc",
+        "prefetchSpan_payload_pixelConfig_alphaMode_alphaBlendEnable",
+        "prefetchSpan_payload_pixelConfig_alphaMode_enableAntiAlias",
+        "prefetchSpan_payload_pixelConfig_alphaMode_reserved1",
+        "prefetchSpan_payload_pixelConfig_alphaMode_rgbSrcFact",
+        "prefetchSpan_payload_pixelConfig_alphaMode_rgbDstFact",
+        "prefetchSpan_payload_pixelConfig_alphaMode_aSrcFact",
+        "prefetchSpan_payload_pixelConfig_alphaMode_aDstFact",
+        "prefetchSpan_payload_pixelConfig_alphaMode_alphaRef"
+      ]
+    }
+  },
+  "scalars": [
+    "enableClipping",
+    "clipLeft",
+    "clipRight",
+    "clipLowY",
+    "clipHighY",
+    "running"
+  ]
+}
