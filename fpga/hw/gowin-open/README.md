@@ -51,11 +51,11 @@ currently stopped at the next missing device resource:
 ERROR: Unable to place cell 'u_pixel_div', no BELs remaining to implement cell type 'CLKDIV'
 ```
 
-`make all` therefore keeps the three known-working bitstreams green while the
-HDMI source and synthesis checkpoint remain available for continued PLL
-chip-database work. A real 640x480 TMDS output needs 125 MHz serial and 25 MHz
-pixel clocks, so bypassing the PLL with the board's 50 MHz oscillator is not a
-usable hardware workaround.
+`make all` therefore keeps the three buildable smoke-test bitstreams green
+while the HDMI source and synthesis checkpoint remain available for continued
+PLL chip-database work. A real 640x480 TMDS output needs 125 MHz serial and
+25 MHz pixel clocks, so bypassing the PLL with the board's 50 MHz oscillator
+is not a usable hardware workaround.
 
 Or, with a recent OSS CAD Suite already on `PATH`:
 
@@ -84,6 +84,24 @@ This currently uses Gowin's programmer only as the transport. The generated
 bitstream itself comes entirely from Yosys, nextpnr, and Apicula. A future
 openFPGALoader target can replace the transport after its Console cable path is
 verified.
+
+## Hardware status and regression reference
+
+The minimal vendor reference in `vendor-reference/` builds the same `blinky.v`
+and pin constraints with Gowin EDA. It is deliberately kept separate from the
+open outputs and is useful only for bitstream-delta and hardware transport
+checks. On a GW5AST-138C it SRAM-loads successfully and alternates the two
+status-light channels.
+
+The open image is not hardware-valid yet. The header, SSPI/MSPI GPIO options,
+and first-frame CRC now match the working reference, but the FPGA still reports
+status `0x20` after loading. Comparing an empty vendor image showed the next
+chip-database blocker: every ordinary logic tile carries a 280-bit blank-state
+pattern that the current 138C database does not model. Configured tiles both
+set and clear portions of that baseline, so simply ORing or XORing a blank
+template is insufficient. Apicula needs domain-aware fuse application for the
+routing, slice, I/O-bank, and configuration tables before these demos should be
+copied to an SD card or described as hardware-tested.
 
 ## Porting order
 
