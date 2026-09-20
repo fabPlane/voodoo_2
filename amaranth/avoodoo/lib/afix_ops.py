@@ -31,6 +31,7 @@ one.
 from __future__ import annotations
 
 from amaranth import Elaboratable, Module, Signal
+from amaranth.lib import data
 
 from avoodoo.config import QFormat, SQ, UQ, Config
 from avoodoo.lib.fixed import AFixShape, AFixValue, RoundType, sat_unsigned
@@ -73,15 +74,43 @@ class AfixOps(Elaboratable):
         self._outputs: dict[str, Signal] = {}
         self._assignments: list[tuple[Signal, object]] = []
 
-        self.ops: dict[str, tuple[AFixValue, AFixValue]] = {}
+        # Operands of these formats reach the arithmetic through a
+        # `data.StructLayout` field instead of straight off the port, so the
+        # lockstep diff covers the way the core actually stores an AFix -- in
+        # a Bundle.  That path is not cosmetic: `data.View` hands the field's
+        # shape an *unsigned* slice of the packed signal, and a regression
+        # there reads every negative operand as a large positive one (fixed in
+        # AFixValue.__init__; found by the SpanRasterizer diff, not by this
+        # module, which is why it is wired up here now).  The ports are
+        # untouched, so both sides still have exactly 282 of them.
+        layout_routed = ("vertex", "coeff", "colormul")
+
+        shapes: dict[str, AFixShape] = {}
         for key, fmt in self.formats:
             shape = AFixShape.from_q(fmt)
-            self.ops[key] = (self._mk_in(f"a_{key}", shape),
-                             self._mk_in(f"b_{key}", shape))
+            for side in ("a", "b"):
+                name = f"{side}_{key}"
+                self._inputs[name] = Signal(shape.bit_width, name=_port_name(name))
+                shapes[name] = shape
+
+        self._bundled = {n: s for n, s in shapes.items()
+                         if n.split("_", 1)[1] in layout_routed}
+        self.bundle = Signal(data.StructLayout(self._bundled), name="bundle")
+
+        self.ops: dict[str, tuple[AFixValue, AFixValue]] = {}
+        for key, _fmt in self.formats:
+            self.ops[key] = (self._operand(f"a_{key}", shapes[f"a_{key}"]),
+                             self._operand(f"b_{key}", shapes[f"b_{key}"]))
 
         self._build()
 
     # -- port plumbing -----------------------------------------------------
+
+    def _operand(self, name: str, shape: AFixShape) -> AFixValue:
+        """The AFix an input port carries, via the bundle where routed."""
+        if name in self._bundled:
+            return self.bundle[name]
+        return AFixValue.from_raw(shape, self._inputs[name])
 
     def _mk_in(self, name: str, shape: AFixShape) -> AFixValue:
         """An input port sized to ``AFix(fmt).raw``, reinterpreted as that AFix.
@@ -109,6 +138,8 @@ class AfixOps(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
+        for name in self._bundled:
+            m.d.comb += self.bundle[name].raw.eq(self._inputs[name])
         for port, value in self._assignments:
             m.d.comb += port.eq(value)
         return m
