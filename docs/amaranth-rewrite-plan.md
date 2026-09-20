@@ -379,6 +379,15 @@ Spinal core does.
       Details in `amaranth/hw/spike/RESULTS.md`; the user must load it with
       `hardware/tang-console-138k/program_debug_sram.sh` while holding MODE.
 - [ ] 0.4 diff harness proven on StreamWhile + Fpxx
+  - **Spinal side done (2026-09-20).** `fpga/src/voodoo/diff/GenOne.scala`
+    (`scala-cli run . --main-class voodoo.diff.GenOne -- <Module> [outDir]`, 44 buildable
+    entries, 2 stubs) generates `<Module>_spinal.v`; `DiffWrappers.scala` wraps the
+    non-Component `StreamWhile`/`Fpxx`; `AfixOps.scala` is the AFix op-by-op reference for
+    0.2; `ports.py` emits the port-name maps committed under `diff/portmaps/`. StreamWhile,
+    FpxxDiffWrap, AfixOps, PciFifo, Rasterizer, ColorCombine and CoreSim generate and pass
+    `verilator --lint-only` with 0 errors. Conventions and the harness inventory:
+    `docs/amaranth/spinal-naming-and-harness.md`. Remaining: the Amaranth side
+    (`gen_module.py`, `tools/diff/harness.py`, the stimulus driver).
 - [ ] 0.5 harness copy skeleton links
 
 ### Phase 1
