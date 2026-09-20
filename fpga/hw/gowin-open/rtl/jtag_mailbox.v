@@ -30,7 +30,7 @@ module top (
     reg [31:0] shift_reg = 32'h4a544147; // "JTAG"
     reg [31:0] mailbox   = 32'h4a544147;
 
-    GW_JTAG u_jtag (
+    (* keep *) GW_JTAG u_jtag (
         .tck_pad_i(tck_pad_i),
         .tms_pad_i(tms_pad_i),
         .tdi_pad_i(tdi_pad_i),

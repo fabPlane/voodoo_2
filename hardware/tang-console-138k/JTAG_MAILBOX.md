@@ -76,6 +76,23 @@ logical_readback = (wire_readback >> 1) & 0xffffffff
 The OpenOCD adapter/TAP definition is in `openocd-gowin-ft2232.cfg`. The FPGA
 side is `fpga/hw/gowin-open/rtl/jtag_mailbox.v`.
 
+## Read the 50 MHz clock directly
+
+`jtag_clock_probe-open.fs` removes the LEDs from the pass/fail decision.  It
+returns a Gray-coded free-running 32-bit counter through ER1, and the host tool
+decodes it and verifies that successive values advance:
+
+```sh
+hardware/tang-console-138k/program_debug_sram.sh \
+  fpga/hw/gowin-open/build/jtag_clock_probe-open.fs
+python3 hardware/tang-console-138k/jtag_clock_probe.py \
+  --count 8 --interval 0.1
+```
+
+This is the first diagnostic to run after reconnecting the FT2232.  It tells us
+directly whether the open-flow input clock, global-clock buffer, counter carry
+chain, DFFs, and JTAG readback all work together.
+
 ## Open-source flow status
 
 The host protocol is open and proven against the vendor oracle.  The open

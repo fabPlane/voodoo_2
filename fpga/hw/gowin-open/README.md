@@ -27,6 +27,8 @@ complete-core name.
   the FPGA-to-BL616 UART. Press USER to send immediately.
 - `jtag_mailbox`: deterministic 32-bit host-to-fabric reads and writes through
   the GW5AST ER1 JTAG instruction, with the low two bits mirrored on the LEDs.
+- `jtag_clock_probe`: exposes a Gray-coded free-running 50 MHz counter through
+  ER1 so clocked logic can be checked numerically instead of by eye.
 - `hdmi_colorbars` (work in progress): complete open RTL for 640x480 timing,
   eight color bars, TMDS encoding, and GW5A serializers/differential outputs.
   RESET restarts the counters; holding USER blanks active video.
