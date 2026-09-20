@@ -47,7 +47,7 @@ _ATTRIBUTE = re.compile(r"\(\*.*?\*\)", re.S)
 
 _DECL = re.compile(
     r"^\s*(?P<dir>input|output|inout)\b"
-    r"(?:\s+(?:wire|reg|logic|var))*"
+    r"(?:\s+(?:wire|reg|logic|var)\b)*"
     r"(?:\s+(?P<signed>signed|unsigned))?"
     r"\s*(?:\[\s*(?P<msb>[-\w'\s+]+?)\s*:\s*(?P<lsb>[-\w'\s+]+?)\s*\])?"
     r"\s*(?P<names>[A-Za-z_\\][\w$]*(?:\s*,\s*[A-Za-z_\\][\w$]*)*)\s*$"
@@ -61,6 +61,23 @@ def _strip(text: str) -> str:
     text = _ATTRIBUTE.sub(" ", text)
     text = _LINE_COMMENT.sub(" ", text)
     return text
+
+
+def _range_width(msb: int, lsb: int) -> int:
+    """Bits in a ``[msb:lsb]`` range.
+
+    ``[-1:0]`` is **zero** bits, not two: that is how ``amaranth-yosys`` spells
+    a zero-width port, which is what an Amaranth ``stream.Signature(0)``
+    payload becomes -- the Amaranth spelling of SpinalHDL's ``Stream(NoData)``,
+    where Spinal emits no payload port at all.  Verilator warns ASCRANGE and
+    carries on.  Descending ranges (``[0:7]``) are a real, if unused, Verilog
+    form and keep their width.
+    """
+    if msb >= lsb:
+        return msb - lsb + 1
+    if msb == lsb - 1:
+        return 0
+    return lsb - msb + 1
 
 
 def _int(expr: str | None) -> int | None:
@@ -137,7 +154,7 @@ def _decls(chunk: str, sep: str) -> list[Port]:
             continue
         msb = _int(m.group("msb"))
         lsb = _int(m.group("lsb"))
-        width = 1 if msb is None else abs(msb - lsb) + 1
+        width = 1 if msb is None else _range_width(msb, lsb)
         for name in (n.strip() for n in m.group("names").split(",")):
             ports.append(Port(name, m.group("dir"), width, msb, lsb))
     return ports

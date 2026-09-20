@@ -62,6 +62,11 @@ VERILATOR_ARGS = [
     "-Wno-CMPCONST",
     "-Wno-UNSIGNED",
     "-Wno-DECLFILENAME",
+    # A zero-width Amaranth port (`stream.Signature(0)`, i.e. Spinal's
+    # `Stream(NoData)`) is spelled `[-1:0]` by yosys and left unconnected by
+    # the wrapper, since it carries no bits and Spinal emits no twin for it.
+    "-Wno-ASCRANGE",
+    "-Wno-PINMISSING",
     "--x-assign",
     "fast",
     "--x-initial",
