@@ -2,7 +2,35 @@
 
 Date: 2026-09-20
 
-## Verified hardware result
+## Fully open-flow result
+
+The GPIO probe now works when packed directly by the Apicula fork at commit
+`9b385e3` (`Fix GW5AST READY and DONE GPIO encoding`). No fuses are copied
+from the vendor GPIO image after packing.
+
+```text
+build/gpio_probe_key1-fixed-open.fs
+SHA-256: fbac9a9fea2ad9ebbaf3b8c8d790cf84622378321802011f453225ed6b3839a2
+```
+
+This image was generated from `build/gpio_probe_key1-pnr.json` using the
+template-backed GW5AST-138C database and the normal open packer. It entered
+user mode with status `0x00022230`; holding RESET changed the status LED color
+and releasing RESET changed it back.
+
+The hardware-proven encoding in tile `(108,170)` is:
+
+```text
+READY_AS_GPIO: local (4,28) and (5,23), selecting B0 <- X04
+READY_AS_GPIO + DONE_AS_GPIO: local (2,68) and (2,71)
+```
+
+The corresponding global bitmap positions are `(1495,20444)`,
+`(1496,20439)`, `(1493,20484)`, and `(1493,20487)`. Controlled vendor builds
+confirmed that READY alone sets the first pair, DONE alone sets neither pair,
+and READY plus DONE sets all four bits.
+
+## Earlier hybrid milestone
 
 The diagnostic image below was loaded into the Tang Console 138K over JTAG and
 entered user mode with status `0x00022230`:
@@ -16,7 +44,7 @@ With this image, holding the RESET button changes the status LED color and
 releasing RESET changes it back. This is the first verified working GPIO path
 packed through the open-source GW5AST-138C flow in this investigation.
 
-The image is a diagnostic milestone, not yet a fully open-source result. It was
+This older image is a diagnostic milestone, not the fully open-source result. It was
 created from an Apicula-packed image with selected bottom-edge tile fuses copied
 from the matching Gowin-generated GPIO oracle. The resulting main bitmap still
 differs from the vendor bitmap at three positions:
@@ -52,7 +80,7 @@ SHA-256: 4b6c17a5243007dcabcffd8e92a7f5d202371b514b74088dbd31d2f167515aca
   bitstream reaches 100%. A separate status-register read returning
   `0x00022230` confirms that configuration completed.
 
-## Current bisect
+## Completed bisect
 
 The verified working image copied these vendor tile values into the otherwise
 open-packed bitmap:
@@ -69,9 +97,10 @@ open-packed bitmap:
 (108, 171)
 ```
 
-The next test image, `build/gpio_probe_key1-bisect-left-open.fs`, copies only
-the first four tiles in that list. It has been loaded but was not yet physically
-classified at the time this milestone was recorded.
+Reverse-bisecting from the working hybrid reduced the functional delta to the
+four bits documented above. A three-bit test containing the shared
+READY/DONE pair plus local `(4,28)` also worked, but the source fix emits both
+bits of the vendor-confirmed `B0 <- X04` encoding.
 
 ## Reproduction notes
 
