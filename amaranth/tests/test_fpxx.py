@@ -126,9 +126,13 @@ def _signed(raw: int, width: int = NUMBER_BITS) -> int:
 def _convert(bits: int) -> tuple[int, int]:
     """Push one word through ``Fpxx2AFix`` and return ``(number_raw, overflow)``.
 
-    ``number`` is returned already interpreted as two's complement: the AFix
-    storage word is a plain slice of the payload, so reading it back out of the
-    simulator gives an unsigned integer.
+    ``number`` is returned already interpreted as two's complement.  The AFix
+    storage word is read as its *bit pattern* (``.as_unsigned()``) and then
+    signed by :func:`_signed`, the way ``PciFifo`` does ``raw.asSInt`` on the
+    Bits.  Since b47c9b2 ``AFixValue.raw`` already carries the shape's
+    signedness (a layout field used to come back as an unsigned slice), so
+    reading ``.raw`` directly would hand ``_signed`` an already-negative int
+    and double-convert it.
     """
     dut = Fpxx2AFix(20, 30, C32, pipe_stages=1)
     out: dict = {}
@@ -139,7 +143,7 @@ def _convert(bits: int) -> tuple[int, int]:
         ctx.set(dut.op.payload.as_value(), bits)
         await ctx.tick()
         await ctx.tick()
-        raw = ctx.get(dut.result.payload.number.raw)
+        raw = ctx.get(dut.result.payload.number.raw.as_unsigned())
         out["raw"] = _signed(raw)
         out["ovfl"] = ctx.get(dut.result.payload.overflow)
 
