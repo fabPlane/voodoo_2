@@ -109,7 +109,12 @@ class StreamWhile(wiring.Component):
 
         counter = Counter(m, self.max_iterations, name="counter")
         running = Signal(name="running")
-        state = Signal(self._state_shape, name="state")
+        # `Reg(stateType())`, not `RegInit`: Spinal leaves this one unreset, and
+        # `output.payload` is combinational from it whether or not `running` is
+        # set, so a zero reset here makes the two implementations disagree for
+        # the cycles after a reset. Found by the plan-0.4 lockstep diff (a
+        # second seed mismatched at cycle 0 on `output_payload`).
+        state = Signal(self._state_shape, reset_less=True, name="state")
         m.d.comb += self.running.eq(running)
 
         trigger_fire = fire(self.trigger)

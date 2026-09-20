@@ -93,6 +93,71 @@ honoured (32x RAM16S4 SSRAM, **BSRAM 0/340**); escaped identifiers and the
 loaded on hardware. Full write-up, warnings, and the programming command:
 [`hw/spike/RESULTS.md`](hw/spike/RESULTS.md).
 
+## Phase 0.4 — the Spinal-vs-Amaranth differential harness
+
+```
+make diff MOD=FpxxDiffWrap            # 1e6 cycles x seeds 1,2,3 — the plan's "done" bar
+make diff MOD=Fpxx2AFix DIFF_CYCLES=50000 DIFF_SEEDS=7
+make diff MOD=StreamWhileDiffWrap DIFF_ARGS="--ready-density 0.1 -v"
+make diff-list                        # what the registry knows about
+```
+
+`tools/diff/harness.py` builds one Verilator model containing three modules —
+`<Name>_spinal` (from `voodoo.diff.GenOne`), `<Name>_am` (from the registry's
+Amaranth factory) and a generated `diff_top` that instantiates both, drives
+every input from one wrapper port, and exposes `s_<port>` / `a_<port>`, a
+per-output `mm` bit vector and the OR'd `mismatch`. `tools/diff/driver.py`
+then applies seeded constrained-random stimulus under cocotb and asserts
+`mismatch == 0` every cycle.
+
+It regenerates the Spinal Verilog itself when `fpga/rtl/diff/<Name>_spinal.v`
+is missing or older than any `.scala` under `fpga/src` or
+`ext/SpinalVoodoo/src`, so `fpga/rtl/` staying gitignored costs nothing.
+
+`make test` runs the same three modules at 20k cycles x 3 seeds through
+`tests/diff/`, skipping (not failing) when `verilator` or `scala-cli` is
+missing.
+
+**Stimulus rules.** Free inputs are re-randomised every cycle. An input
+stream asserts `valid` with probability `--valid-density` and **holds the
+payload while `valid && !ready`**, which is the SpinalHDL `Stream` contract;
+an output stream's `ready` is random at `--ready-density`. Reset is asserted
+for `--reset-cycles` before *every* seed, matching Spinal's SYNC/active-high
+default and Amaranth's `rst`. On a mismatch the run stops, prints the
+differing port names, and replays that one seed with FST tracing (the
+stimulus is a pure function of the seed, so the replay is exact — and a
+1e6-cycle trace never gets written).
+
+### Port pairing: the one thing that is not obvious
+
+Spinal emits **one Verilog port per scalar leaf**; Amaranth stops at the
+**signature member**. `In(stream.Signature(FpxxLayout(c)))` emits a single
+packed `op__payload`, where Spinal emits `io_op_payload_mant`,
+`io_op_payload_exp` and `io_op_payload_sign`. Rather than distort every
+ported module's signature to line the two up, `tools/diff/amports.py` walks
+the Component's signature *and* the `data.Layout` shapes underneath it and
+pairs each Spinal leaf with a bit slice of the Amaranth port.
+
+The rest of the mapping is mechanical, driven by the committed port maps in
+`fpga/src/voodoo/diff/portmaps/*.json` (see
+`../docs/amaranth/spinal-naming-and-harness.md` §1): take the port's path,
+camelCase → snake_case each segment, join with `__`; `clk` → `clk`,
+`reset` → `rst`. `DiffEntry.overrides` in `tools/diff/registry.py` is the
+per-module escape hatch the plan asks for — **it is still empty**, i.e. no
+name in the three proven modules needed a special case.
+
+### `Reg` vs `RegInit`: the first thing the harness caught
+
+SpinalHDL's plain `Reg(...)` has **no reset**; only `RegInit(...)` /
+`.init(...)` does. Amaranth resets every `Signal` unless told
+`reset_less=True`. `StreamWhile`'s `state` is a plain `Reg` and
+`output.payload` is combinational from it whatever `running` says, so the two
+implementations disagreed for the cycles after a reset. It is invisible on the
+first seed (both start at zero) and shows up on the second, which is why the
+driver resets before every seed rather than once per run. Five registers
+across `lib/stream.py` and `bus/stream_while.py` were fixed this way; expect
+the same wherever a Spinal `Reg` is ported.
+
 ## Phase 0.5 — the out-of-tree Glide/Verilator harness
 
 `ext/SpinalVoodoo` is a read-only submodule, so `amaranth/emu/sim/` is a copy
