@@ -66,7 +66,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field, replace
 
-from amaranth import Array, Cat, Const, Module, Mux, Signal, unsigned
+from amaranth import Cat, Const, Module, Mux, Signal, unsigned
 from amaranth.lib import data, stream, wiring
 from amaranth.lib.wiring import In, Out
 
@@ -788,8 +788,19 @@ class Arbiter(wiring.Component):
                          what="arbiter rsp", skip=("source",))
             if _has(inp.rsp.payload.fragment, "source"):
                 m.d.comb += inp.rsp.payload.fragment.source.eq(rsp_frag.source[route_w:])
-        m.d.comb += self.output.rsp.ready.eq(
-            Array([inp.rsp.ready for inp in self.inputs])[rsp_sel])
+        # `io.inputs.map(_.rsp.ready).read(rspSel)`: Spinal's Vec.read emits a
+        # case statement whose `default` arm is the LAST element, so an
+        # out-of-range route index (5..7 for five ports) selects input 4.
+        # Amaranth's `Array` would return 0 there; a Switch reproduces the
+        # Verilog exactly.  Measured on BmbArbiter_spinal.v, caught by the
+        # lockstep diff (the driver randomises rsp.source, so it does present
+        # such indices).
+        with m.Switch(rsp_sel):
+            for index, inp in enumerate(self.inputs[:-1]):
+                with m.Case(index):
+                    m.d.comb += self.output.rsp.ready.eq(inp.rsp.ready)
+            with m.Default():
+                m.d.comb += self.output.rsp.ready.eq(self.inputs[-1].rsp.ready)
         return m
 
 
@@ -1481,9 +1492,10 @@ Bmb semantics the Amaranth ports must honour (measured against SpinalHDL
    field of `outputParameter.sourceWidth` bits.  CoreSim's five-way arbiter has
    sourceWidth 4 and routeWidth 3, so a master's own 4-bit source is cut to its
    bottom bit.  Responses are demuxed on `rsp.source(routeWidth-1 downto 0)`
-   with `Vec.read`; Amaranth's `Array` indexing returns 0 for an out-of-range
-   index where Spinal's is don't-care, which only differs if a slave echoes a
-   source index >= portCount.
+   with `Vec.read`, whose generated `case` has the LAST input as its `default`
+   arm -- so a route index >= portCount selects the last input, not nothing.
+   The Amaranth port uses a Switch with the same default; the lockstep diff
+   caught the first version, which used `Array` and returned 0 there.
 
 4. `last` alignment.  On the input side `last` marks the end of the master's
    burst; `LengthFixer`/`AlignedSplitter` retime it to the end of each

@@ -3,15 +3,8 @@
 The full gate is ``make diff MOD=<Name> DIFF_SEEDS=1,2,3 DIFF_CYCLES=1000000``.
 Results recorded in ``docs/amaranth-rewrite-plan.md`` Phase 1.
 
-Two of the eight rows are not here yet:
-
-``BmbArbiter`` / ``BmbArbiterSingle``
-    blocked on ``tools/diff/amports.py``: an ``In(sig).array(n)`` signature
-    member loses its index in ``signature.members.flatten()``, so the Spinal
-    ``io_inputs_0_cmd_valid`` has nothing to pair with even though the emitted
-    Verilog port really is ``inputs__0__cmd__valid``.  Reported to the harness
-    owner; the arbiter is covered meanwhile by the pysim tests in
-    ``tests/test_membus.py`` (priority, fragment lock, source routing).
+``SimBmbMemory`` at its real 4 MiB is not here (registry row is ``pending``;
+``SimBmbMemorySmall`` stands in).
 
 Back-pressure matters more here than for a combinational splice: every one of
 these adapters holds state that only advances on ``fire``, and three of them
@@ -22,6 +15,27 @@ balanced run plus a starved-``ready`` run.
 """
 
 from conftest import run_short_diff
+
+
+def test_diff_membus_arbiter(tmp_path):
+    """Five framebuffer masters, lowerFirst + fragmentLock.
+
+    The driver randomises ``output.rsp.source``, so it presents route indices
+    5..7 that no input owns; Spinal's ``Vec.read`` sends those to the *last*
+    input (the ``default`` arm of its ``case``), and so must this port.
+    """
+    run_short_diff("BmbArbiter", tmp_path)
+
+
+def test_diff_membus_arbiter_backpressured(tmp_path):
+    """Sparse ``ready`` on both sides holds the fragment lock across stalls."""
+    run_short_diff("BmbArbiter", tmp_path, cycles=10_000,
+                   valid_density=0.9, ready_density=0.1)
+
+
+def test_diff_membus_arbiter_single(tmp_path):
+    """The ``portCount == 1`` bypass: a pure weakAssignFrom resize."""
+    run_short_diff("BmbArbiterSingle", tmp_path)
 
 
 def test_diff_membus_source_remover(tmp_path):

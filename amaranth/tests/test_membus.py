@@ -761,6 +761,38 @@ def test_arbiter_round_robin_rotates():
         assert sorted(chosen[i:i + n]) == list(range(n)), chosen
 
 
+def test_arbiter_out_of_range_route_index_selects_the_last_input():
+    """``Vec.read`` semantics: route bits 5..7 with five ports pick input 4.
+
+    Spinal's generated ``case`` puts the last element in the ``default`` arm,
+    so both ``output.rsp.ready`` and the ``valid`` demux must agree on it --
+    ``valid`` goes nowhere (no input has index 5), ``ready`` comes from input
+    4.  The lockstep diff caught the ``Array``-based first version, which
+    returned 0 for ``ready`` there.
+    """
+    n = 5
+    p = fb_mem_params()
+    dut = _arbiter_dut(n)
+    seen = {}
+
+    async def main(ctx):
+        for k in range(n):
+            ctx.set(dut.inputs[k].rsp.ready, int(k == 4))
+        ctx.set(dut.output.rsp.valid, 1)
+        for src in range(8):
+            ctx.set(dut.output.rsp.payload.fragment.source, src)
+            await ctx.tick()
+            seen[src] = (ctx.get(dut.output.rsp.ready),
+                         [ctx.get(dut.inputs[k].rsp.valid) for k in range(n)])
+
+    run(dut, main, deadline=100)
+    for src in range(8):
+        ready, valids = seen[src]
+        route = src & 0b111
+        assert ready == int(route >= 4), (src, ready)
+        assert valids == [int(route == k) for k in range(n)], (src, valids)
+
+
 def test_arbiter_random_traffic_round_trips_through_a_model_memory():
     n = 3
     p = fb_mem_params()

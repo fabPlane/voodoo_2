@@ -564,27 +564,26 @@ Spinal core does.
       `avoodoo/bus/routing.py` (the core-local `BmbRouting.scala`),
       `avoodoo/core/membus_params.py` (every `*BmbParams` in the design, one place) and
       `avoodoo/sim_membus_memory.py` (`SimBmbMemory.scala` + `SimMemoryTiming`).
-      52 pysim tests in `tests/test_membus.py` + 12 short lockstep runs in
+      53 pysim tests in `tests/test_membus.py` + 15 short lockstep runs in
       `tests/diff/test_diff_membus.py`.
       **Diff results** (`make diff`, 3 seeds x 1e6 cycles, Mac, Verilator 5.052), each against
-      the parameters its Scala call site uses: `BmbSourceRemover` (fbMemBmbParams) PASS,
-      `BmbAligner` (fbMemBmbParams, burstLog2 8) PASS, `BmbLengthFixer` (aligner.op, 8) PASS,
-      `BmbAlignedSpliter` (PlaneReader.internalBmbParams, lengthMax 2048) PASS,
-      `BmbContextRemover` (splitterBmbParams, pendingMax 64) PASS,
-      `SimBmbMemorySmall` PASS. New `GenOne` rows for all of them plus `BmbArbiterSingle`
-      and `SimBmbMemorySmall`, with the committed port maps.
-      **Two rows are not diffed yet.** `BmbArbiter` / `BmbArbiterSingle` are blocked in
-      `tools/diff/amports.py`: an `In(sig).array(n)` member loses its index in
-      `signature.members.flatten()`, so Spinal's `io_inputs_0_cmd_valid` finds no
-      `inputs__0__cmd__valid` leaf even though the emitted Verilog port is spelled exactly
-      that. Reported to the harness owner with a suggested fix; until it lands the arbiter
-      rests on the pysim tests (priority order, fragment lock across a 3-beat burst,
-      source routing round trip, round-robin rotation, randomised multi-master read
-      traffic through a model memory). `SimBmbMemory` at its real 4 MiB is marked
-      `pending`: 1 048 576 words makes `amaranth_yosys` `write_verilog` run for minutes and
-      the Spinal side is four 1 Mi-entry byte arrays on top, so `SimBmbMemorySmall`
-      (64 KiB, identical parameters and timing, only `wordAddrWidth` differs) is the
-      diffable stand-in.
+      the parameters its Scala call site uses: `BmbArbiter` (5 x fbMemBmbParams, lowerFirst)
+      PASS at 3 x 20k, full 3 x 1e6 gate still running on a loaded Mac, `BmbArbiterSingle` (PlaneBuffer -> fbMem, the portCount == 1 bypass) PASS,
+      `BmbSourceRemover` (fbMemBmbParams) PASS, `BmbAligner` (fbMemBmbParams, burstLog2 8)
+      PASS, `BmbLengthFixer` (aligner.op, 8) PASS, `BmbAlignedSpliter`
+      (PlaneReader.internalBmbParams, lengthMax 2048) PASS, `BmbContextRemover`
+      (splitterBmbParams, pendingMax 64) PASS, `SimBmbMemorySmall` PASS. New `GenOne` rows
+      for all of them, with the committed port maps.
+      The two arbiter rows needed a harness fix first (`tools/diff/amports.py` dropped the
+      index of an `In(sig).array(n)` member, 1a96914) and then caught a real bug: Spinal's
+      `Vec.read(rspSel)` emits a `case` whose `default` arm is the *last* element, so a
+      route index >= portCount (5..7 with five ports, which the driver's random
+      `rsp.source` does present) selects input 4's `ready`; the first port used Amaranth's
+      `Array`, which returns 0 there. Fixed with a `Switch` + `Default`, and pinned by a
+      pysim test. `SimBmbMemory` at its real 4 MiB is marked `pending`: 1 048 576 words
+      makes `amaranth_yosys` `write_verilog` run for minutes and the Spinal side is four
+      1 Mi-entry byte arrays on top, so `SimBmbMemorySmall` (64 KiB, identical parameters
+      and timing, only `wordAddrWidth` differs) is the diffable stand-in.
       **Ported exactly what is used** (census in the module docstring): `BmbParameter` /
       `BmbAccessParameter` / `BmbSourceParameter` with the derived widths and the
       `aggregate` fold, `BmbCmd` / `BmbRsp` / `Fragment` layouts, `weakAssignFrom`,
@@ -603,7 +602,8 @@ Spinal core does.
       writes into a field that is *not* widened, and CoreSim's five-way framebuffer arbiter
       has `sourceWidth 4` with `routeWidth 3` — so master 2's source 2 goes out as 2, and
       master 3's 3 goes out as 11. Only the route bits are meaningful; no master can rely on
-      getting its own source back, and the core does not.
+      getting its own source back, and the core does not. And on the way back, a route
+      index with no owner goes to the last input (`Vec.read`'s `default`), see above.
       (c) **Bundle assignment in Spinal resolves by NAME, not bit position.** The first
       version of `ContextRemover` copied `io.output.rsp.payload` as a packed vector and
       shifted `opcode`/`data` into the wrong fields, because the input and output payloads
