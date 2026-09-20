@@ -93,15 +93,16 @@ open outputs and is useful only for bitstream-delta and hardware transport
 checks. On a GW5AST-138C it SRAM-loads successfully and alternates the two
 status-light channels.
 
-The open image is not hardware-valid yet. The header, SSPI/MSPI GPIO options,
-and first-frame CRC now match the working reference, but the FPGA still reports
-status `0x20` after loading. Comparing an empty vendor image showed the next
-chip-database blocker: every ordinary logic tile carries a 280-bit blank-state
-pattern that the current 138C database does not model. Configured tiles both
-set and clear portions of that baseline, so simply ORing or XORing a blank
-template is insufficient. Apicula needs domain-aware fuse application for the
-routing, slice, I/O-bank, and configuration tables before these demos should be
-copied to an SD card or described as hardware-tested.
+Basic combinational GPIO is now hardware-valid with the Apicula fork at commit
+`9b385e3`. The fixed packer emits the GW5AST-138C READY/DONE dual-purpose-pin
+encoding, and `gpio_probe_key1-fixed-open.fs` entered user mode with status
+`0x00022230`; holding RESET changed the status LED color. See
+`GW5AST_138C_GPIO_MILESTONE.md` for the image hash and decoded fuses.
+
+The template-backed database and domain-aware fuse application remain required:
+ordinary logic tiles carry non-zero blank-state patterns, and configured tiles
+both set and clear parts of that baseline. This milestone validates the direct
+GPIO path, not yet the clocked, BSRAM, PLL/HDMI, or DDR3 demos.
 
 ## Porting order
 
