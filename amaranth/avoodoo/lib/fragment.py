@@ -25,13 +25,30 @@ __all__ = ["FragmentLayout", "fragment_layout", "add_fragment_last",
 
 
 def fragment_layout(payload_shape):
-    """``Fragment(T)`` -- ``{fragment: T, last: Bool}``.
+    """``Fragment(T)`` -- ``{last: Bool, fragment: T}``, ``last`` at bit 0.
 
-    Field order follows the Scala bundle (``fragment`` declared first, ``last``
-    second), which is also the bit order Spinal emits, so a payload flattened
-    to ``Bits`` matches the Spinal Verilog.
+    Field order matters, and it is the opposite of what the name
+    ``Fragment`` suggests. ``spinal/lib/Fragment.scala:475`` declares ``last``
+    *first*::
+
+        class Fragment[T <: Data](val fragmentType: HardType[T]) extends Bundle {
+          val last = Bool()
+          val fragment: T = fragmentType()
+        }
+
+    and ``MultiData.asBits`` (``spinal/core/MultiData.scala:47``) folds with
+    ``ret = e.asBits ## ret``, so the first-declared element lands at the LSB.
+    A packed Spinal ``Fragment`` is therefore ``{fragment, last}`` with ``last``
+    at bit 0. Amaranth's :class:`~amaranth.lib.data.StructLayout` also puts its
+    first key at the LSB, so the key order here must match the Scala
+    declaration order to pack identically.
+
+    This only shows up when a Fragment payload is cast to bits as a whole, or
+    compared against a Spinal-derived constant -- flattened port *names* are
+    the same either way. Caught by p1-membus, whose ``avoodoo/lib/membus.py``
+    layouts and their five Verilator-diffed adapters confirm ``last``-at-LSB.
     """
-    return data.StructLayout({"fragment": payload_shape, "last": 1})
+    return data.StructLayout({"last": 1, "fragment": payload_shape})
 
 
 #: Alias reading closer to the Scala ``Fragment(T)`` call site.

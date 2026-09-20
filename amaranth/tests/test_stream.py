@@ -1005,3 +1005,67 @@ def test_payload_registers_are_unreset(pipe_cls):
     sim.add_clock(PERIOD)
     sim.add_testbench(tb)
     sim.run()
+
+
+# ---------------------------------------------------------------------------
+# Fragment packing
+# ---------------------------------------------------------------------------
+
+
+def test_fragment_packs_last_at_bit_zero():
+    """``Fragment.scala`` declares ``last`` first and ``MultiData.asBits``
+    puts the first-declared element at the LSB, so a packed Fragment is
+    ``{fragment, last}``."""
+    layout = fragment_layout(unsigned(8))
+    assert list(layout.members) == ["last", "fragment"]
+    assert layout.size == 9
+
+    m = Module()
+    frag = Signal(layout)
+    packed = Signal(9)
+    m.d.comb += packed.eq(frag.as_value())
+
+    async def tb(ctx):
+        p, = await cycle(ctx, [(frag.last, 1), (frag.fragment, 0xA5)], (packed,))
+        assert p == (0xA5 << 1) | 1
+        p, = await cycle(ctx, [(frag.last, 0)], (packed,))
+        assert p == 0xA5 << 1
+
+    run(m, tb)
+
+
+def test_add_fragment_last_keeps_arbitration():
+    from avoodoo.lib.fragment import add_fragment_last
+
+    m = Module()
+    src = st.Stream(unsigned(8))
+    last = Signal()
+    out = add_fragment_last(m, src, last)
+
+    async def tb(ctx):
+        outs = (src.ready, out.valid, out.payload.fragment, out.payload.last)
+        r, v, f, l = await cycle(ctx, [(src.valid, 1), (src.payload, 0x3C),
+                                       (last, 1), (out.ready, 1)], outs)
+        assert (r, v, f, l) == (1, 1, 0x3C, 1)
+
+    run(m, tb)
+
+
+def test_add_fragment_last_counted_marks_every_nth_beat():
+    from avoodoo.lib.fragment import add_fragment_last_counted
+
+    m = Module()
+    src = st.Stream(unsigned(8))
+    out, _counter = add_fragment_last_counted(m, src, 4)
+    seen = []
+
+    async def tb(ctx):
+        outs = (out.valid, out.payload.last)
+        for _ in range(9):
+            v, l = await cycle(ctx, [(src.valid, 1), (src.payload, 0),
+                                     (out.ready, 1)], outs)
+            if v:
+                seen.append(l)
+
+    run(m, tb)
+    assert seen[:8] == [0, 0, 0, 1, 0, 0, 0, 1]
