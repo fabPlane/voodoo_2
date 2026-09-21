@@ -14,6 +14,7 @@ Spinal port name whose Amaranth twin the mechanical rule in
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from dataclasses import replace as _replace
 
 from avoodoo.config import Config
 from avoodoo.core import membus_params as _mp
@@ -57,6 +58,25 @@ class DiffEntry:
     pending: str | None = None
     """Non-``None`` means the Amaranth side does not exist yet; the string says
     who owns it.  ``harness.py`` refuses to run such a row with this message."""
+
+    pinned: dict[str, int] = field(default_factory=dict)
+    """Spinal input port name -> constant it is held at for the whole run.
+
+    The stopgap for an input the random driver must not touch (a ``source``
+    field the DUT only accepts in one state, a mode bit that would otherwise
+    flip mid-transaction).  Pinned ports are removed from the random
+    generator; a stream's ``valid``/``ready`` can be pinned too.
+    """
+
+    responder: str | None = None
+    """``package.module:factory`` for a per-row stimulus model.
+
+    The general answer to "this input stream is really a slave response":
+    the driver instantiates the factory once per seed and, every cycle, lets
+    the object observe the DUT and drive the inputs it claims. Protocol and
+    timing are documented on :class:`tools.diff.responders.Responder`; a worked
+    example is ``tools.diff.responders``.
+    """
 
     @property
     def portmap_stem(self) -> str:
@@ -334,6 +354,122 @@ REGISTRY: dict[str, DiffEntry] = {
         note="FramebufferPlaneReader.scala:100 — pendingMax = issueQueueDepth = 64. "
              "Same needBurstSplitter caveat as BmbAlignedSpliter "
              "(spinal/lib/bus/bmb/BmbContextRemover.scala)",
+    ),
+    # --- Phase 6 (agent p6-planebuffer owns avoodoo/framebuffer/plane_buffer.py)
+    # Three rows, one module: `Config.voodoo1()` has useFbWriteBuffer = false,
+    # so the plain entry (what CoreSim and TangConsole138k build) is the
+    # 8-deep direct queue only; the two Wb rows elaborate the write combiner
+    # with the Dock/Artix parameters and with the throughput test's smallest
+    # line, which is the one random stimulus can fill (2 words) and so the
+    # only one that reaches the sequential-append / full-line-drain paths.
+    # No overrides: every leaf pairs mechanically, the 20 stat counters as
+    # io_writeSingleWordDrainStartAtZeroCount ->
+    # write_single_word_drain_start_at_zero_count.
+    "FramebufferPlaneBuffer": DiffEntry(
+        spinal="FramebufferPlaneBuffer",
+        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
+        note="FramebufferMemSubsystem.scala:86 — FramebufferPlaneBuffer(c), "
+             "Config.voodoo1() (useFbWriteBuffer = false: direct 8-deep queue) "
+             "(ext/SpinalVoodoo/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala)",
+    ),
+    "FramebufferPlaneBufferWb": DiffEntry(
+        spinal="FramebufferPlaneBufferWb",
+        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
+        params=dict(c=_replace(_C, use_fb_write_buffer=True,
+                               fb_write_buffer_line_words=256)),
+        note="CoreGowinGen.scala:28 / CoreArtixGen.scala:29 — the write combiner "
+             "as the Dock/Mega/Artix cores build it: two 255-deep slot FIFOs",
+    ),
+    "FramebufferPlaneBufferWbSmall": DiffEntry(
+        spinal="FramebufferPlaneBufferWbSmall",
+        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
+        params=dict(c=_replace(_C, address_width=12, mem_burst_length_width=4,
+                               fb_write_buffer_line_words=2,
+                               use_fb_write_buffer=True, use_tex_fill_cache=False)),
+        note="test/FramebufferPlaneBufferThroughputTest.scala's config — 12-bit "
+             "addresses, 2-word lines (slot FIFOs are one m2sPipe each)",
+    ),
+    # The two *Local rows are GenOne aliases of the Wb rows with a responder on io_writeReq
+    # (tests/diff/plane_buffer_stimulus.py) that addresses each write relative
+    # to the last one, so appends, merges, full-line drains and 256-beat
+    # bursts happen in lockstep too. flush / cmd.ready / rsp stay random.
+    "FramebufferPlaneBufferWbLocal": DiffEntry(
+        spinal="FramebufferPlaneBufferWbLocal",
+        portmap="FramebufferPlaneBufferWb",
+        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
+        params=dict(c=_replace(_C, use_fb_write_buffer=True,
+                               fb_write_buffer_line_words=256)),
+        note="FramebufferPlaneBufferWb with locality-biased writes: the row that "
+             "fills 256-word lines and drains them as one burst",
+        responder="tests.diff.plane_buffer_stimulus:local_writes_256",
+    ),
+    "FramebufferPlaneBufferWbSmallLocal": DiffEntry(
+        spinal="FramebufferPlaneBufferWbSmallLocal",
+        portmap="FramebufferPlaneBufferWbSmall",
+        factory="avoodoo.framebuffer.plane_buffer:FramebufferPlaneBuffer",
+        params=dict(c=_replace(_C, address_width=12, mem_burst_length_width=4,
+                               fb_write_buffer_line_words=2,
+                               use_fb_write_buffer=True, use_tex_fill_cache=False)),
+        note="FramebufferPlaneBufferWbSmall with locality-biased writes",
+        responder="tests.diff.plane_buffer_stimulus:local_writes_2",
+    ),
+    # --- Phase 6 (agent p6-planereader) ----------------------------------
+    # The generic driver deadlocks FramebufferPlaneReader within ~30 cycles
+    # (a held random source=1 rsp beat with no direct miss outstanding is
+    # never accepted) and never produces a cache hit (a random 26-bit read
+    # address equals the next prefetched lane once in 2**26), so the main
+    # row carries tests/diff/plane_reader_stimulus.py: an in-order memory
+    # slave on io_mem_rsp plus span-shaped io_prefetchReq/io_readReq traffic.
+    # The *MemOnly row keeps prefetch/read random (mostly skips and misses)
+    # behind the same memory slave, and *Random is the bare generator kept
+    # for the record. cmd.ready and readRsp.ready stay random everywhere.
+    "FramebufferPlaneReader": DiffEntry(
+        spinal="FramebufferPlaneReader",
+        factory="avoodoo.framebuffer.plane_reader:FramebufferPlaneReader",
+        note="FramebufferMemSubsystem.scala:78 — FramebufferPlaneReader(c), "
+             "Config.voodoo1(); needBurstSplitter is false so io.mem IS internalMem "
+             "(ext/SpinalVoodoo/src/voodoo/framebuffer/FramebufferPlaneReader.scala "
+             "-> avoodoo/framebuffer/plane_reader.py)",
+        responder="tests.diff.plane_reader_stimulus:reader_traffic_800",
+        # No overrides: io_prefetchReq_payload_{startAddress,endAddress} ->
+        # slices of `prefetch_req__payload`, io_cacheDebugReadAddr ->
+        # `cache_debug_read_addr`, the Bmb leaves as for BmbAligner.
+    ),
+    "FramebufferPlaneReaderMemOnly": DiffEntry(
+        spinal="FramebufferPlaneReaderMemOnly",
+        portmap="FramebufferPlaneReader",
+        factory="avoodoo.framebuffer.plane_reader:FramebufferPlaneReader",
+        note="FramebufferPlaneReader with only the memory slave attached: random "
+             "spans and random read addresses, i.e. forward skips, direct misses "
+             "and inverted spans, all with well-formed responses",
+        responder="tests.diff.plane_reader_stimulus:mem_slave",
+    ),
+    "FramebufferPlaneReaderRandom": DiffEntry(
+        spinal="FramebufferPlaneReaderRandom",
+        portmap="FramebufferPlaneReader",
+        factory="avoodoo.framebuffer.plane_reader:FramebufferPlaneReader",
+        note="FramebufferPlaneReader under the bare random generator — passes, but "
+             "proves ~30 live cycles per seed before the rsp stream parks; kept so "
+             "the deadlock stays reproducible (see tests/diff/plane_reader_stimulus.py)",
+    ),
+    "FramebufferPlaneDirectReader": DiffEntry(
+        spinal="FramebufferPlaneDirectReader",
+        factory="avoodoo.framebuffer.plane_direct_reader:FramebufferPlaneDirectReader",
+        note="FramebufferMemSubsystem.scala:82 — FramebufferPlaneDirectReader(c), "
+             "Config.voodoo1(), same FramebufferPlaneReader.bmbParams(c) bus "
+             "(ext/SpinalVoodoo/src/voodoo/framebuffer/FramebufferPlaneDirectReader.scala "
+             "-> avoodoo/framebuffer/plane_direct_reader.py)",
+        # The bare generator is fine here: the direct reader ignores rsp.source,
+        # so a random rsp beat is accepted whenever its laneQueue is non-empty
+        # (probe: 7445 cmd / 6244 readRsp fires in 20k cycles).
+    ),
+    "FramebufferPlaneDirectReaderMem": DiffEntry(
+        spinal="FramebufferPlaneDirectReaderMem",
+        portmap="FramebufferPlaneDirectReader",
+        factory="avoodoo.framebuffer.plane_direct_reader:FramebufferPlaneDirectReader",
+        note="FramebufferPlaneDirectReader behind the in-order memory slave, so "
+             "every rsp beat answers a real command",
+        responder="tests.diff.plane_reader_stimulus:mem_slave",
     ),
     "SimBmbMemorySmall": DiffEntry(
         spinal="SimBmbMemorySmall",

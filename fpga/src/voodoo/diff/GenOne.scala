@@ -298,6 +298,17 @@ object GenOne {
     "FramebufferPlaneDirectReader" -> ok(
       "FramebufferMemSubsystem.scala:82 — FramebufferPlaneDirectReader(c)"
     )(FramebufferPlaneDirectReader(c)),
+    // Aliases for the amaranth reader rows that attach a memory-slave / span-traffic
+    // responder (tests/diff/plane_reader_stimulus.py); same components, same parameters.
+    "FramebufferPlaneReaderMemOnly" -> ok("alias of FramebufferPlaneReader")(
+      FramebufferPlaneReader(c)
+    ),
+    "FramebufferPlaneReaderRandom" -> ok("alias of FramebufferPlaneReader")(
+      FramebufferPlaneReader(c)
+    ),
+    "FramebufferPlaneDirectReaderMem" -> ok("alias of FramebufferPlaneDirectReader")(
+      FramebufferPlaneDirectReader(c)
+    ),
     "FramebufferMemSubsystem" -> ok("Core.scala:111 — FramebufferMemSubsystem(c)")(
       FramebufferMemSubsystem(c)
     ),

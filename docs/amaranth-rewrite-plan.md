@@ -1025,7 +1025,105 @@ Spinal core does.
       hardware table compute; dedupe onto `compute_tables` later.
 
 ### Phase 6
-- [ ] address_math  - [ ] plane_buffer  - [ ] plane_reader  - [ ] plane_direct_reader  - [ ] framebuffer_mem_subsystem
+- [x] address_math  - [x] plane_buffer  - [x] plane_reader  - [x] plane_direct_reader  - [ ] framebuffer_mem_subsystem
+- [x] **address_math** (2026-09-20). `amaranth/avoodoo/framebuffer/address_math.py`
+      is the canonical port of `FramebufferAddressMath.scala` (`mul_by_small_unsigned`,
+      `pixel_byte_offset`, `plane_address`) plus exact-integer models;
+      `tests/test_address_math.py` sweeps the core widths (26/12/11) and a narrow
+      configuration where `resize` zero-extends. `core/core_types.py` carries an
+      identical private copy that `pixel/write.py` picked up earlier; fold it into an
+      import from here when `core_types` is next touched.
+- [x] **plane_buffer** (2026-09-20). `amaranth/avoodoo/framebuffer/plane_buffer.py`,
+      both branches of `FramebufferPlaneBuffer.scala`. Findings:
+      * `Config.voodoo1()` has `useFbWriteBuffer = false`, so the existing GenOne
+        `FramebufferPlaneBuffer` entry (and CoreSim / TangConsole138k) is the 8-deep
+        direct queue only. Two GenOne entries were added (`fpga/src/voodoo/diff/GenOne.scala`,
+        flagged parameter addition): `FramebufferPlaneBufferWb` = the Dock/Mega/Artix
+        combiner (`useFbWriteBuffer = true, fbWriteBufferLineWords = 256`) and
+        `FramebufferPlaneBufferWbSmall` = the ThroughputTest config (12-bit address,
+        4-bit burst length, 2-word lines) so random stimulus can fill a line.
+      * Random addresses rotate on almost every write, so a fourth and fifth row
+        (`FramebufferPlaneBufferWbLocal`, `…WbSmallLocal`; GenOne aliases) attach a
+        `responder` (`tests/diff/plane_buffer_stimulus.py`) that drives `io_writeReq`
+        in sequential runs of 1 .. 2*lineWords+3 words with byte merges mixed in, so
+        appends, full-line drains and 256-beat bursts happen in lockstep.
+      * Diff: all five rows clean at 1e6 cycles x seeds 1,2,3 and at 2e5 cycles
+        with `--valid-density 0.9 --ready-density 0.1` (seed 7).
+        `tests/diff/test_diff_plane_buffer.py` runs nine short versions. No
+        `overrides` needed.
+      * `directWriteQueue` is instantiated in the combiner branch too (never pushed;
+        Spinal keeps it as `streamFifo_3`), and `DrainState.Rsp` is unreachable
+        (`Send` -> `Idle`); both ported as-is.
+      * The Scala's full-drain and flush-drain `when`s are independent, so a full
+        byte-complete line seen under `io.flush` steps *both* reason counters for
+        one drain; the test model reproduces that.
+      * `syn_ramstyle`: every RAM here is a `lib/stream.py:Fifo`, each built with
+        `mem_attrs=spinal_fifo_ram_attrs(width, depth)` (the
+        `force_distributed_fifo_ram.py` rule, landed in e487ead). That stamps
+        `directWriteQueue` (8 x 62 bits, both branches) `distributed_ram` and
+        leaves the 255-deep slot FIFOs in BSRAM, as the Spinal bitstream has them;
+        at `fbWriteBufferLineWords = 2` the depth-1 slot FIFOs are one `m2sPipe`
+        register each and hold no RAM.
+      * `tests/test_plane_buffer.py` (20 tests): the two ThroughputTest scenarios,
+        the FormalTest asserts as per-cycle checks (slot invariants, `drainState`
+        implies valid+draining, the `writeReqPipe.ready` promise, WRITE-only, no
+        `readRsp`), its cover point as a hard check, and locality-biased random
+        traffic against a scoreboard (dirty-word merge tracking, burst shape,
+        drain reasons incl. single-word drains and rotate classification) with all
+        20 statistic outputs compared at the end; plus the direct branch.
+- [x] **plane_reader + plane_direct_reader** (2026-09-21).
+      `amaranth/avoodoo/framebuffer/plane_reader.py` (`FramebufferPlaneReader.scala`,
+      incl. the `needBurstSplitter` chain, which `Config.voodoo1()` does not build --
+      `lib/membus.py` note 9) and `plane_direct_reader.py`. Findings:
+      * **The generic driver cannot drive this module.** `io_mem_rsp` is only accepted
+        while a matching miss is outstanding, so a held random `source = 1` beat parks
+        the stream ~30 cycles after reset, and a random 26-bit `io_readReq` address is
+        never the next prefetched lane. This is what `DiffEntry.responder` was added for
+        (`tools/diff/responders.py`, landed with plane_buffer's `*Local` rows).
+        `tests/diff/plane_reader_stimulus.py` composes an in-order `MemSlave` on
+        `io_mem_rsp` (answers every `io_mem_cmd` beat: `((addr & 3) + length) // 4 + 1`
+        words from a lazily random image, `source` echoed) with `SpanTraffic`: spans of
+        1..16 lanes plus 10 % long ones (up to 600 lanes), odd start/end bytes, and the
+        reads for a span released three cycles after its prefetch fires -- in order with
+        20 % of lanes dropped (forward skips), 10 % repeats of an earlier lane (direct
+        misses, "behind") and 0.2 % random addresses. The prefetcher is throttled to
+        48 queued reads, because an in-order memory deadlocks the reader when the
+        801-lane `laneFifo` fills behind an outstanding direct miss (the real pipeline
+        never runs that far ahead). Five registry rows: `FramebufferPlaneReader` (slave +
+        traffic), `*MemOnly` (slave only: random, half-inverted spans -- parks within a
+        few hundred cycles because a wrapped `wordCount` wants more beats than the 11-bit
+        `length` asks for, identically on both sides), `*Random` (bare generator, kept so
+        the parking stays reproducible), `FramebufferPlaneDirectReader` (bare generator
+        is fine: it ignores `rsp.source`) and `*Mem` (behind the slave). The three alias
+        rows are GenOne aliases, as the plane_buffer `*Local` rows are (the harness names
+        the Spinal module after the registry key).
+      * **What the diff found.** No RTL mismatch on either module at any point. It did
+        find a stimulus bug: with `_Prefetches` ordered before `_Reads` in the composite,
+        the prefetcher re-checked its throttle in the cycle a prefetch fired, before that
+        span's reads were staged, so two long spans went out back to back (1200 lanes)
+        and every seed parked around cycle 20k -- a clean 1e6-cycle "pass" whose seed-1
+        counters equalled its 20k-cycle counters. Reads now run first; the pytest asserts
+        `reqCount > cycles / 10` and a majority of hits so a parked run fails.
+      * **Gate.** `make diff` clean at 1e6 cycles x seeds 1,2,3 for all five rows
+        (main row 127 s on the Mac; per seed ~333k reads, 74 % cache hits, ~88k direct
+        misses, ~9.5k spans of which ~940 long, `singleBeat`/`multiBeat` bursts ~800/9000,
+        52 % of cycles `fillStallCycles` = waiting on memory) and at 2e5 cycles with
+        `--valid-density 0.9 --ready-density 0.1` (seed 7; 19k reads).
+        `tests/diff/test_diff_plane_reader.py` runs seven short versions and checks the
+        responder stats. `tests/test_plane_reader.py` (18 tests) ports the five
+        `FramebufferPlaneReaderTest` scenarios, checks the four `FormalTest` invariants
+        every cycle from `cacheDebug`, runs random traffic against a Python model on the
+        Scala test's 12-bit config, builds the `mkLengthFixerConfig` splitter chain, and
+        audits that **no** register is `reset_less` (every Scala `Reg` here has `init`).
+      * `syn_ramstyle`: `spanIssueQueue`/`consumeQueue` (124 x 64) and `issuedSpanQueue`
+        (124 x 4) get `distributed_ram`; `laneFifo` (16 x 801), `readRspFifo` (16 x 16),
+        `directMissLaneQueue` (1 x 8) and the direct reader's two FIFOs stay untagged --
+        the `force_distributed_fifo_ram.py` rule via `spinal_fifo_ram_attrs`. The 801-word
+        `initial` block is ~24 KB standalone (harmless); CoreSim's `strip_meminit` removes
+        it with the rest.
+      * Ported as-is: `reqSameLineCount := reqSameLineCount` (never advances),
+        `maxOccupancy`'s `resize(8)` truncating the 10-bit occupancy before the compare,
+        and the fill retiring on `wordCount` rather than `rsp.last`.
 
 ### Phase 7
 - [ ] scanout  - [ ] core + core_sim + dbg  - [ ] Glide suite identical  - [ ] trace replays identical  - [ ] SpinalSim tests ported

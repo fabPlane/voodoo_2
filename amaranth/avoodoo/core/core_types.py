@@ -778,3 +778,46 @@ def word_swap_and_swizzle(data_, do_word_swap, do_byte_swizzle):
     swizzled = Cat(after_word_swap[24:32], after_word_swap[16:24],
                    after_word_swap[8:16], after_word_swap[0:8])
     return Mux(do_byte_swizzle, swizzled, after_word_swap)
+
+# ---------------------------------------------------------------------------
+# framebuffer/FramebufferPlaneBuffer.scala + FramebufferPlaneReader.scala --
+# the plane read-side bundles (agent p6-planereader, append-only block).
+#
+# `FramebufferPlaneBuffer.ReadReq(c)` / `ReadRsp()` are shared by the plane
+# buffer, the cached plane reader and the direct plane reader;
+# `FramebufferPlaneReader.PrefetchReq(c)` by the reader and the mem
+# subsystem.  Field order is the Scala declaration order (convention 2).
+# ---------------------------------------------------------------------------
+
+__all__ += [
+    "FramebufferReadReq",
+    "FramebufferReadRsp",
+    "FramebufferPrefetchReq",
+]
+
+
+class FramebufferReadReq(data.StructLayout):
+    """``FramebufferPlaneBuffer.ReadReq(c)`` -- one 16-bit lane read by byte address."""
+
+    def __init__(self, c: Config) -> None:
+        self.c = c
+        super().__init__({"address": unsigned(c.address_width)})
+
+
+class FramebufferReadRsp(data.StructLayout):
+    """``FramebufferPlaneBuffer.ReadRsp()`` -- the 16-bit lane that came back."""
+
+    def __init__(self) -> None:
+        super().__init__({"data": unsigned(16)})
+
+
+class FramebufferPrefetchReq(data.StructLayout):
+    """``FramebufferPlaneReader.PrefetchReq(c)`` -- inclusive byte-address span."""
+
+    def __init__(self, c: Config) -> None:
+        self.c = c
+        super().__init__({
+            "start_address": unsigned(c.address_width),
+            "end_address": unsigned(c.address_width),
+        })
+
