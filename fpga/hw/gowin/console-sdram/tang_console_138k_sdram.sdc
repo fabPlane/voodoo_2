@@ -1,0 +1,12 @@
+create_clock -name clk50 -period 20.000 -waveform {0 10.000} [get_ports {clk50}]
+create_clock -name clk_core -period 50.000 -waveform {0 25.000} [get_pins {u_mem_pll/pll_inst/CLKOUT0}]
+create_clock -name clk_sdram -period 16.667 -waveform {0 8.333} [get_pins {u_mem_pll/pll_inst/CLKOUT1}]
+create_clock -name clk_hdmi_serial -period 8.000 -waveform {0 4.000} [get_pins {u_pll_hdmi/u_pll/PLL_inst/CLKOUT0}]
+create_clock -name clk_hdmi_pixel -period 40.000 -waveform {0 20.000} [get_pins {u_hdmi_div/CLKOUT}]
+
+set_clock_groups -asynchronous -group [get_clocks {clk50}] -group [get_clocks {clk_core}]
+set_clock_groups -asynchronous -group [get_clocks {clk50}] -group [get_clocks {clk_sdram}]
+set_clock_groups -asynchronous -group [get_clocks {clk_core}] -group [get_clocks {clk_sdram}]
+set_clock_groups -asynchronous -group [get_clocks {clk_core}] -group [get_clocks {clk_hdmi_pixel}]
+set_clock_groups -asynchronous -group [get_clocks {clk_sdram}] -group [get_clocks {clk_hdmi_pixel}]
+set_clock_groups -asynchronous -group [get_clocks {clk_hdmi_serial}] -group [get_clocks {clk_hdmi_pixel}]
