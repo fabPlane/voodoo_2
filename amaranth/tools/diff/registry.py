@@ -665,6 +665,28 @@ REGISTRY: dict[str, DiffEntry] = {
         # complete whenever the driver raises rsp.valid in RFETCH1/2, and the
         # RWAIT gate (pciFifoEmpty && !pipelineBusy) is random too.
     ),
+    # --- Phase 4 assembly (avoodoo/core/pixel_pipeline.py) -----------------
+    "PixelPipeline": DiffEntry(
+        spinal="PixelPipeline",
+        factory="avoodoo.core.pixel_pipeline:PixelPipeline",
+        note="Core.scala:110 — PixelPipeline(c), Config.voodoo1(), inside GenOne's "
+             "DiffHierWrap (the nine never-assigned CoreDebug words are not ports on "
+             "either side; io_debug_pipelineBusySources is, via the working-tree edit) "
+             "(ext/SpinalVoodoo/src/voodoo/core/PixelPipeline.scala -> "
+             "avoodoo/core/pixel_pipeline.py)",
+        # No overrides: io_controls_paletteRegs_table0I0 -> the packed
+        # controls__palette_regs__table0_i0 slice, io_controls_fogTable_<N> ->
+        # controls__fog_table__<N>, io_controls_nccTables_table0_y_<N> ->
+        # controls__ncc_tables__table0__y__<N>, io_debug_busy_* /
+        # io_debug_writePath_* -> debug__busy__* / debug__write_path__*.
+        # The responder drives io_triangleCmd / io_ftriangleCmd with real
+        # triangles (consistent packed texture tables -- a random tex_tables
+        # word parks the TMU cache on continue-fills, see tmu_stimulus.py),
+        # answers io_texRead, io_colorReadRsp / io_auxReadRsp in order, and
+        # counts what went through; everything else (controls, lfbBus,
+        # fastfillCmd, paletteWrite, the write/prefetch readies) stays random.
+        responder="tests.diff.pixel_pipeline_stimulus:pipeline_traffic",
+    ),
     "CoreCpuFrontdoor": DiffEntry(
         spinal="CoreCpuFrontdoor",
         factory="avoodoo.core.cpu_frontdoor:CoreCpuFrontdoor",
@@ -748,38 +770,6 @@ REGISTRY: dict[str, DiffEntry] = {
              "every rsp beat answers a real command",
         responder="tests.diff.plane_reader_stimulus:mem_slave",
     ),
-    # --- Phase 1.5: AXI boundary bridges (fpga/src, not upstream) ---------
-    # Every Spinal leaf (io_axi_aw_payload_addr, io_output_arw_payload_write,
-    # ...) pairs against a slice of the packed Amaranth stream payload
-    # (`axi__aw__payload`, `output__arw__payload`) through amports.py; the
-    # AxiLite4/Axi4 layouts in avoodoo/lib/axi.py follow the Scala bundle
-    # declaration order, so no overrides.
-    "Axi4ToAxiLite4": DiffEntry(
-        spinal="Axi4ToAxiLite4",
-        factory="avoodoo.lib.axi4_to_axilite4:Axi4ToAxiLite4",
-        params=dict(address_width=_BAR_AW),
-        note="AmdAc701.scala:56 — Axi4ToAxiLite4(CoreArtix.barAddressWidth), idWidth 4 "
-             "(fpga/src/voodoo/artix/Axi4ToAxiLite4.scala -> avoodoo/lib/axi4_to_axilite4.py)",
-    ),
-    "AxiLite4ToBmbBridge": DiffEntry(
-        spinal="AxiLite4ToBmbBridge",
-        factory="avoodoo.lib.axilite4_to_membus:AxiLite4ToMemBusBridge",
-        params=dict(address_width=_BAR_AW, bmb_params=_mp.cpu_bmb_params()),
-        note="CoreGowin.scala:37 — AxiLite4ToBmbBridge(barAddressWidth, Core.cpuBmbParams), "
-             "timeoutLog2 = 20 (fpga/src/voodoo/artix/CoreArtix.scala -> "
-             "avoodoo/lib/axilite4_to_membus.py)",
-    ),
-    "AxiLite4ToBmbBridgeFastTimeout": DiffEntry(
-        spinal="AxiLite4ToBmbBridgeFastTimeout",
-        factory="avoodoo.lib.axilite4_to_membus:AxiLite4ToMemBusBridge",
-        params=dict(address_width=_BAR_AW, bmb_params=_mp.cpu_bmb_params(), timeout_log2=4),
-        note="same bridge, timeoutLog2 = 4: the wedged / timeout / droppedWrites paths are "
-             "reachable by random stimulus (run it with --ready-density 0.1 too)",
-    ),
-    "BmbToAxi4SharedBridge": DiffEntry(
-        spinal="BmbToAxi4SharedBridge",
-        factory="avoodoo.lib.membus_to_axi4_mem:MemBusToAxi4SharedBridge",
-        params=dict(bmb_config=_FIXER_OP),
     # --- Phase 6 (agent p6-fbmemsub) --------------------------------------
     # The whole framebuffer memory front end: two plane buffers, three cached
     # readers, four arbiters, fourteen s2mPipes.  The generic driver parks it
@@ -813,6 +803,38 @@ REGISTRY: dict[str, DiffEntry] = {
              "buses park within a few hundred cycles (see the main row), the "
              "write path and lfbReadBus keep going; kept so that stays reproducible",
     ),
+    # --- Phase 1.5: AXI boundary bridges (fpga/src, not upstream) ---------
+    # Every Spinal leaf (io_axi_aw_payload_addr, io_output_arw_payload_write,
+    # ...) pairs against a slice of the packed Amaranth stream payload
+    # (`axi__aw__payload`, `output__arw__payload`) through amports.py; the
+    # AxiLite4/Axi4 layouts in avoodoo/lib/axi.py follow the Scala bundle
+    # declaration order, so no overrides.
+    "Axi4ToAxiLite4": DiffEntry(
+        spinal="Axi4ToAxiLite4",
+        factory="avoodoo.lib.axi4_to_axilite4:Axi4ToAxiLite4",
+        params=dict(address_width=_BAR_AW),
+        note="AmdAc701.scala:56 — Axi4ToAxiLite4(CoreArtix.barAddressWidth), idWidth 4 "
+             "(fpga/src/voodoo/artix/Axi4ToAxiLite4.scala -> avoodoo/lib/axi4_to_axilite4.py)",
+    ),
+    "AxiLite4ToBmbBridge": DiffEntry(
+        spinal="AxiLite4ToBmbBridge",
+        factory="avoodoo.lib.axilite4_to_membus:AxiLite4ToMemBusBridge",
+        params=dict(address_width=_BAR_AW, bmb_params=_mp.cpu_bmb_params()),
+        note="CoreGowin.scala:37 — AxiLite4ToBmbBridge(barAddressWidth, Core.cpuBmbParams), "
+             "timeoutLog2 = 20 (fpga/src/voodoo/artix/CoreArtix.scala -> "
+             "avoodoo/lib/axilite4_to_membus.py)",
+    ),
+    "AxiLite4ToBmbBridgeFastTimeout": DiffEntry(
+        spinal="AxiLite4ToBmbBridgeFastTimeout",
+        factory="avoodoo.lib.axilite4_to_membus:AxiLite4ToMemBusBridge",
+        params=dict(address_width=_BAR_AW, bmb_params=_mp.cpu_bmb_params(), timeout_log2=4),
+        note="same bridge, timeoutLog2 = 4: the wedged / timeout / droppedWrites paths are "
+             "reachable by random stimulus (run it with --ready-density 0.1 too)",
+    ),
+    "BmbToAxi4SharedBridge": DiffEntry(
+        spinal="BmbToAxi4SharedBridge",
+        factory="avoodoo.lib.membus_to_axi4_mem:MemBusToAxi4SharedBridge",
+        params=dict(bmb_config=_FIXER_OP),
         note="CoreArtix.scala:228 — BmbToAxi4SharedBridge(fixer.op), pendingMax 31, halfRateAw "
              "(spinal/lib/bus/bmb/BmbToAxi4Bridge.scala -> avoodoo/lib/membus_to_axi4_mem.py)",
     ),
