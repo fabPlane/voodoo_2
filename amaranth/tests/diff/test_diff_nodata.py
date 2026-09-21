@@ -106,10 +106,8 @@ class NoDataEcho(wiring.Component):
         return m
 
 
-def test_zero_width_payload_pairs_and_diffs(tmp_path):
-    if shutil.which("verilator") is None:
-        pytest.skip("verilator not on PATH")
-
+def _build(tmp_path, **entry_kw):
+    """Generate, pair and wrap the fixture; return what ``run_sim`` needs."""
     spinal_v = tmp_path / f"{MODULE}_spinal.v"
     spinal_v.write_text(SPINAL_V)
 
@@ -117,30 +115,77 @@ def test_zero_width_payload_pairs_and_diffs(tmp_path):
     am_v = tmp_path / f"{MODULE}_am.v"
     am_v.write_text(verilog.convert(dut, name=f"{MODULE}_am"))
 
-    # yosys really does emit the zero-width port, and vlog must read it as 0.
-    assert harness.vlog.parse_ports(am_v)["cmd__payload"].width == 0
-
     subprocess.run(
         [sys.executable, str(harness.PORTS_PY), str(spinal_v), "-o", str(tmp_path / "pm")],
         check=True, stdout=subprocess.DEVNULL,
     )
     pm = json.loads((tmp_path / "pm" / f"{MODULE}.json").read_text())
 
-    entry = DiffEntry(spinal=MODULE, factory=f"{__name__}:NoDataEcho", note="test fixture")
+    entry = DiffEntry(spinal=MODULE, factory=f"{__name__}:NoDataEcho",
+                      note="test fixture", **entry_kw)
     pairs, am_widths = harness.pair_ports(pm, entry, spinal_v, am_v, dut)
+    wrapper_v, spec = harness.emit_wrapper(
+        MODULE, pairs, am_widths, tmp_path, has_clk=True, has_rst=True,
+        pinned=entry.pinned, responder=entry.responder)
+    return spinal_v, am_v, wrapper_v, pairs, spec
 
+
+def _run(tmp_path, sources, **kw):
+    opts = dict(seeds=[1, 2], cycles=2000, valid_density=0.6, ready_density=0.6,
+                reset_cycles=8, waves=False, verbose=False)
+    opts.update(kw)
+    return harness.run_sim(MODULE, tmp_path, list(sources), **opts)
+
+
+def test_zero_width_payload_pairs_and_diffs(tmp_path):
+    if shutil.which("verilator") is None:
+        pytest.skip("verilator not on PATH")
+
+    spinal_v, am_v, wrapper_v, pairs, _spec = _build(tmp_path)
+
+    # yosys really does emit the zero-width port, and vlog must read it as 0.
+    assert harness.vlog.parse_ports(am_v)["cmd__payload"].width == 0
     # The Spinal side has no payload port, so nothing pairs with one -- and the
     # unpaired-leaf check in pair_ports() must not trip over it either.
     assert {p.spinal for p in pairs} == {"io_cmd_valid", "io_cmd_ready", "io_done", "io_busy"}
-
-    wrapper_v, _spec = harness.emit_wrapper(
-        MODULE, pairs, am_widths, tmp_path, has_clk=True, has_rst=True)
     # The wrapper must not try to drive the zero-width pin.
     assert "cmd__payload" not in wrapper_v.read_text()
 
-    result = harness.run_sim(
-        MODULE, tmp_path, [spinal_v, am_v, wrapper_v],
-        seeds=[1, 2], cycles=2000, valid_density=0.6, ready_density=0.6,
-        reset_cycles=8, waves=False, verbose=False,
-    )
+    result = _run(tmp_path, (spinal_v, am_v, wrapper_v))
     assert result.get("ok"), result
+
+
+def test_pinned_input_is_held(tmp_path):
+    """``DiffEntry.pinned`` takes a port away from the generator."""
+    if shutil.which("verilator") is None:
+        pytest.skip("verilator not on PATH")
+
+    spinal_v, am_v, wrapper_v, _pairs, spec = _build(tmp_path, pinned={"io_done": 1})
+    assert spec["pinned"] == {"io_done": 1}
+    result = _run(tmp_path, (spinal_v, am_v, wrapper_v))
+    assert result.get("ok"), result
+
+
+def test_pinned_port_must_be_an_input(tmp_path):
+    with pytest.raises(SystemExit, match="io_busy"):
+        _build(tmp_path, pinned={"io_busy": 0})
+
+
+def test_responder_drives_a_claimed_input(tmp_path):
+    """``DiffEntry.responder``: ``io_done`` follows ``io_busy`` through a model.
+
+    ``AckWhen`` reads the Spinal-side ``io_busy`` on the falling edge and
+    drives ``io_done`` for the next rising edge, which exercises the whole
+    observe -> drive path through cocotb.
+    """
+    if shutil.which("verilator") is None:
+        pytest.skip("verilator not on PATH")
+
+    spinal_v, am_v, wrapper_v, _pairs, spec = _build(
+        tmp_path, responder="tools.diff.responders:ack_when_busy")
+    assert spec["responder"] == "tools.diff.responders:ack_when_busy"
+    result = _run(tmp_path, (spinal_v, am_v, wrapper_v))
+    assert result.get("ok"), result
+    # and it really did drive: the report carries the responder's counters
+    for seed in ("1", "2"):
+        assert result["responder_stats"][seed]["AckWhen"]["acks"] > 0

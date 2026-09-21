@@ -51,7 +51,7 @@ def run_short_diff(module: str, tmp_path: Path, *, cycles: int = SHORT_CYCLES,
                     f"(run `make diff MOD={module}` on a machine that has one)")
 
     seeds = seeds if seeds is not None else SHORT_SEEDS
-    spinal_v = harness.ensure_spinal(entry.spinal, quiet=True)
+    spinal_v = harness.ensure_spinal(entry.spinal, quiet=True, copy_to=tmp_path)
     am_v, dut = harness.emit_amaranth(entry, module, tmp_path)
     pm = harness.load_portmap(entry, spinal_v, tmp_path)
     pairs, am_widths = harness.pair_ports(pm, entry, spinal_v, am_v, dut)
@@ -59,6 +59,7 @@ def run_short_diff(module: str, tmp_path: Path, *, cycles: int = SHORT_CYCLES,
     wrapper_v, _spec = harness.emit_wrapper(
         module, pairs, am_widths, tmp_path,
         has_clk="clk" in spinal_ports, has_rst="reset" in spinal_ports,
+        pinned=entry.pinned, responder=entry.responder,
     )
     result = harness.run_sim(
         module, tmp_path, [spinal_v, am_v, wrapper_v],
