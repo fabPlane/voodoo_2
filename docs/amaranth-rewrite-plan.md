@@ -287,6 +287,14 @@ makes the Amaranth core "the core".
 
 ### Phase 8 — Gowin Console port
 
+**Hardware checkpoint 2026-09-21:** `amaranth/hw/hdmi_demo/` (HdmiTestPatternScanout
+from the ported `hdmi/scanout.py` behind the Console's PLL, CLKDIV and DVI_TX_Top, built by
+Gowin EDA on the Mac in ~30 s, 1095 LUT / 247 FF / 0 BSRAM, Fmax 275 MHz on the 50 MHz
+domain and 76 MHz on the 25 MHz pixel domain) SRAM-loaded on the Console and shows the
+640x480 test pattern on the monitor. Amaranth RTL + vendor HDMI IP + both clock domains
+are proven on silicon before the full core goes through PnR.
+
+
 8.0 **Prerequisite found in Phase 5:** the Console builds with
     `useTexFillCache = false` (`CoreGowinGen.scala:73`), which selects
     `TmuNoTextureCache` (`TmuTextureCache.scala:865-996`). Port it to
@@ -1401,7 +1409,7 @@ Spinal core does.
         model incl. the `|<< 12` and `.resized` wraps.
 
 ### Phase 7
-- [x] scanout  - [ ] core + core_sim + dbg  - [ ] Glide suite identical  - [ ] trace replays identical  - [ ] SpinalSim tests ported
+- [x] scanout  - [x] core + core_sim + dbg  - [ ] Glide suite identical  - [ ] trace replays identical  - [ ] SpinalSim tests ported
 - [x] **scanout** (2026-09-21). `amaranth/avoodoo/hdmi/scanout.py`, all of
       `hdmi/HdmiScanout.scala` (working-tree version): `VideoTiming` (+ `DMT_640X480`,
       `CEA_720X480P`), `Rgb888` helpers (`rgb888_from_rgb565`, `apply_gamma` + integer
@@ -1464,6 +1472,69 @@ Spinal core does.
         `CoreGowinGen.scala:79`) has no `avoodoo.config.Config` field yet; the 4096x16
         `StreamFifoCC` RAM must go through `strip_meminit` under `CoreSim`;
         `spinal_fifo_ram_attrs(16, 4096)` is `{}` (BSRAM), as the Spinal build.
+
+- [x] **core + core_sim + dbg** (2026-09-21). `amaranth/avoodoo/core/core.py` (`Core.scala`,
+      working-tree version) and `amaranth/avoodoo/core_sim.py` (`CoreSim.scala`, replacing the
+      Phase 0.5 stub). Findings:
+      * **`avoodoo/core.py` cannot exist next to `avoodoo/core/`** -- Python resolves the
+        package and the module is unreachable -- so `Core` lives at `avoodoo/core/core.py` and
+        `avoodoo/core/__init__.py` resolves `avoodoo.core.Core` lazily (PEP 562 `__getattr__`;
+        eager would cycle through `core_types`). Import spec `avoodoo.core.core:Core`.
+      * `Core(c, *, simulation=False, dbg=False)`. `simulation` is `GenerationFlags.simulation`
+        for the register bank -- `False` because neither `CoreSimGen` (plain `SpinalConfig`)
+        nor `GenOne` set it; only a SpinalSim compile does. `dbg=True` adds exactly
+        `core_sim_ports.DBG_PORTS` (the five taps + the `swapCountReg` load port, with
+        `SwapBuffer(dbg_load_port=True)`); off, the port list is the Scala `io` bundle.
+        Sub-components under the Scala `val` names (`regBank`, `pciFifo`, `frontdoor`,
+        `pixelPipeline`, `framebufferMem`, `textureMem`, `hdmiScanout`,
+        `controlPlane_swapBuffer`). `PciFifo`'s three tables from `regdef` (the Scala reads
+        them off the elaborated `busif`). `wasEnqueuedAddr = 0x128` (`regdef.WAS_ENQUEUED_ADDR`
+        agrees, pinned by a test). The nine never-driven `CoreDebug` words are zero into
+        `regBank.io.debug`. `Config.hdmi_scanout_dmt640x480` added (`False`, as `Config.scala:37`).
+      * `CoreSim`: the pinned flat port list (`core_sim_signature()`), `sync` domain built from
+        the `clk`/`reset` ports (async reset by default, `GenOne`'s SYNC via `async_reset=False`),
+        `Core(dbg=True)` with the `dbg_*` ports forwarded, `fbWriteRam` (4 MiB) / `texRam`
+        (8 MiB) `SimMemBusMemory` with the `Memory` as `m.submodules.mem` -- the Verilator
+        paths `CoreSim__DOT__{fbWriteRam,texRam}__DOT__mem` the C harness spells -- the
+        five-input `Arbiter(lowerFirstPriority)`, `memFifoFree = 0xffff`, `fbBaseAddr = 0`,
+        HDMI clock low / reset high.
+      * **`gen_core_sim.py`'s `strip_meminit` now keeps ROM contents.** The Phase 0.5 version
+        deleted *every* `$meminit_v2` cell, which on the real core would have zeroed the three
+        Dither instances' `rom_r/g/b` and the TMU's LUTs. It now strips only cells whose `DATA`
+        constant is all zero (Amaranth's implicit initialiser); on `CoreSim` that is 55 stripped
+        (the two sim RAMs, the scanout `StreamFifoCC`, the readers' lane FIFOs, every
+        `StreamFifo`) and 13 kept (~57k `initial` lines). Guards: a kept cell deeper than
+        64 Ki words or more than 200k `initial` lines fails the generator. `make rtl-core-sim`:
+        RTLIL 129 MB in ~90 s on the Mac, `CoreSim.v` 11 MB, 203k lines, the two RAMs bare
+        `reg [31:0] mem [N-1:0]`, `tests/test_core_sim_ports.py` still green.
+      * **LFB reads do not work under CoreSim's five-way arbiter, on either side.**
+        `FramebufferMemSubsystem`'s colour-read arbiter puts its 2-bit route in
+        `source[1:0]`; CoreSim's `fbArbiter` then does `(source @@ chosen).resized` with
+        4 + 3 -> 4 bits (`BmbArbiter.scala:46`, `lib/membus.py` alike, diffed clean), which
+        keeps only `source[0]`. The `lfbReadBus` route (2) comes back as 0, the response is
+        demuxed to the scanout reader, and `Lfb` waits for ever. Reproduced, not fixed (1:1
+        rule); the pysim smoke test reads the LFB write back through the memory backdoor
+        instead. The Console/Artix boards have separate buses and no such arbiter.
+      * **Gate.** `make diff MOD=Core` clean at 1e6 cycles x seeds 1,2,3 (GATE_TIME) and at
+        BP_CYCLES cycles with `--valid-density 0.9 --ready-density 0.1`. 144 ports paired
+        (52 in / 92 out), no overrides: `io_hdmi_video_*` / `io_hdmi_status_*` /
+        `io_statusInputs_*` are slices of the packed layouts. Stimulus
+        (`tests/diff/core_stimulus.py`): `MemSlave` on all six memory buses (source echoed so
+        both arbiter layers demux), the `HdmiClock` responder renamed to `io_hdmi_clock/reset`,
+        and a CPU that programs a sane scene (colour writes on, clipping with a <= 64x48
+        window, RGB565 LFB, buffers 600 KiB apart) then mixes register writes (decoded
+        addresses; clip/fbiInit kept sane), real triangles through `triangleCMD` and the float
+        aliases + `ftriangleCMD`, fastfill/swap/nop, LFB writes/reads, texture writes/reads and
+        register reads through `io_cpuBus`; `statusInputs`, `fbBaseAddr`, `flushFbCaches` and
+        every ready stay random. Per seed at 1e6: GATE_STATS. `CoreRandom` (generator on the
+        CPU bus) clean too. `tests/diff/test_diff_core.py` runs the short versions.
+      * **`CoreSim` is not lockstep-diffed** (registry row `pending`): the 4 MiB + 8 MiB
+        RAMs are out of reach of both Verilog emitters (the `SimBmbMemory` row says the same),
+        and the wrapper cannot hold the Amaranth-only `dbg_*` inputs. Its wiring is covered by
+        `tests/test_core.py`'s pysim smoke run (register write -> status reads idle
+        `0x0FFFF03F`, LFB write of two RGB565 pixels lands in `fbWriteRam[0]` through the
+        backdoor, `dbg_swap_count` load flips `swapDisplayedBuffer` and status bit 10; ~5 ms
+        per pysim cycle) and by the Phase 7.3 Glide/trace gate.
 
 ### Phase 8
 - [ ] core_gowin + ddr adapters  - [ ] demo/UI modules  - [ ] tang_console_138k + hw/console  - [ ] bitstream on hardware
