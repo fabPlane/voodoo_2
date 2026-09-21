@@ -88,6 +88,23 @@ user the machine is down.
 
 ## Sync Mac → Linux
 
+**Amaranth rewrite (the `amaranth/rewrite` branch, local worktree
+`.claude/worktrees/amaranth-rewrite`) must never rsync into
+`/home/hyper/projects/me/vodoo_2`.** That directory is the Gowin PnR tree
+of other sessions; an `rsync --delete` from the rewrite tree overwrote it
+mid-PnR on 2026-09-21. The rewrite syncs to its own directory:
+
+```
+rsync -aH --delete <the excludes below> \
+  /Users/hyper/projects/me/vodoo_2/.claude/worktrees/amaranth-rewrite/ \
+  hyper-ms-lin:/home/hyper/projects/me/vodoo_2-amaranth/
+```
+
+Nothing in Phases 0–7 needs Linux except the `-m32` Glide link
+(`amaranth/Makefile` `sim-build`/`sim-run`) and the trace-check gate; Gowin
+PnR for the Amaranth console (Phase 8) also goes under `vodoo_2-amaranth`.
+
+
 Do not rsync Scala/Gowin build products. A Mac `.scala-build` carries
 Coursier paths that break scala-cli on Linux.
 

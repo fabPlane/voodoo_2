@@ -348,6 +348,9 @@ touched.)
 
 ### rsync
 
+Linux directory for this tree is `hyper-ms-lin:/home/hyper/projects/me/vodoo_2-amaranth/`,
+never the shared `vodoo_2/` (see AGENTS.md, "Sync Mac → Linux").
+
 The `AGENTS.md` Mac→Linux rsync needs three more excludes for this tree:
 `amaranth/.venv` (Mac wheels and a Mac interpreter), `amaranth/rtl`
 (generated) and `amaranth/emu/sim/obj_dir` (Verilator/`-m32` objects).
