@@ -37,7 +37,7 @@ ROMS   := $(addprefix roms/,$(addsuffix .bin,$(APPS)))
 # Create output dirs at parse time so they can't collide with phony names.
 $(shell mkdir -p build traces roms)
 
-.PHONY: all roms traces summary clean glide-lib
+.PHONY: all roms traces summary render clean glide-lib
 all: roms
 
 roms: $(ROMS)
@@ -68,6 +68,11 @@ roms/%.bin: traces/%.bin
 
 summary: $(TRACES)
 	@for t in $(TRACES); do python3 tools/pack_trace.py $$t --summary; done
+
+# Render each demo to a PNG screenshot via the 86Box software reference model
+# (the golden model the RTL core is verified against). See render/render.sh.
+render: $(TRACES)
+	@bash render/render.sh
 
 clean:
 	rm -rf build traces
