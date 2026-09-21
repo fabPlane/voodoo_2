@@ -43,6 +43,7 @@ help:
 	@echo "diff-list      modules the diff harness knows about"
 	@echo "gowin-console  (Phase 8) PnR on hyper-ms-lin"
 	@echo "rtl-spike      Phase 0.3 Gowin compatibility spike Verilog"
+	@echo "hdmi-demo      HDMI test-pattern bitstream: gen + lint + sim, PnR on hyper-ms-lin (hw/hdmi_demo)"
 
 venv:
 	$(UV) sync --project $(CURDIR)
@@ -123,6 +124,46 @@ diff: venv
 
 diff-list: venv
 	$(RUN) python -m tools.diff.harness --list
+
+# --- HDMI test-pattern demo bitstream (hardware checkpoint, hw/hdmi_demo) ---
+#
+# Amaranth HdmiTestPatternScanout in a second clock domain + vendor PLL/CLKDIV
+# + DVI TX, on the Tang Retro Console 138K. The Verilog goes to
+# hw/hdmi_demo/build/ (not rtl/, which the AGENTS.md rsync excludes), is
+# linted and simulated here, then hw/hdmi_demo/run_pnr.sh rsyncs the worktree
+# to hyper-ms-lin:vodoo_2-amaranth/, refuses if a gw_sh is already running
+# there, runs gw_sh, and copies impl/pnr/*.fs + logs back into build/.
+# Programming the board is left to the user (program_debug_sram.sh).
+
+HDMI_DEMO_DIR := $(CURDIR)/hw/hdmi_demo
+HDMI_DEMO_IP  := $(abspath $(CURDIR)/../fpga/hw/gowin/ip)
+HDMI_DEMO_LINT_FLAGS := -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-DECLFILENAME \
+	-Wno-UNUSEDSIGNAL -Wno-TIMESCALEMOD
+
+.PHONY: hdmi-demo hdmi-demo-rtl hdmi-demo-lint hdmi-demo-sim hdmi-demo-pnr
+
+hdmi-demo-rtl: venv
+	$(RUN) python -m gen.gen_module avoodoo.gowin.hdmi_demo_top:HdmiDemoTop -o $(HDMI_DEMO_DIR)/build
+
+hdmi-demo-lint: hdmi-demo-rtl
+	verilator --lint-only $(HDMI_DEMO_LINT_FLAGS) --top-module HdmiDemoTop \
+		$(HDMI_DEMO_DIR)/build/HdmiDemoTop.v
+	verilator --lint-only $(HDMI_DEMO_LINT_FLAGS) --top-module hdmi_demo_board_top \
+		$(HDMI_DEMO_DIR)/build/HdmiDemoTop.v \
+		$(HDMI_DEMO_DIR)/hdmi_demo_board_top.v \
+		$(HDMI_DEMO_DIR)/dvi_tx_top.v \
+		$(HDMI_DEMO_IP)/Gowin_PLL_Hdmi/Gowin_PLL_Hdmi.v \
+		$(HDMI_DEMO_IP)/Gowin_PLL_Hdmi/Gowin_PLL_Hdmi_mod.v \
+		$(HDMI_DEMO_IP)/Gowin_PLL_Sys/pll_init.v \
+		$(HDMI_DEMO_DIR)/lint/gowin_prims_stub.v
+
+hdmi-demo-sim: venv
+	$(RUN) pytest -q tests/test_hdmi_demo_top.py
+
+hdmi-demo-pnr: hdmi-demo-rtl
+	$(HDMI_DEMO_DIR)/run_pnr.sh
+
+hdmi-demo: hdmi-demo-lint hdmi-demo-sim hdmi-demo-pnr
 
 # --- placeholders; filled in by the phases named above ----------------------
 

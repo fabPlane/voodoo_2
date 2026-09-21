@@ -1,0 +1,28 @@
+// Physical constraints for the Amaranth HDMI demo on the Sipeed Tang Retro
+// Console 138K (GW5AST-LV138PG484A, device version C).
+//
+// Clock / LED / HDMI / key lines copied verbatim from
+// fpga/hw/gowin/console/tang_console_138k.cst (the working Console build).
+// DDR3, UART and soft-USB pins are omitted: those ports do not exist on
+// hdmi_demo_board_top, and a CST entry for a missing port is an error.
+
+IO_LOC "clk50" V22;
+IO_PORT "clk50" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=OFF;
+
+IO_LOC "led_n[0]" G11;
+IO_LOC "led_n[1]" U12;
+IO_PORT "led_n[0]" IO_TYPE=LVCMOS33 DRIVE=4 PULL_MODE=NONE BANK_VCCIO=3.3;
+IO_PORT "led_n[1]" IO_TYPE=LVCMOS33 DRIVE=4 PULL_MODE=NONE BANK_VCCIO=3.3;
+
+IO_LOC "tmds_clk_p" G15,G16;
+IO_PORT "tmds_clk_p" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33D;
+IO_LOC "tmds_data_p[0]" J14,H14;
+IO_PORT "tmds_data_p[0]" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33D;
+IO_LOC "tmds_data_p[1]" J15,H15;
+IO_PORT "tmds_data_p[1]" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33D;
+IO_LOC "tmds_data_p[2]" K17,J17;
+IO_PORT "tmds_data_p[2]" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33D;
+
+// Onboard USER key (active low): blanks the picture while held.
+IO_LOC "key0_n" AA13;
+IO_PORT "key0_n" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
