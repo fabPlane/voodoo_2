@@ -43,25 +43,18 @@ Build on the Linux machine from the Mac:
 ./build-linux.sh uart_hello
 ```
 
-The HDMI design currently passes Yosys synthesis:
+The HDMI design now completes synthesis, placement, routing, and open-source
+bitstream packing:
 
 ```sh
-./build-linux.sh hdmi_colorbars-synth
+./build-linux.sh hdmi_colorbars
 ```
 
-The PLL database work is now in the `fabPlane/apicula` fork. All twelve PLLA
-BELs are visible and the HDMI PLL places successfully. Full HDMI placement is
-currently stopped at the next missing device resource:
-
-```text
-ERROR: Unable to place cell 'u_pixel_div', no BELs remaining to implement cell type 'CLKDIV'
-```
-
-`make all` therefore keeps the three buildable smoke-test bitstreams green
-while the HDMI source and synthesis checkpoint remain available for continued
-PLL chip-database work. A real 640x480 TMDS output needs 125 MHz serial and
-25 MHz pixel clocks, so bypassing the PLL with the board's 50 MHz oscillator
-is not a usable hardware workaround.
+The PLL and HCLK database work is in the `fabPlane/apicula` fork. The HDMI PLL
+uses independent 125 MHz and 25 MHz outputs, both routed through global clock
+resources; OSER10 and the board's true-LVDS outputs also place and route. The
+resulting image enters FPGA user mode with status `0x00022230`. HDMI lock and
+visible color bars still require confirmation on hardware.
 
 Or, with a recent OSS CAD Suite already on `PATH`:
 
@@ -145,8 +138,9 @@ separate bring-up steps.
 
 1. Establish logic, GPIO, UART, and inferred BSRAM with the smoke tests above.
    Logic, GPIO, the 50 MHz clock, and inferred BSRAM are now validated.
-2. Add the missing GW5AST-138C CLKDIV resource and route the existing open TMDS
-   color-bar generator. PLLA already places; CLKDIV/OSER10/ELVDS synthesize.
+2. Validate the routed open TMDS color-bar generator on a display. GW5AST PLLA,
+   CLKDIV, HCLK, OSER10, and true-LVDS resources are now represented well
+   enough for this design to complete the open flow.
 3. Add a small soft CPU demo backed entirely by BSRAM.
 4. Bring up DDR3 in isolation: initialization, training, walking-bit tests,
    then sustained reads/writes. This requires an open GW5A DDR PHY as well as
