@@ -1,0 +1,9 @@
+Quake 1.06 shareware data lives here as pak0.pak (id Software, freely
+downloadable). It is the WinQuake demo: Episode 1 plus demo1.dem, demo2.dem
+and demo3.dem.
+
+  cd sw/quake-riscv && make shareware
+
+Do not vendor the registered pak1.pak. pak0.pak is gitignored (~18 MiB).
+On case-insensitive volumes, this file is DATA.txt so it does not collide
+with the shareware readme.

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "scratch-static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "/private/tmp/claude-501/-Users-hyper-projects-me-vodoo-2/58fb8858-46dc-4033-8bc8-e8966af4ef85/scratchpad"],
+      "port": 8765
+    }
+  ]
+}

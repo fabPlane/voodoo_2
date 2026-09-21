@@ -3,7 +3,7 @@ the real SpinalHDL elaboration.
 
 The ground truth in ``tests/data/registerbank_regmeta.json`` is produced by::
 
-    cd fpga && scala-cli run . --main-class voodoo.diff.GenOne -- \\
+    cd fpga && scala-cli run . -- one \\
         --dump-regmeta ../amaranth/tests/data/registerbank_regmeta.json
 
 ``--dump-regmeta`` (added to ``fpga/src/voodoo/diff/GenOne.scala`` for this

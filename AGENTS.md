@@ -191,6 +191,78 @@ Success is `Bitstream generation completed` and
 copied back to the Mac). TangCore filename on the card is
 `cores/console138k/voodootang.bin`. See `hardware/tang-console-138k/README.md`.
 
+## Scala: keep it warm (both machines)
+
+The Scala compile is not slow; **cold** compiles are, and scala-cli was doing
+far more of them than necessary. Measured 2026-09-21 on the 22k-line tree
+(`fpga/src` + `ext/SpinalVoodoo/src`), Mac M2 Max / Linux 9955HX:
+
+| | Mac | Linux |
+|---|---|---|
+| cold `make compile` (Bloop start + full compile) | 14–20 s | 14 s |
+| warm no-op `scala-cli compile .` | 8 s | — |
+| edit one board file, recompile | < 1 s | < 1 s |
+| `make rtl-console` warm (elaboration is 4 s of it) | 4.9 s | 4.2 s |
+| `make rtl` (all three tops), warm | 14 s | 12 s |
+| `make test TEST_ARGS='-w voodoo.gowin'` (39 tests, verilated models cached) | ~40 s | 40 s |
+
+The rules that keep it there:
+
+1. **scala-cli folds `--main-class` and `--test-only` into the Bloop project
+   hash.** Every distinct value is a *separate* full compile under
+   `fpga/.scala-build/fpga_<hash>/`, then a separate incremental recompile
+   after every edit. Before this note the Mac had 17 such directories
+   (222 MB), i.e. 17 cold builds. So:
+   - All generators run through one `main`, `voodoo.Gen`
+     (`fpga/src/voodoo/Gen.scala`), declared with `//> using mainClass` in
+     `project.scala`. Use `scala-cli run . -- console|gowin|artix|core-gowin|core-artix`
+     and `scala-cli run . -- one <Module> [outDir]` for `voodoo.diff.GenOne`.
+     The Makefile and `amaranth/tools/diff/harness.py` already do. **Never
+     pass `--main-class`.**
+   - Test subsets go through ScalaTest runner args, which do not touch the
+     hash: `make test TEST_ARGS='-w voodoo.gowin'` (package) or
+     `TEST_ARGS='-z "OSD paints"'` (test-name substring). **Never pass
+     `--test-only`** — each value forks another full compile. `-s <Suite>` is
+     rejected by ScalaTest under sbt-style runners; use `-w` or `-z`.
+   - Result: exactly two caches, one for `compile`/`run` and one for `test`.
+     Each is ~15 s to rebuild cold; if `fpga/.scala-build` ever grows beyond
+     `bloop-daemon/` plus two `fpga_*` directories, something passed an
+     option it should not have. Deleting a stray `fpga_<hash>/` alone does
+     not work — Bloop recreates it from `.scala-build/.bloop/fpga_<hash>*.json`;
+     remove both, or just `rm -rf fpga/.scala-build` and eat one 15 s compile.
+2. **`make clean` no longer deletes `.scala-build` or `simWorkspace`.** The
+   first is the compile cache; the second holds SpinalSim's verilated models
+   (727 MB, minutes each to rebuild; SpinalSim reuses them when the RTL hash
+   is unchanged). `make distclean` drops both when you really want a cold
+   start.
+3. **Run scala-cli from `fpga/`, never from a subdirectory.** A stray
+   `fpga/test/voodoo/gowin/.scala-build` was a third, useless full build of
+   the tree (it is in the rsync excludes for that reason).
+4. **Bloop daemon per checkout.** The Makefile passes
+   `--bloop-daemon-dir fpga/.scala-build/bloop-daemon` (`SCALA_SERVER_FLAGS`),
+   so `make` targets share one server and the Mac daemon never leaks into a
+   tree synced to Linux. A bare `scala-cli …` on the command line talks to
+   the *global* daemon instead — same project directory, different server —
+   so either add the flag or use the `make` targets. Bloop's default heap is
+   a quarter of RAM (24 GB Mac, 22 GB Linux); no `~/.bloop/bloop.json` is
+   needed and none exists on either machine.
+5. **Compiler flags were measured and do not help.** `-Ybackend-parallelism 8`
+   plus `-Ycache-plugin-class-loader:last-modified` /
+   `-Ycache-macro-class-loader:last-modified` moved a cold compile by ~2 s,
+   inside run-to-run noise (13.7–19.5 s without, 13.7–16.5 s with). Not
+   worth the hash change they cause on every checkout. Do not re-add them
+   without a better measurement.
+6. **What is actually slow, and it is not Scala.** Per-invocation JVM start
+   (~3–4 s of every `scala-cli` call, hence 8 s for a warm no-op), SpinalHDL
+   elaboration (4 s per top; scales with the design, and Amaranth has the
+   same phase), and SpinalSim verilating a changed DUT (Verilator C++
+   compile, minutes). Iterate with one `make rtl-<target>`, not `make rtl`,
+   and with `TEST_ARGS` subsets, not `make test`.
+
+Linux gets all of this for free: the Makefile, `project.scala` and
+`Gen.scala` travel with the rsync, `.scala-build` is per-machine and
+excluded, and the numbers above were taken on both boxes the same afternoon.
+
 ## Scala / Verilator on Linux (only if the Mac cannot)
 
 ```

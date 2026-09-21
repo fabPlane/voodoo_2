@@ -336,6 +336,12 @@ Spinal core does.
 - Spinal `Reg(...)` without `init` has no reset; an Amaranth `Signal` resets
   to 0. Declare such registers `reset_less=True` or the lockstep diff diverges
   right after reset (the harness resets before every seed).
+- A responder-backed diff can park (both sides idle, no mismatch possible) and
+  still report a clean 1e6 cycles. Every diff test must assert activity counters
+  from the report (requests served, hits) scale with the cycle count; a run
+  whose seed counters equal its 20k-cycle counters has parked.
+- A driver that crashes before writing report.json is a FAIL (f793844). Confirm
+  `report.json` exists with `ok: true` before quoting a gate result.
 - Amaranth attaches an initialiser to every `Memory`; large uninitialised RAMs
   must go through `gen/gen_core_sim.py`'s `strip_meminit` or Verilog emission
   explodes to one `initial` per word.
@@ -444,7 +450,7 @@ Spinal core does.
     design, which is why the driver resets before every seed rather than once.
     Every such register must be `reset_less=True`.
   - **Spinal side done (2026-09-20).** `fpga/src/voodoo/diff/GenOne.scala`
-    (`scala-cli run . --main-class voodoo.diff.GenOne -- <Module> [outDir]`, 44 buildable
+    (`scala-cli run . -- one <Module> [outDir]`, 44 buildable
     entries, 2 stubs) generates `<Module>_spinal.v`; `DiffWrappers.scala` wraps the
     non-Component `StreamWhile`/`Fpxx`; `AfixOps.scala` is the AFix op-by-op reference for
     0.2; `ports.py` emits the port-name maps committed under `diff/portmaps/`. StreamWhile,
@@ -522,7 +528,7 @@ Spinal core does.
   `SIM_DIR=` override.
 
 ### Phase 1
-- [x] stream helpers  - [x] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [ ] axi  - [x] bus_interface  - [ ] pci_fifo
+- [x] stream helpers  - [x] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [x] axi  - [x] bus_interface  - [ ] pci_fifo
 - [x] 1.1 stream helpers — 2026-09-20. `amaranth/avoodoo/lib/stream.py` (+ `lib/fragment.py`,
       `bus/stream_while.py`), transliterated from the SpinalHDL 1.15.0 `spinal/lib/Stream.scala`,
       `Flow.scala`, `Counter.scala` and `Utils.scala` sources. 66 pysim tests in
@@ -750,6 +756,45 @@ Spinal core does.
       not the assignments, so it should not — only the Phase 4 `ColorCombine`
       lockstep diff will prove it).
 
+- [x] 1.5 axi — 2026-09-21. `amaranth/avoodoo/lib/axi.py` (AXI4 / AXI4-Shared / AXI4-Lite
+      signatures from the SpinalHDL 1.15.0 `amba4/axi/*.scala` + `axilite/AxiLite4.scala`
+      sources, layouts in Scala declaration order so every `io_x_aw_payload_addr` leaf pairs
+      against a slice of the packed `x__aw__payload` with **no overrides**; `<<`/`driveWeak`
+      as `connect_axi4`/`connect_axilite4`, `Axi4Shared.toAxi4` as `shared_to_axi4`),
+      `lib/axi4_to_axilite4.py` (`artix/Axi4ToAxiLite4.scala`), `lib/axilite4_to_membus.py`
+      (`AxiLite4ToBmbBridge`, `CoreArtix.scala`), `lib/membus_to_axi4_mem.py`
+      (`BmbToAxi4SharedBridge` from `bmb/BmbToAxi4Bridge.scala` + `BmbToAxi4Mem` +
+      `fbAxiConfig`/`texAxiConfig`), `gowin/axilite4_clock_crossing.py`,
+      `gowin/axi4_address_relocate.py` (`CoreGowin.scala:80`). 22 pysim tests in
+      `tests/test_axi.py` (incl. a real two-clock crossing run), 12 short lockstep runs in
+      `tests/diff/test_diff_axi.py`; eight `GenOne` rows. **Gate**, every row at 1e6 cycles x
+      seeds 1,2,3 at the default densities *and* at `--valid-density 0.9 --ready-density 0.12`:
+      `Axi4ToAxiLite4`, `AxiLite4ToBmbBridge` (timeoutLog2 20), `AxiLite4ToBmbBridgeFastTimeout`
+      (timeoutLog2 4, so wedged / droppedWrites / both SLVERR paths fire), `BmbToAxi4SharedBridge`
+      (on the post-aligner/fixer parameter), `BmbToAxi4Mem`, `BmbToAxi4MemTex` (sourceWidth 6),
+      `AxiLite4ClockCrossing` (single clock; +seeds 4..7 x 2e5), `Axi4AddressRelocate` — all
+      PASS. reset_less registers: `states(i).write` and `rspSelReadLast` (`RegNextWhen`) in the
+      shared bridge, plus the half-pipe payloads; everything else in these files is `RegInit`.
+      **Two findings.** (a) The working-tree `AxiLite4ToBmbBridge` now exports
+      `requestTimeoutSeen`/`responseTimeoutSeen` (uncommitted `CoreArtix.scala` hunk; `CoreGowin`
+      forwards them as `hostRequestTimeout`/`hostResponseTimeout` and passes `timeoutLog2 = 30`);
+      the port carries both outputs, in Scala field order. (b) **`lib/stream.py:FifoCC`'s
+      `with_pop_buffered_reset` is not what Spinal does.** `withBufferedResetFrom` is
+      `ResetCtrl.asyncAssertSyncDeassertCreateCd` (`CrossClock.scala:294`): `clockCd.copy(reset =
+      <async-asserted 2-flop BufferCC>)`, i.e. the pop domain keeps its own **SYNC** `resetKind`
+      (`always @(posedge clk) if (reset_synchronized) ...` in the Verilog) and only the bridge
+      flops are async; `FifoCC` declares the pop domain `async_reset=True`. Invisible on seed 1;
+      the 1e6 gate caught it at seed 3 cycle 0 through the unreset RAM read register: with `rst`
+      raised while a pop read is pending, Spinal still performs that read on the first reset edge,
+      Amaranth's async reset cancels it, and the two `pop.payload`s carry different stale data
+      into the next seed (the FST replay of seed 3 alone is clean — the state comes from seed 2).
+      `AxiLite4ClockCrossing` therefore builds the synchronised-reset domain itself (one sync-reset
+      local domain per (push, pop) pair, `cdc.ResetSynchronizer` on the push reset, shared by the
+      five FIFOs exactly as Spinal's `globalCache` shares it) and passes
+      `with_pop_buffered_reset=False`. **Owner of `stream.py` (1.1): change that
+      `ClockDomain(..., async_reset=True)` to a sync-reset domain; `HdmiScanout` (Phase 7) is the
+      other `StreamFifoCC` user and will hit the same thing under the diff.**
+
 - [x] 1.6 register_category + bus_interface — 2026-09-21. `amaranth/avoodoo/bus/register_category.py`
       (the four factories as frozen-dataclass constants; `regdef.py` now re-exports them instead
       of carrying its own copy) and `bus/bus_interface.py` (`BmbBusInterface.scala`, 268 lines,
@@ -915,7 +960,7 @@ Spinal core does.
       `WriteReq` stream) and adds a 400-case stride sweep.
 
 ### Phase 4
-- [ ] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
+- [x] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
 - [x] **fog** (2026-09-20). `amaranth/avoodoo/pixel/fog.py`, three `m2sPipe`
       stages, `ColorCombine.Output` in / `Fog.Output` out. **The fog table is
       not a `Mem`**: `io.fogTable` is `in Vec(Bits(16 bits), 64)`, 64 flat input
@@ -931,6 +976,40 @@ Spinal core does.
       non-growing `+`/`-` make the result wrap (`wFogFactorRaw`, `diff`,
       `finalColor`, all SInt(10)) and the `wBlend.asSInt`-before-sign-extend
       reinterpretation are each pinned by their own case.
+- [x] **color_combine** (2026-09-20). `amaranth/avoodoo/pixel/color_combine.py`
+      (`ColorCombine.scala`, 571 lines) on `avoodoo/lib/pipeline.py`: the same
+      34 `Payload`s (35 with `TRACE` when `c.trace.enabled`), `n0..n8`, eight
+      default `StageLink`s, `n0.driveFrom` / `n8.driveTo`, `Builder(links)`.
+      The emitted register census is exactly the skeleton's — **8 `valid`
+      registers + 150 payload stage registers**, per-payload live ranges equal
+      to `tests/test_pipeline.py::COLOR_COMBINE_TOUCHES`
+      (`tests/test_color_combine.py::test_pipeline_structure_...` asserts it
+      against the built module, not a mock). **Diff-clean at 1e6 cycles x
+      seeds 1,2,3** (`make diff MOD=ColorCombine`, 132 Spinal ports paired with
+      **zero overrides**, every leaf a slice of the packed `input__payload` /
+      `output__payload`) and again at `--valid-density 0.9 --ready-density
+      0.12`; `tests/diff/test_diff_color_combine.py` runs both short in
+      `make test`. This is the first `misc.pipeline` user through the harness,
+      so it also closes the pipeline port's open question 8 (lazy
+      valid/ready/status creation does not change the emitted behaviour).
+      `tests/test_color_combine.py` (32 tests) ports `ColorCombineTest.scala`'s
+      ten cases onto a `fixed_model`-based model of the CCU/ACU and sweeps every
+      select code. Three things the port reproduces on purpose:
+      (a) **`clampAFixToFactor` is a constant zero** (`afix-semantics.md` §8.1):
+      `UQ(0, 8)` there is `spinal.core.UQ` = `QFormat(0, 8)`, zero bits, so the
+      `MSelect.AOTHER` factor is `8'h0` for RGB and alpha; the port builds the
+      same zero-bit `fix_to` and the test pins it end to end. Fixing it is a
+      screenshot-visible change and stays out of the 1:1 port.
+      (b) **The last `is` of every Spinal `switch` is the Verilog `default`**:
+      `mselect` 6/7 behave as `TEXTURE_RGB`, `add` 3 as `ALOCAL`,
+      `alphaLocalSelect` 3 as `ITERATED_Z`, `rgbSel`/`alphaSel` `LFB` is the
+      default arm. The `m.Default()` arms are those enumerants, and the random
+      diff stimulus hits all the out-of-range codes.
+      (c) Spinal's `SInt(9) - SInt(9)` stays 9 bits before `AFix(...)` takes
+      its bounds from the width; the port slices Amaranth's grown result back.
+      Also worth knowing: the alpha `MSelect.CLOCAL` arm reads `A_LOCAL`, not
+      `C_LOCAL`, and `AddMode.CLOCAL` on alpha adds `A_LOCAL` too — both are
+      the Scala's, kept.
 - [x] **dither tables — formula-generated, no data pasted** (2026-09-20).
       `amaranth/avoodoo/pixel/dither_tables.py` builds all eight 86Box tables
       (`rb4x4`/`g4x4`/`rb2x2`/`g2x2` + the four `dithersub` ones, 10 240 entries,
@@ -979,7 +1058,7 @@ Spinal core does.
       `frontend/swap_buffer.py`.
 
 ### Phase 5
-- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
+- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [x] tmu_texture_cache  - [x] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
 - [x] **tex_layout_tables** (2026-09-20). `amaranth/avoodoo/texture/tex_layout_tables.py`
       is the pure-Python transliteration of the Scala object (`TexConfig`/`Tables`
       dataclasses, `compute`, 22-bit wrapping kept); `tests/test_tex_layout_tables.py`
@@ -1020,6 +1099,58 @@ Spinal core does.
       and both sides read zero before the first write, so the early cycles diff too.
       No AFix anywhere in this module, so the layout-read signedness fix in
       `lib/fixed.py` does not touch it.
+- [x] **tmu_texture_cache** (2026-09-21). `amaranth/avoodoo/texture/tmu_texture_cache.py`
+      is the 1:1 port of `TmuTextureCache.scala` (the six bundles, `TmuTexturePathBase`'s
+      helpers, a `TmuTextureCacheGeometry` holding the derived sizes and the
+      `setOf`/`bankEntryOf`/`slotOf` arithmetic on both Values and ints, and the Component
+      with `formal_strong` / `formal_hot_init` kept). `TmuNoTextureCache` (the same Scala
+      file, built when `!useTexFillCache` -- which is what the Console does) is not here.
+      A previous agent's cut-off draft was **continued, not restarted**: it was a complete
+      transliteration whose only defect was one stale call (`packed_location22(m, ...)`
+      after `tmu_types.py` dropped the `m` argument); read side by side with the Scala it
+      needed no other change. **Diff-clean at 1e6 cycles x seeds 1,2,3** (`make diff
+      MOD=TmuTextureCache`, 102 ports paired, 509 s on the Mac) and again at 1e6 x 3 with
+      `--valid-density 0.9 --ready-density 0.12` (478 s); one override,
+      `dbgDataValid -> sample_fetch__valid`, because `io.sampleFetch.valid.setName(...)`
+      renames the port itself in the Spinal Verilog. The row needs a responder
+      (`tests/diff/tmu_texture_cache_stimulus.py`): it owns `io_texRead_rsp` (one
+      `lineWords`-beat burst per accepted cmd), `io_sampleRequest` (bilinear-consistent taps
+      from a working set of two packed textures, banks/pairs/startup decode from the same
+      `packedLocation22` arithmetic, raw `texEnd` zeroed 15 % of the time to take the
+      fallback branch, 10 % of addresses aliased above bit 22) and `io_invalidate` (a pulse
+      per ~3000 cycles). Per 1e6 cycles that is ~95k requests, ~57k fills, ~65k responses.
+      `tests/diff/test_diff_tmu_texture_cache.py` runs 20k x 3 + a 10k back-pressured shape;
+      `tests/test_tmu_texture_cache.py` (13 tests) ports the three ReuseTest cases and the
+      FormalTest intent (cmd shape + stream hold rule as per-cycle invariants, tracked
+      miss -> fill -> response, hot-init hits with no cmd and consecutive accepts /
+      responses), invalidation, victim rotation, the `texEnd` fallback, a request-level
+      hit/miss/fill model that predicts the exact fill sequence and every response texel
+      over random working-set traffic (plain and stalled), and a `Reg`-vs-`RegInit`
+      `reset_less` audit. Memories: 4 x (8 x 73) meta, 8 x (64 x 32) bank, 16 x ~700
+      request FIFO, all `init=[]` (strip_meminit territory) and all `distributed_ram` by
+      the width >= 24 / depth <= 64 rule; the Verilog is byte-identical whether the attribute
+      is hard-coded or derived. Findings, all reproduced 1:1 and pinned by tests:
+      (a) **upstream answers a miss with the pre-capture texel.** `fillFetchRaw.payload :=
+      ownerRspCommitted` (the `owner.texels` registers, 0 for a missed tap) is sent on the
+      beat whose `fillRsp.fire` would load them, and `queue(1)` is an `m2sPipe` latching on
+      `ready`; a cold point sample returns texel 0 and hits with the real texel next time,
+      a cold bilinear sample gets the last-resolved tap(s) stale. `ownerRsp` (with the
+      capture mux) is dead code in the Scala. p5-tmu-2 saw the same through the whole
+      `Tmu`. The Console never builds this module; `CoreSim`'s default does. Not fixed
+      (plan §1). (b) A tap decoding outside every LOD **livelocks** the cache (the continue
+      fill re-fills the same line forever, `owner.active` blocks all lookups), which is why
+      the random driver alone compares two stuck designs and the responder exists. (c) The
+      16-bit bank formula `offs[shift] | offs[shift+1]` lets bilinear taps alias in one bank
+      (every bilinear sample of a 2x2 16-bit LOD does); a hit then reads the OR of two bank
+      indices. That is the formal `assume(noTapBankAlias)`; fills and hit/miss are per-tap
+      and unaffected. (d) `io.busy` drops for one cycle after a push into the empty request
+      FIFO (`StreamFifo` latency 2). Harness notes: `fpga/src/voodoo/diff/ports.py` takes
+      the handshake keyword closest to the end, so the four
+      `io_sampleRequest_payload_tapStartupDecode_N_valid` payload fields classify as the
+      `valid` of one-port flows -- a responder owning `io_sampleRequest` must claim them by
+      name (`Tmu` has the same field); and the false PASS on a driver crash
+      (`run_sim` returning ok on a missing report) that this row exposed was fixed in
+      f793844.
 - [x] **tmu constant ROMs** (2026-09-20, ahead of `tmu`).
       `amaranth/avoodoo/texture/tmu_tables.py` = the `lookupTables` area of
       `Tmu.scala:53-80` only (no pipeline): the 512-entry 17-bit reciprocal LUT
@@ -1062,6 +1193,51 @@ Spinal core does.
       land in it. `register_bank.py` (in flight) carries its own copy of the
       hardware table compute; dedupe onto `compute_tables` later.
 
+- [x] **tmu** (2026-09-21). `amaranth/avoodoo/texture/tmu.py` is the 1:1 port of the
+      `Tmu` Component (`Tmu.scala:22-630`): nine `translateWith().stage()` register
+      stages (abs/clz64/ROM index, reciprocal interpolation + `perspLodAdjust`, the
+      66-bit perspective divide with its round bias, gradient magnitude, clz32 + log2
+      ROM -> 8.8 LOD, bias/min/max/aspect, point + bilinear coordinates, `wrapOrClamp` +
+      packed `texelAddr`, packed bank/pair decode) into the `m2sPipe().queue(16)`,
+      then the bypass/`canAllocate` split, `>/->` (`s2mPipe().m2sPipe()`) on both sides
+      of `TmuTextureCache`, `TmuTexelDecoder`, the output merge and `inFlightCount`.
+      The two ROMs are `amaranth.lib.memory.Memory` with `init` from `tmu_tables.py`
+      (two comb read ports each -- **not** `strip_meminit` material). Structure map and
+      every stage's Spinal widths are in the module docstring. `object Tmu`'s remaining
+      bundles landed first in `tmu_types.py` (c8df1f7). Only `packedTexLayout` +
+      `useTexFillCache` are supported: the linear `texelAddr` branch cannot elaborate
+      upstream either (`sampleRequestBase` indexes `texTables` unconditionally) and
+      `TmuNoTextureCache` is not ported -- **note the Console builds with
+      `useTexFillCache = false`** (`fpga/src/voodoo/gowin/CoreGowinGen.scala:73`), so
+      `TmuNoTextureCache` (TmuTextureCache.scala:865-996) is needed before Phase 8.
+      Three cross-stage reads reproduced on purpose: `bilinearEnable` is decoded from
+      `stageLod` but folded into `stageB`'s request (so back-to-back pixels carry the
+      *next* pixel's filter bits), `bypassTexture` gates the FIFO head on `stageB`'s
+      `textureEnable`, and `tmultibaseaddr` would come from `stageLodPrep`.
+      **Diff clean, 1e6 x 3 seeds on two rows** plus 3 x 200k at
+      `--valid-density 0.9 --ready-density 0.12`: `Tmu` (texture-shaped traffic from
+      `tests/diff/tmu_stimulus.py`: per-seed table set-ups via `TexLayoutTables.compute`,
+      S/T random walk, sane 1/W, 5 % "wild" pixels; ~35k pixels/1e6 cycles with cache hits)
+      and `TmuMemOnly` (GenOne alias; every arithmetic input a raw random pattern per
+      pixel, tables consistent; ~195k pixels/1e6). Both need `TexMemSlave` on
+      `io_texRead_rsp`. `tests/diff/test_diff_tmu.py` runs the three shapes at 20k/20k/10k.
+      `tests/test_tmu.py` (28 tests): a Python model of the whole front end (ROMs, clz,
+      66-bit divide, LOD, aspect, coordinates, wrap/clamp, packed address) checked against
+      the DUT's internal `sampleRequest` over directed cases and a 40-pixel random sweep,
+      the Scala test's five RGB565 colours and the (10, 20) address, bypass, `busy`,
+      `inFlightCount` saturation under back-pressure, bilinear tap adjacency.
+      Two upstream findings, both reproduced, not fixed: (a) **the cache emits the
+      pre-capture texel on a cold miss** -- `TmuTextureCache.scala:765` pushes
+      `ownerRspCommitted` (registered `owner.texels`) in the same beat the last tap is
+      captured, so a point sample on a cold line returns texel 0 and a cold bilinear
+      sample has one stale tap (`ownerRsp`/`nextTexel` is computed and unused); the
+      retry hits and is correct; `test_tmu.py` pins it. (b) **a request whose texel
+      address lies outside every LOD's `[texBase, texEnd)` livelocks the cache** in
+      continue-fills (measured: a run freezes at the first fully random `io_input` beat,
+      34 pixels per 1e6 cycles), which is why neither diff row injects such beats.
+      Also: `lodmin`/`lodmax`/`lodbias` are 4.2 (quarter levels) and `baseLod` is
+      `(log2(|grad|^2) - 36) / 4`, i.e. a 2 texel/pixel gradient is LOD 0.5 -- same as
+      86Box's `LOD >>= 2`; the Scala test's `lodmax = 8` is a 2.0 cap.
 ### Phase 6
 - [x] address_math  - [x] plane_buffer  - [x] plane_reader  - [x] plane_direct_reader  - [ ] framebuffer_mem_subsystem
 - [x] **address_math** (2026-09-20). `amaranth/avoodoo/framebuffer/address_math.py`

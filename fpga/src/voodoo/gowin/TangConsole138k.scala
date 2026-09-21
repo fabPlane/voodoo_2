@@ -300,10 +300,10 @@ case class TangConsole138k(c: Config) extends Component {
       nextHs := core.io.hdmi.video.hSync
       nextVs := core.io.hdmi.video.vSync
       nextDe := core.io.hdmi.video.de
-      // Keep the two diagnostic rows visible over a running demo. The first
-      // hardware image hid all BAR/player/UART evidence at exactly the point
-      // where a failed renderer produced an otherwise featureless black frame.
-      when(hud.io.hit) {
+      // The camera-readable HUD occupies most of the frame. Keep it available
+      // in latched debug mode, but do not obscure a normally running demo;
+      // the same counters remain continuously readable through JTAG.
+      when(hud.io.hit && hud.io.debugMode) {
         nextR := hud.io.r
         nextG := hud.io.g
         nextB := hud.io.b

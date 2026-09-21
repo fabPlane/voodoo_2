@@ -10,8 +10,8 @@ Makefiles. Reproduce any of it with:
 
 ```bash
 cd fpga
-scala-cli run . --main-class voodoo.diff.GenOne -- --list          # registry
-scala-cli run . --main-class voodoo.diff.GenOne -- CoreSim rtl/diff
+scala-cli run . -- one --list          # registry
+scala-cli run . -- one CoreSim rtl/diff
 python3 src/voodoo/diff/ports.py rtl/diff/CoreSim_spinal.v -o src/voodoo/diff/portmaps
 verilator --lint-only -Wno-fatal --top-module CoreSim_spinal rtl/diff/CoreSim_spinal.v
 ```

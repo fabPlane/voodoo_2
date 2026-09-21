@@ -19,7 +19,7 @@ Here the same information is plain data, so both ``register_bank.py`` (Phase
 The table is checked against the real elaboration by
 ``amaranth/tests/test_regdef.py``, which compares it to
 ``amaranth/tests/data/registerbank_regmeta.json`` — produced by
-``cd fpga && scala-cli run . --main-class voodoo.diff.GenOne -- --dump-regmeta``.
+``cd fpga && scala-cli run . -- one --dump-regmeta``.
 
 What is *not* here, because it is behaviour rather than layout: the read mux
 and the write side effects themselves. Each register records its write effects

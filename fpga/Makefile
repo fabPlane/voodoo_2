@@ -6,7 +6,8 @@
 #   make rtl-gowin   generate rtl/gowin/TangMega138kPro.v
 #   make rtl-console generate rtl/gowin/TangConsole138k.v (Retro Console menu demo)
 #   make lint        Verilator lint of generated Verilog
-#   make test        SpinalSim tests (needs verilator on PATH)
+#   make test        SpinalSim tests (needs verilator on PATH); TEST_ARGS='-w voodoo.gowin' for a subset
+#   make distclean   clean + drop .scala-build and simWorkspace (cold compile + reverilate everything)
 #   make gowin       Gowin dock bitstream (PnR on hyper-ms-lin unless that box is busy)
 #   make gowin-console Console bitstream (same: Linux PnR, Mac only as fallback)
 #   make gowin-console-sdram Experimental Console bitstream using NESTang SDRAM
@@ -25,9 +26,14 @@ GOWIN_RTL  = rtl/gowin
 ARTIX_TOP  = AmdAc701
 GOWIN_TOP  = TangMega138kPro
 CONSOLE_TOP = TangConsole138k
+CONSOLE_ROMS = \
+	hw/gowin/console/demo_logo_spin.bin \
+	hw/gowin/console/demo_test04.bin \
+	hw/gowin/console/demo_test16.bin \
+	hw/gowin/console/demo_test_alphabet.bin
 LINT_FLAGS = --lint-only -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CMPCONST -Wno-UNSIGNED -Wno-UNOPTFLAT
 
-.PHONY: compile rtl rtl-artix rtl-gowin rtl-console lint test gowin gowin-console gowin-console-sdram artix clean
+.PHONY: compile rtl rtl-artix rtl-gowin rtl-console lint test gowin gowin-console gowin-console-sdram artix clean distclean
 
 compile:
 	$(SCALA_CLI) compile $(SCALA_SERVER_FLAGS) .
@@ -42,22 +48,27 @@ rtl-console: $(GOWIN_RTL)/$(CONSOLE_TOP).v
 
 $(ARTIX_RTL)/$(ARTIX_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
 	@mkdir -p $(ARTIX_RTL)
-	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . --main-class voodoo.artix.AmdAc701Gen
+	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . -- artix
 
 $(GOWIN_RTL)/$(GOWIN_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
 	@mkdir -p $(GOWIN_RTL)
-	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . --main-class voodoo.gowin.TangMega138kProGen
+	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . -- gowin
 
-$(GOWIN_RTL)/$(CONSOLE_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
+$(GOWIN_RTL)/$(CONSOLE_TOP).v: project.scala $(CONSOLE_ROMS) $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
 	@mkdir -p $(GOWIN_RTL)
-	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . --main-class voodoo.gowin.TangConsole138kGen
+	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . -- console
 
 lint: $(ARTIX_RTL)/$(ARTIX_TOP).v $(GOWIN_RTL)/$(GOWIN_TOP).v
 	$(VERILATOR) $(LINT_FLAGS) --top-module $(ARTIX_TOP) $(ARTIX_RTL)/$(ARTIX_TOP).v
 	$(VERILATOR) $(LINT_FLAGS) --top-module $(GOWIN_TOP) $(GOWIN_RTL)/$(GOWIN_TOP).v
 
+# Subsets go through ScalaTest's runner args, not --test-only: scala-cli folds
+# --test-only (like --main-class) into the project hash, so every distinct
+# filter is a fresh full compile.  Runner args do not touch the hash.
+#   make test TEST_ARGS='-w voodoo.gowin'        one package
+#   make test TEST_ARGS='-z "OSD paints"'        test-name substring
 test:
-	$(SCALA_CLI) test $(SCALA_SERVER_FLAGS) .
+	$(SCALA_CLI) test $(SCALA_SERVER_FLAGS) . $(if $(TEST_ARGS),-- $(TEST_ARGS))
 
 gowin: rtl-gowin
 	hw/gowin/run_pnr.sh dock
@@ -73,5 +84,11 @@ gowin-console-sdram: rtl-console
 artix: rtl-artix
 	cd hw/artix && $(VIVADO) -mode batch -source build.tcl
 
+# `clean` keeps .scala-build (Bloop incremental state, ~15 s to rebuild cold)
+# and simWorkspace (SpinalSim's verilated models, minutes each). `distclean`
+# drops those too.
 clean:
-	rm -rf $(ARTIX_RTL) $(GOWIN_RTL) simWorkspace .scala-build hw/gowin/impl hw/artix/*.jou hw/artix/*.log hw/artix/.Xil
+	rm -rf $(ARTIX_RTL) $(GOWIN_RTL) hw/gowin/impl hw/artix/*.jou hw/artix/*.log hw/artix/.Xil
+
+distclean: clean
+	rm -rf simWorkspace .scala-build

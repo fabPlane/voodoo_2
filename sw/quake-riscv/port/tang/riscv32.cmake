@@ -1,0 +1,21 @@
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR riscv)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+if(NOT DEFINED CROSS_COMPILE)
+  if(DEFINED ENV{CROSS_COMPILE})
+    set(CROSS_COMPILE $ENV{CROSS_COMPILE})
+  else()
+    set(CROSS_COMPILE "riscv-none-elf-")
+  endif()
+endif()
+
+set(CMAKE_C_COMPILER ${CROSS_COMPILE}gcc)
+set(CMAKE_ASM_COMPILER ${CROSS_COMPILE}gcc)
+set(CMAKE_OBJCOPY ${CROSS_COMPILE}objcopy)
+
+# Andes A25 on GW5AST AE350: RV32IMAFDC, 400 MHz. Not BarRv32 (rv32i/32 KiB).
+set(ARCH_FLAGS "-march=rv32imafdc -mabi=ilp32d -ffunction-sections -fdata-sections")
+set(CMAKE_C_FLAGS_INIT "${ARCH_FLAGS}")
+set(CMAKE_ASM_FLAGS_INIT "${ARCH_FLAGS}")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "")

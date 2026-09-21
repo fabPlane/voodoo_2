@@ -8,7 +8,7 @@ What it does, in order:
 
 1. **Spinal side.** If ``fpga/rtl/diff/<Module>_spinal.v`` is missing or older
    than any Scala source under ``fpga/src`` or ``ext/SpinalVoodoo/src``, run
-   ``scala-cli run . --main-class voodoo.diff.GenOne -- <Module> rtl/diff``.
+   ``scala-cli run . -- one <Module> rtl/diff``.
 2. **Amaranth side.** Elaborate the registry's factory and emit
    ``<build>/<Module>_am.v`` (top module ``<Module>_am``).
 3. **Wrapper.** Pair the two port lists through the committed port map
@@ -142,11 +142,10 @@ def ensure_spinal(module: str, *, force: bool = False, quiet: bool = False,
                 raise SystemExit(
                     f"{target} is {reason} and scala-cli is not on PATH. Generate it on a "
                     f"machine that has one:\n"
-                    f"  cd fpga && scala-cli run . --main-class voodoo.diff.GenOne -- "
+                    f"  cd fpga && scala-cli run . -- one "
                     f"{module} rtl/diff"
                 )
-            cmd = ["scala-cli", "run", ".", "--main-class", "voodoo.diff.GenOne", "--",
-                   module, "rtl/diff"]
+            cmd = ["scala-cli", "run", ".", "--", "one", module, "rtl/diff"]
             if not quiet:
                 print(f"[diff] Spinal RTL {reason}; running: (cd fpga && {' '.join(cmd)})",
                       flush=True)

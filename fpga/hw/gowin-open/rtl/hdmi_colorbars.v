@@ -2,8 +2,9 @@
 //
 // This is intentionally framebuffer-free: counters generate RGB pixels and
 // open RTL performs TMDS encoding. Only documented GW5A hardware primitives
-// (PLLA, OSER10, and TLVDS_OBUF) are instantiated.  The PLL's independent
-// output dividers generate both the 125 MHz serial and 25 MHz pixel clocks.
+// (PLL/PLLA, CLKDIV, OSER10, and ELVDS_OBUF) are instantiated.  The 25 MHz
+// pixel clock is divided from the 125 MHz serializer clock so the two clocks
+// retain the phase relationship required by OSER10.
 
 module top (
     input  wire       clk50,
@@ -22,13 +23,39 @@ module top (
     open_pll_125 u_pll (
         .clkin  (clk50),
         .serial_clk (serial_clk),
-        .pixel_clk  (pixel_clk),
         .lock   (pll_lock)
     );
+
+`ifdef OPEN_SOURCE
+    // The GW5AST CLKDIV output-to-fabric bridge is still being documented in
+    // Apicula.  A synchronous divide-by-five keeps a deterministic phase to
+    // the serializer clock while using ordinary, already proven routing.
+    reg [2:0] pixel_div = 3'd0;
+    always @(posedge serial_clk) begin
+        if (!pll_lock)
+            pixel_div <= 3'd0;
+        else if (pixel_div == 3'd4)
+            pixel_div <= 3'd0;
+        else
+            pixel_div <= pixel_div + 1'b1;
+    end
+    assign pixel_clk = (pixel_div < 3'd2);
+`else
+    CLKDIV #(.DIV_MODE("5")) u_pixel_div (
+        .HCLKIN (serial_clk),
+        .RESETN (pll_lock),
+        .CALIB  (1'b0),
+        .CLKOUT (pixel_clk)
+    );
+`endif
 
     reg [9:0] h_count = 10'd0;
     reg [9:0] v_count = 10'd0;
     reg [23:0] frame_count = 24'd0;
+    reg [7:0] serial_count = 8'd0;
+
+    always @(posedge serial_clk)
+        serial_count <= serial_count + 1'b1;
 
     always @(posedge pixel_clk) begin
         if (!pll_lock || !key0_n) begin
@@ -88,6 +115,53 @@ module top (
     assign led_n[0] = ~pll_lock;
     assign led_n[1] = ~frame_count[5];
 
+    // ER1 exposes enough state to diagnose the video clocks without relying
+    // on the display or LEDs.  The three counters are Gray-coded because they
+    // are sampled asynchronously by JTAG TCK.
+    wire [7:0] frame_gray = (frame_count[7:0] >> 1) ^ frame_count[7:0];
+    wire [7:0] pixel_gray = (h_count[7:0] >> 1) ^ h_count[7:0];
+    wire [7:0] serial_gray = (serial_count >> 1) ^ serial_count;
+    wire [31:0] jtag_status = {
+        4'hd, pll_lock, key0_n, key1_n, active_video,
+        frame_gray, pixel_gray, serial_gray
+    };
+
+    hdmi_jtag_probe u_probe (.status(jtag_status));
+
+endmodule
+
+module hdmi_jtag_probe (
+    input wire [31:0] status
+);
+    wire jtag_tck;
+    wire jtag_tdi;
+    wire shift_capture;
+    wire enable_er1;
+    reg shift_capture_d = 1'b0;
+    reg [31:0] status_sync_1 = 32'b0;
+    reg [31:0] status_sync_2 = 32'b0;
+    reg [31:0] shift_reg = 32'b0;
+
+    (* keep *) GW_JTAG u_jtag (
+        .tck_pad_i(1'b0), .tms_pad_i(1'b0), .tdi_pad_i(1'b0), .tdo_pad_o(),
+        .tck_o(jtag_tck), .tdi_o(jtag_tdi), .test_logic_reset_o(),
+        .run_test_idle_er1_o(), .run_test_idle_er2_o(),
+        .shift_dr_capture_dr_o(shift_capture), .pause_dr_o(), .update_dr_o(),
+        .enable_er1_o(enable_er1), .enable_er2_o(),
+        .tdo_er1_i(shift_reg[0]), .tdo_er2_i(1'b0)
+    );
+
+    always @(posedge jtag_tck) begin
+        status_sync_1 <= status;
+        status_sync_2 <= status_sync_1;
+        shift_capture_d <= shift_capture;
+        if (enable_er1 && shift_capture) begin
+            if (!shift_capture_d)
+                shift_reg <= status_sync_2;
+            else
+                shift_reg <= {jtag_tdi, shift_reg[31:1]};
+        end
+    end
 endmodule
 
 module open_dvi_tx (
@@ -130,9 +204,6 @@ module open_dvi_tx (
         .D9(tmds_blue[9]), .FCLK(serial_clk), .PCLK(pixel_clk),
         .RESET(reset), .Q(serialized[0])
     );
-    defparam u_ser_blue.GSREN = "false";
-    defparam u_ser_blue.LSREN = "true";
-
     OSER10 u_ser_green (
         .D0(tmds_green[0]), .D1(tmds_green[1]), .D2(tmds_green[2]),
         .D3(tmds_green[3]), .D4(tmds_green[4]), .D5(tmds_green[5]),
@@ -140,9 +211,6 @@ module open_dvi_tx (
         .D9(tmds_green[9]), .FCLK(serial_clk), .PCLK(pixel_clk),
         .RESET(reset), .Q(serialized[1])
     );
-    defparam u_ser_green.GSREN = "false";
-    defparam u_ser_green.LSREN = "true";
-
     OSER10 u_ser_red (
         .D0(tmds_red[0]), .D1(tmds_red[1]), .D2(tmds_red[2]),
         .D3(tmds_red[3]), .D4(tmds_red[4]), .D5(tmds_red[5]),
@@ -150,13 +218,10 @@ module open_dvi_tx (
         .D9(tmds_red[9]), .FCLK(serial_clk), .PCLK(pixel_clk),
         .RESET(reset), .Q(serialized[2])
     );
-    defparam u_ser_red.GSREN = "false";
-    defparam u_ser_red.LSREN = "true";
-
-    TLVDS_OBUF u_clk (.I(pixel_clk),    .O(tmds_clk_p),     .OB(tmds_clk_n));
-    TLVDS_OBUF u_d0  (.I(serialized[0]), .O(tmds_data_p[0]), .OB(tmds_data_n[0]));
-    TLVDS_OBUF u_d1  (.I(serialized[1]), .O(tmds_data_p[1]), .OB(tmds_data_n[1]));
-    TLVDS_OBUF u_d2  (.I(serialized[2]), .O(tmds_data_p[2]), .OB(tmds_data_n[2]));
+    ELVDS_OBUF u_clk (.I(pixel_clk),    .O(tmds_clk_p),     .OB(tmds_clk_n));
+    ELVDS_OBUF u_d0  (.I(serialized[0]), .O(tmds_data_p[0]), .OB(tmds_data_n[0]));
+    ELVDS_OBUF u_d1  (.I(serialized[1]), .O(tmds_data_p[1]), .OB(tmds_data_n[1]));
+    ELVDS_OBUF u_d2  (.I(serialized[2]), .O(tmds_data_p[2]), .OB(tmds_data_n[2]));
 endmodule
 
 module tmds_encoder (
@@ -237,20 +302,44 @@ endmodule
 module open_pll_125 (
     input  wire clkin,
     output wire serial_clk,
-    output wire pixel_clk,
     output wire lock
 );
     wire clkfbout;
 
-    PLLA u_pll (
+    // X0Y45 is the hardware-proven TLPLL1 site.  Other currently advertised
+    // GW5AST PLL sites can route in nextpnr but still need fuse-map validation.
+`ifdef OPEN_SOURCE
+    (* BEL = "X0Y45/PLL" *) PLLA u_pll (
         .CLKIN(clkin), .CLKFB(1'b0), .RESET(1'b0), .PLLPWD(1'b0),
         .RESET_I(1'b0), .RESET_O(1'b0),
         .PSSEL(3'b000), .PSDIR(1'b0), .PSPULSE(1'b0),
         .SSCPOL(1'b0), .SSCON(1'b0), .SSCMDSEL(7'b0000000),
         .SSCMDSEL_FRAC(3'b000), .LOCK(lock), .CLKOUT0(serial_clk),
-        .CLKOUT1(pixel_clk), .CLKOUT2(), .CLKOUT3(), .CLKOUT4(), .CLKOUT5(),
+        .CLKOUT1(), .CLKOUT2(), .CLKOUT3(), .CLKOUT4(), .CLKOUT5(),
         .CLKOUT6(), .CLKFBOUT(clkfbout)
     );
+`else
+    // Gowin's vendor tools name the same GW5AST TLPLL hard block PLL.
+    // Keeping this branch buildable gives us an exact vendor oracle for the
+    // otherwise identical clocking, serializer, and output-buffer RTL.
+    PLL u_pll (
+        .CLKIN(clkin), .CLKFB(1'b0), .RESET(1'b0), .PLLPWD(1'b0),
+        .RESET_I(1'b0), .RESET_O(1'b0),
+        .FBDSEL(6'b0), .IDSEL(6'b0), .MDSEL(7'b0),
+        .MDSEL_FRAC(3'b0), .ODSEL0(7'b0), .ODSEL0_FRAC(3'b0),
+        .ODSEL1(7'b0), .ODSEL2(7'b0), .ODSEL3(7'b0),
+        .ODSEL4(7'b0), .ODSEL5(7'b0), .ODSEL6(7'b0),
+        .DT0(4'b0), .DT1(4'b0), .DT2(4'b0), .DT3(4'b0),
+        .PSSEL(3'b0), .PSDIR(1'b0), .PSPULSE(1'b0),
+        .ENCLK0(1'b1), .ENCLK1(1'b1), .ENCLK2(1'b1),
+        .ENCLK3(1'b1), .ENCLK4(1'b1), .ENCLK5(1'b1), .ENCLK6(1'b1),
+        .SSCPOL(1'b0), .SSCON(1'b0), .SSCMDSEL(7'b0),
+        .SSCMDSEL_FRAC(3'b0), .ICPSEL(6'b0), .LPFRES(3'b0),
+        .LPFCAP(2'b0), .LOCK(lock), .CLKOUT0(serial_clk),
+        .CLKOUT1(), .CLKOUT2(), .CLKOUT3(), .CLKOUT4(), .CLKOUT5(),
+        .CLKOUT6(), .CLKFBOUT(clkfbout)
+    );
+`endif
 
     defparam u_pll.FCLKIN = "50";
     defparam u_pll.IDIV_SEL = 1;
@@ -259,9 +348,9 @@ module open_pll_125 (
     defparam u_pll.MDIV_FRAC_SEL = 0;
     defparam u_pll.ODIV0_SEL = 8;
     defparam u_pll.ODIV0_FRAC_SEL = 0;
-    defparam u_pll.ODIV1_SEL = 40;
+    defparam u_pll.ODIV1_SEL = 8;
     defparam u_pll.CLKOUT0_EN = "TRUE";
-    defparam u_pll.CLKOUT1_EN = "TRUE";
+    defparam u_pll.CLKOUT1_EN = "FALSE";
     defparam u_pll.CLKOUT2_EN = "FALSE";
     defparam u_pll.CLKOUT3_EN = "FALSE";
     defparam u_pll.CLKOUT4_EN = "FALSE";

@@ -59,11 +59,11 @@ module board_top (
     );
 
     // Do not alter the PLL shared with DDR3. Divide its independent
-    // 60 MHz output to a timing-safe 20 MHz renderer clock. 15 MHz left too
-    // little bandwidth for the framebuffer scanout prefetch stream and caused
-    // visible FIFO-underflow bands on otherwise valid rendered triangles.
+    // 60 MHz output to a 30 MHz renderer/read clock. 20 MHz cannot sustain
+    // the framebuffer scanout stream after DDR/AXI command overhead and
+    // deterministically underflows a 25 MHz HDMI raster.
     CLKDIV #(
-        .DIV_MODE("3")
+        .DIV_MODE("2")
     ) u_core_div (
         .HCLKIN (clk60),
         .RESETN (pll_sys_lock),

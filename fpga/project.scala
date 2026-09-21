@@ -12,3 +12,4 @@
 //> using dep "org.scodec::scodec-bits:1.1.38"
 //> using options "-deprecation" "-feature" "-unchecked"
 //> using file "../ext/SpinalVoodoo/src"
+//> using mainClass voodoo.Gen

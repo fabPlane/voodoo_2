@@ -469,7 +469,7 @@
     <tr><td>T113 link</td><td>The DE10 MMIO runtime on the T113 through the FPGA link, the host-less self-test path</td><td>12 MB/s over SPI, above 100 MB/s over the LCD pipe</td><td>once Linux boots on the T113</td></tr>
   </table>
   </div>
-  <div class="callout"><b>Bench power.</b> Outside a PC the card needs 5 V in: a 2.0 mm barrel jack rated 3 A (DC-005C-20A, C84007) on the top edge, diode-ORed or switched against the slot rail through the load switch already in the BOM. The JTAG header is the 2 mm 2×7 shrouded type with the Xilinx cable pinout (C53207571). Both are in the rev A pricing BOM. Bench power also makes T113 Linux development possible on the desk.</div>
+  <div class="callout"><b>Bench power.</b> The optional on-card barrel jack was removed on 2026-09-17. The production card is powered through the PCI slot; out-of-system FPGA or T113 work uses a powered PCI riser or dedicated fixture, avoiding a second 5 V inlet and its back-feed/error case. The JTAG header remains the 2 mm 2×7 shrouded type with the Xilinx cable pinout (C53207571).</div>
 
   <h3>First bitstreams</h3>
   <ol>
@@ -542,7 +542,7 @@
     <tr><th>Item</th><th class="num">Qty 5</th><th class="num">Qty 100</th></tr>
     <tr><td>Tang Mega 138K SoM</td><td class="num">$69</td><td class="num">$69</td></tr>
     <tr><td>3× DF40 receptacles</td><td class="num">$9</td><td class="num">$8</td></tr>
-    <tr><td>HyperRAM, 4× ISSI</td><td class="num">$8</td><td class="num">$7</td></tr>
+    <tr><td>HyperRAM, 4× ISSI</td><td class="num">$26</td><td class="num">$26</td></tr>
     <tr><td>PCI bus switches</td><td class="num">$6</td><td class="num">$5</td></tr>
     <tr><td>Power: 5V filter, 3.3V buck</td><td class="num">$5</td><td class="num">$4</td></tr>
     <tr><td>Video: DAC, relay, 2× DB15, HDMI, ESD</td><td class="num">$15</td><td class="num">$12</td></tr>
@@ -550,10 +550,10 @@
     <tr><td>Passives, bracket</td><td class="num">$12</td><td class="num">$10</td></tr>
     <tr><td>PCB, 4-layer, gold fingers</td><td class="num">$20</td><td class="num">$9</td></tr>
     <tr><td>Assembly</td><td class="num">$30</td><td class="num">$10</td></tr>
-    <tr class="total"><td>Per card</td><td class="num">≈ $185</td><td class="num">≈ $140</td></tr>
+    <tr class="total"><td>Per card</td><td class="num">≈ $205</td><td class="num">≈ $160</td></tr>
   </table>
   </div>
-  <p>Against rev B at about $285 and $245. The saving is the T113 gone, the FPGA subsidised by Sipeed, and a board a third the complexity. The cost is single-source supply, half the block RAM, and a LUT4 fabric that the core has never been synthesised for.</p>
+  <p>Against rev B at about $290 and $250. The saving is the T113 gone, the FPGA subsidised by Sipeed, and a board a third the complexity. The cost is single-source supply, half the block RAM, and a LUT4 fabric that the core has never been synthesised for.</p>
   <div class="callout"><b>Decision gate.</b> Synthesise SpinalVoodoo through Gowin EDA for the GW5AST-138 and read utilisation, Fmax and BRAM. One afternoon, no hardware. If it fits at 90 MHz with depth in HyperRAM, this variant is the cheapest complete card and the cheapest prototype, and the Pro Dock at $175 is its dev board. If it does not, rev B stands.</div>
 </section>
 

@@ -70,15 +70,15 @@ def rotate_face(
 
 
 def frame_writes(ang: float) -> list[tuple[int, int]]:
-    # 640x480 clip + fastfill, same FBI poking as test04 after init.
+    # 640x480 clip + clear the current back buffer. Clearing both front and
+    # back here erases the frame that was just promoted for scanout as soon as
+    # the next animation frame begins.
     out: list[tuple[int, int]] = [
         (0x148, 0),
         (0x144, 0),
         (0x130, 0),
         (0x118, 0x280),
         (0x11C, 0x1E0),
-        (0x110, 0x600),
-        (0x124, 0),
         (0x110, 0x4200),
         (0x124, 0),
         (0x120, 1),

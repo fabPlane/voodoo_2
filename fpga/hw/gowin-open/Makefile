@@ -51,6 +51,9 @@ $(BUILD_DIR)/jtag_clock_probe-synth.json: rtl/jtag_clock_probe.v rtl/gw_jtag_pri
 $(BUILD_DIR)/jtag_bram_probe-synth.json: rtl/jtag_bram_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
 	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
 
+$(BUILD_DIR)/hdmi_colorbars-synth.json: rtl/hdmi_colorbars.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
+
 $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 	$(NEXTPNR) --threads $(THREADS) --timing-allow-fail -r \
 		$(CHIPDB_ARG) \

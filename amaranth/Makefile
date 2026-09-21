@@ -27,7 +27,7 @@ SIM_OVERRIDES := \
 	SCALA_SRCS=
 
 .PHONY: help venv test rtl-module rtl-core-sim rtl-console diff diff-list gowin-console clean \
-        sim-model sim-build sim-run sim-trace-check sim-clean
+        sim-model sim-build sim-run sim-trace-check sim-clean console-model console-sim console-sim-logo
 
 help:
 	@echo "venv           uv sync (create/refresh .venv)"
@@ -38,6 +38,9 @@ help:
 	@echo "sim-build TEST=test00   link one Glide test against the Amaranth CoreSim"
 	@echo "sim-run   TEST=test00   run it and convert the screenshot to PNG"
 	@echo "sim-trace-check TEST=test04   trace replay vs the 86Box ref model (64-bit)"
+	@echo "console-model  verilate the existing generated Spinal console RTL"
+	@echo "console-sim    capture and validate a 640x480 boot-menu frame"
+	@echo "console-sim-logo   press RESET on item 0 and capture the rendered logo"
 	@echo "rtl-console    (Phase 8) TangConsole138k.v for the Gowin build"
 	@echo "diff MOD=X     Spinal-vs-Amaranth lockstep test (>=1e6 cycles x 3 seeds)"
 	@echo "diff-list      modules the diff harness knows about"
@@ -105,6 +108,17 @@ sim-trace-check: rtl-core-sim
 sim-clean:
 	$(MAKE) -C $(AMSIM) clean
 	rm -rf $(AMTESTOBJ) $(CURDIR)/test-output
+
+# --- whole-console Spinal RTL experiment (docs/console-sim-plan.md) --------
+
+console-model:
+	$(MAKE) -C emu/console model
+
+console-sim:
+	$(MAKE) -C emu/console run
+
+console-sim-logo:
+	$(MAKE) -C emu/console run-logo
 
 # --- Spinal-vs-Amaranth lockstep diff (plan §4.2 / task 0.4) ---------------
 #

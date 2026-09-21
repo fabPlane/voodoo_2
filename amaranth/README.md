@@ -122,12 +122,38 @@ missing.
 **Stimulus rules.** Free inputs are re-randomised every cycle. An input
 stream asserts `valid` with probability `--valid-density` and **holds the
 payload while `valid && !ready`**, which is the SpinalHDL `Stream` contract;
-an output stream's `ready` is random at `--ready-density`. Reset is asserted
-for `--reset-cycles` before *every* seed, matching Spinal's SYNC/active-high
-default and Amaranth's `rst`. On a mismatch the run stops, prints the
-differing port names, and replays that one seed with FST tracing (the
-stimulus is a pure function of the seed, so the replay is exact — and a
-1e6-cycle trace never gets written).
+an output stream's `ready` is random at `--ready-density`. "Fired" is
+decided from a snapshot of every `valid`/`ready` taken in cocotb's
+`ReadOnly` phase *before* the rising edge — reading `ready` after the edge
+is wrong in both directions (`StreamWhile` drops `ready` on accepting, so an
+accepted beat looks stalled; a DUT that frees up on the edge makes a refused
+beat look accepted and the generator would then swap a payload that is still
+being offered). Reset is asserted for `--reset-cycles` before *every* seed,
+matching Spinal's SYNC/active-high default and Amaranth's `rst`. On a
+mismatch the run stops, prints the differing port names, and replays that
+one seed with FST tracing (the stimulus is a pure function of the seed, so
+the replay is exact — and a 1e6-cycle trace never gets written).
+
+**When random is the wrong stimulus.** Two per-row escape hatches in
+`tools/diff/registry.py`:
+
+- `DiffEntry.pinned = {"io_x": 0}` holds an input at a constant. Fine for a
+  mode bit or a `source` field the DUT only accepts in one state.
+- `DiffEntry.responder = "pkg.module:factory"` attaches a Python model that
+  *claims* inputs and drives them from what it observes — the answer for an
+  input stream that is really a slave's response (`FramebufferPlaneReader`'s
+  `io_mem_rsp` is only accepted while a miss is outstanding, so a random
+  held beat parks it for the rest of the run). The factory is called
+  `factory(seed=, rng=, spec=)` once per seed; the object's `cycle(obs,
+  drive)` runs each falling edge with `obs[name]` (any Spinal port, now),
+  `obs.fired("io_mem_cmd")` and `obs.beat("io_mem_cmd")` (the beat that
+  crossed on the last edge, pre-edge payload), and fills `drive` for every
+  port it claims. Claiming a stream's `valid` claims its payload and makes
+  the responder responsible for the hold rule; `tools/diff/responders.py`
+  has `StreamResponder`, which does that for you — subclass it and enqueue
+  beats from `observe()`. A responder may own several streams, which is what
+  a memory model honouring `SimMemoryTiming` will want. Its `stats()` land in
+  the report so a run can prove the model did something.
 
 ### Port pairing: the one thing that is not obvious
 
