@@ -1046,7 +1046,86 @@ Spinal core does.
         module's output.
 
 ### Phase 5
-- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [x] tmu_texture_cache  - [ ] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
+- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [x] tmu_texture_cache  - [x] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
+- [x] **tmu** (2026-09-21). `avoodoo/texture/tmu.py`, 1:1 with the `Tmu` Component of
+      `Tmu.scala` (l. 22-630; the `object Tmu` bundles, ROMs and helpers were already in
+      `tmu_types.py` / `tmu_tables.py`). Structure map in the docstring: nine `M2SPipe`
+      stages in a row (`stageRecipPrep` abs/clz64/ROM reads -> `stageRecip` reciprocal
+      interpolation + `perspLodAdjust` -> `stageA` 66-bit S*recip / T*recip with the
+      `roundBias` -> `stageGrad` -> `stageLodPrep` clz32 + log2 ROM -> `stageLod` bias /
+      clamp / level / aspect -> `stageB` point + bilinear coords -> `addressGen` +
+      `sampleRequestPrep` wrap/clamp + packed `texelAddr` -> `sampleRequestBase`
+      bank/pair decode), the `.queue(16)`, then `bypassOutput` (textureEnable low) or
+      `sampleRequest` gated by `canAllocate` through the `>/->` pairs around
+      `TmuTextureCache` and `TmuTexelDecoder`; `inFlightCount` (3-bit `RegInit`, the only
+      register declared here, `maxOutstanding = 7`) and `io.busy`. All arithmetic on raw
+      bits with Spinal's integer width rules (`lib/intops.py`); the docstring lists every
+      stage's widths and the three cross-stage reads kept on purpose (`bilinearEnable`
+      folded in one stage late, `bypassTexture` read from whatever is in `stageB`, not the
+      FIFO head, `tmultibaseaddr` from `stageLodPrep`). Only `packedTexLayout` +
+      `useTexFillCache` (the linear `texelAddr` branch cannot elaborate upstream either;
+      `TmuNoTextureCache` is not ported). No `reset_less` declarations needed: every
+      pipeline register lives in `lib/stream.py`; the two ROMs carry real `init` data and
+      must not go through `strip_meminit`.
+      * **Gate.** `make diff MOD=Tmu` clean at 1e6 cycles x seeds 1,2,3 (882 s on the
+        Mac, 120 ports paired: 106 in / 14 out, no overrides). Per seed: 186k / 483k /
+        292k pixels in and out (`pixels_in - pixels_out <= 32` at the end, i.e. the
+        pipeline + FIFO + 7 in flight), 65k / 16k / 47k texture-memory reads answered
+        (522k / 130k / 375k response beats), 9.4k / 24k / 15k "wild" pixels, ~450-500
+        `io_invalidate` pulses, `busy_at_end = 1`. `make diff MOD=TmuMemOnly` (every
+        arithmetic input a raw random pattern) clean at 1e6 x seeds 1,2,3 (1101 s; per
+        seed 190k / 178k / 179k pixels in and out, 55k / 58k / 58k reads (443k / 460k /
+        462k beats), ~500 invalidates). Back-pressure (`--valid-density 0.9
+        --ready-density 0.12`, 2e5 cycles x 3 seeds): Tmu clean, 18.7k / 23.7k / 21.0k
+        pixels out (~0.1 pixel/cycle = the ready density, so the 16-deep FIFO and
+        `inFlightCount == maxOutstanding` are held for most of the run); TmuMemOnly
+        clean, 17.4k / 16.9k / 17.1k pixels out, 5.3k / 5.7k / 5.4k reads. Counters
+        scale with cycles: the 20k-cycle pytest versions see ~1/50 of these (Tmu 3.7k /
+        9.8k / 5.9k pixels out per seed vs 186k / 483k / 292k at 1e6, TmuMemOnly 3.9k /
+        3.6k / 3.5k vs 190k / 178k / 179k), so none of the runs is parked.
+      * **Stimulus** (`tests/diff/tmu_stimulus.py`): `TexMemSlave` (in-order slave on
+        `io_texRead_rsp` answering each `cmd` with `((addr & 3) + length) // 4 + 1` beats
+        from a lazily randomised word image; the cache only accepts a response while a
+        fill is outstanding, so a random held beat parks the stream) plus `TmuTraffic`:
+        per-seed texture set-ups with packed tables from `tex_layout_tables.compute`, a
+        random walk in S/T with jumps, sane `1/W` (1 % of walk pixels negative, for `clampToZero`),
+        one pixel in twenty "wild" (S, T, 1/W, gradients, `tLOD` min/max/bias, mode bits
+        and `textureEnable` random; format / aspect / `sIsWider` / multibase kept
+        consistent with the tables). `random_fraction` is **0**: a fully random pixel
+        (random tables) puts the texel address outside every LOD and the cache chases
+        continue-fills for thousands of cycles on both sides -- the first draft had one
+        pixel in 200 fully random, which parked the 1e6-cycle runs (clean, but with
+        the counters of a much shorter run); the
+        `mem_only` responder (io_input from the generic driver) is kept in the module
+        for that measurement (34 live pixels per 1e6 cycles). `tests/diff/test_diff_tmu.py`
+        runs both rows at 20k x 3 + a 10k back-pressured Tmu and asserts the responder
+        stats (`pixels_out > cycles / 10`, reads happened, `cmds < pixels / 2` on the
+        traffic row so the hit path is known to have been compared).
+      * **Findings.** The cache's cold-miss quirk is confirmed through the whole TMU:
+        the first sample of a cold line comes back as texel 0 (point) or with the tap
+        resolved on the emitting beat stale (bilinear: white blends to `255 - w3*255/256`),
+        the retry hits; `tests/test_tmu.py` pins both (`test_rgb565_solid_texture_decodes`
+        samples twice, `test_cold_bilinear_sample_has_one_stale_tap`). The Spinal RTL does
+        the same in lockstep; the Console builds without the cache. `TmuTest.scala`'s
+        memory model answers `last` on the first beat, which the current cache does not
+        accept, so the ported cases answer the full 8-word burst.
+      * **Caveat for responders.** `tools/diff/ports.py` classifies a port by the handshake
+        keyword closest to the end of its name, so a payload field ending in `_valid`
+        (the four `io_sampleRequest_payload_tapStartupDecode_N_valid` leaves of
+        `TmuTextureCache`, and anything else carrying a `valid` bundle member) shows up
+        in `diff_spec.json` as the `valid` of a one-port flow, not as `role == "payload"`.
+        `Tmu`'s `io_input` has no such field (`_payload_ports` filtering on the role is
+        right there), but a responder for a stream that does must claim those leaves by
+        name prefix, as `tmu_texture_cache_stimulus.py` does.
+      * `tests/test_tmu.py` (28 tests): the two `TmuTest.scala` cases, a Python model of
+        the front end (ROMs, clz, the 66-bit perspective divide, LOD from the gradients,
+        bias/min/max, aspect, wrap/clamp, packed `texelAddr`) checked against every
+        `sampleRequest` beat over directed cases and a random sweep, bypass with
+        `textureEnable` low, `busy` falling, `inFlightCount` capping at 7 under
+        back-pressure and recovering, bilinear taps adjacent.
+      * `tools/diff/registry.py`'s comment on the `Tmu` row still says "one pixel in ten
+        fully random"; the stimulus has none (see above). Fix the comment with the next
+        registry edit.
 - [x] **tmu_texture_cache** (2026-09-21). `avoodoo/texture/tmu_texture_cache.py`, 1:1 with
       `TmuTextureCache.scala` (16 slots x 2 ways x 8-word lines, 16-deep request window);
       structure map in the docstring. 13 pysim tests (ReuseTest cases, FormalTest asserts
