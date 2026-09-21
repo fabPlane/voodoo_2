@@ -104,10 +104,11 @@ encoding, and `gpio_probe_key1-fixed-open.fs` entered user mode with status
 `GW5AST_138C_GPIO_MILESTONE.md` for the image hash and decoded fuses.
 
 Clocked-logic diagnostics now include `button_latch`, `reset_toggle`, and
-`reset_shift`. Hardware testing proved that a RESET-clocked DFF can capture a
-constant, while the toggle feedback circuit and 50 MHz blinky do not run yet.
-This narrows the next database fix to GW5AST logic-tile LUT/DFF feedback and
-local routing rather than basic GPIO or DFF configuration.
+`reset_shift`. Earlier visual tests proved that a RESET-clocked DFF can capture
+a constant but could not establish whether the 50 MHz path ran. The later JTAG
+clock probe supersedes that visual result: its counter advances at the expected
+50 MHz rate. Any remaining blinky behavior is therefore in the LED/output path
+or demo-specific logic, not the board clock itself.
 
 The read-only JTAG boundary sampler removes visual ambiguity from autonomous
 output tests:
@@ -119,17 +120,22 @@ python3 ../../../hardware/tang-console-138k/jtag_sample.py --count 20 --interval
 Gowin Programmer operation 18 returns 616 live boundary bits. On the failing
 blinky, repeated scans changed only the same two unrelated background pins as
 a static design, objectively confirming that neither design output toggled.
-The GW5AST user-JTAG fabric primitive is now represented by the Apicula fork at
-commit `bd7cbbb`.  A regenerated chip database places `GW_JTAG` at
-`X165Y108/GW_JTAG`; the mailbox routes and packs completely in the open flow.
-See `../../../hardware/tang-console-138k/JTAG_MAILBOX.md` for the build and
-host-side protocol.  Hardware validation of the open image is pending a
-connected FT2232 adapter.
+The GW5AST user-JTAG fabric primitive is hardware-proven with the Apicula fork
+at commit `cf6ab5f`. A regenerated chip database places the hard block at
+`X166Y108/GW_JTAG` and connects its outputs through the adjacent `X165Y108`
+routing tile. The open mailbox entered user mode with status `0x00022230`,
+returned its initialized word, and passed six consecutive write/readback
+transfers. The open JTAG clock probe advanced by roughly 5,000,000 counts per
+100 ms sample, proving the 50 MHz input clock, counter carry/DFF path, and
+JTAG readback without relying on visible LEDs. See
+`../../../hardware/tang-console-138k/JTAG_MAILBOX.md` for the build, measured
+results, and host-side protocol.
 
 The template-backed database and domain-aware fuse application remain required:
 ordinary logic tiles carry non-zero blank-state patterns, and configured tiles
-both set and clear parts of that baseline. This milestone validates the direct
-GPIO path, not yet the clocked, BSRAM, PLL/HDMI, or DDR3 demos.
+both set and clear parts of that baseline. This milestone validates direct
+GPIO and basic clocked logic. BSRAM, PLL/HDMI, and DDR3 remain separate bring-up
+steps.
 
 ## Porting order
 
