@@ -410,7 +410,7 @@ Spinal core does.
       covers the way the core actually stores an AFix — in a Bundle. Reverting the fix
       now fails the diff on 33 ports at cycle 0. Lesson for the other phases: a helper
       library's diff module must exercise the *storage* path, not just the operators.
-- [x] 0.3 Gowin compatibility spike — **built, awaiting hardware load**.
+- [x] 0.3 Gowin compatibility spike: built 2026-09-20, SRAM-loaded on the Console 2026-09-21 (status 0x00022230 = user mode); blink, USER-freeze and the distributed-RAM self-test LED all behave as designed.
       `avoodoo/gowin/spike_blinky.py` + `amaranth/hw/spike/`; Gowin EDA 1.9.11.03
       on GW5AST-138C, 27 s, bitstream generated. No errors on escaped identifiers
       or `initial` blocks; `Extracting RAM for identifier 'mem'`; `syn_ramstyle =
