@@ -91,33 +91,76 @@ def _scala_sources() -> list[Path]:
     return out
 
 
-def ensure_spinal(module: str, *, force: bool = False, quiet: bool = False) -> Path:
-    """Generate ``<module>_spinal.v`` if it is missing or stale."""
-    target = SPINAL_RTL / f"{module}_spinal.v"
-    if not force and target.is_file():
-        newest = max((p.stat().st_mtime for p in _scala_sources()), default=0.0)
-        if target.stat().st_mtime >= newest:
-            return target
-        reason = "stale"
-    else:
-        reason = "missing" if not target.is_file() else "forced"
+class _Locked:
+    """``flock`` on a file under ``fpga/rtl/diff`` for the duration of a block.
 
-    if shutil.which("scala-cli") is None:
-        raise SystemExit(
-            f"{target} is {reason} and scala-cli is not on PATH. Generate it on a "
-            f"machine that has one:\n"
-            f"  cd fpga && scala-cli run . --main-class voodoo.diff.GenOne -- {module} rtl/diff"
-        )
-    cmd = ["scala-cli", "run", ".", "--main-class", "voodoo.diff.GenOne", "--", module, "rtl/diff"]
-    if not quiet:
-        print(f"[diff] Spinal RTL {reason}; running: (cd fpga && {' '.join(cmd)})", flush=True)
-    subprocess.run(cmd, cwd=FPGA, check=True,
-                   stdout=subprocess.DEVNULL if quiet else None)
-    if not target.is_file():
-        raise SystemExit(f"GenOne did not produce {target}")
-    # GenOne writes into rtl/diff but leaves the mtime at "now"; nothing else
-    # to do -- the staleness check above will be satisfied next time.
-    return target
+    Several agents run this harness at once on the same checkout.  Without a
+    lock, two of them can both decide ``X_spinal.v`` is stale and run GenOne
+    into the same file while a third is already verilating it -- which shows
+    up as a one-off, unreproducible "mismatch" or a Verilator parse error.
+    """
+
+    def __init__(self, path: Path):
+        self._path = path
+        self._fh = None
+
+    def __enter__(self):
+        import fcntl
+
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self._path, "a+")
+        fcntl.flock(self._fh, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        import fcntl
+
+        fcntl.flock(self._fh, fcntl.LOCK_UN)
+        self._fh.close()
+
+
+def ensure_spinal(module: str, *, force: bool = False, quiet: bool = False,
+                  copy_to: Path | None = None) -> Path:
+    """Generate ``<module>_spinal.v`` if it is missing or stale.
+
+    With ``copy_to``, the (fresh) file is copied into that directory and the
+    copy is returned, so a regeneration triggered by another process later
+    cannot change the Verilog under a build that is already running.
+    """
+    target = SPINAL_RTL / f"{module}_spinal.v"
+    with _Locked(SPINAL_RTL / ".genone.lock"):
+        if not force and target.is_file():
+            newest = max((p.stat().st_mtime for p in _scala_sources()), default=0.0)
+            fresh = target.stat().st_mtime >= newest
+            reason = "stale"
+        else:
+            fresh = False
+            reason = "missing" if not target.is_file() else "forced"
+
+        if not fresh:
+            if shutil.which("scala-cli") is None:
+                raise SystemExit(
+                    f"{target} is {reason} and scala-cli is not on PATH. Generate it on a "
+                    f"machine that has one:\n"
+                    f"  cd fpga && scala-cli run . --main-class voodoo.diff.GenOne -- "
+                    f"{module} rtl/diff"
+                )
+            cmd = ["scala-cli", "run", ".", "--main-class", "voodoo.diff.GenOne", "--",
+                   module, "rtl/diff"]
+            if not quiet:
+                print(f"[diff] Spinal RTL {reason}; running: (cd fpga && {' '.join(cmd)})",
+                      flush=True)
+            subprocess.run(cmd, cwd=FPGA, check=True,
+                           stdout=subprocess.DEVNULL if quiet else None)
+            if not target.is_file():
+                raise SystemExit(f"GenOne did not produce {target}")
+
+        if copy_to is None:
+            return target
+        copy_to.mkdir(parents=True, exist_ok=True)
+        private = copy_to / target.name
+        shutil.copyfile(target, private)
+        return private
 
 
 def load_portmap(entry: DiffEntry, spinal_v: Path, build: Path) -> dict:
@@ -270,7 +313,9 @@ def _closest(want: str, have) -> list[str]:
 
 
 def emit_wrapper(module: str, pairs: list[Pair], am_port_widths: dict[str, int],
-                 build: Path, *, has_clk: bool, has_rst: bool) -> tuple[Path, dict]:
+                 build: Path, *, has_clk: bool, has_rst: bool,
+                 pinned: dict[str, int] | None = None,
+                 responder: str | None = None) -> tuple[Path, dict]:
     """Emit ``diff_top.v`` and the spec JSON the cocotb driver reads."""
     from amaranth import ClockSignal, Elaboratable, Instance, Module, ResetSignal, Signal
     from amaranth.back import verilog
@@ -359,12 +404,18 @@ def emit_wrapper(module: str, pairs: list[Pair], am_port_widths: dict[str, int],
     path = build / "diff_top.v"
     path.write_text(text)
 
+    input_names = {p.spinal for p in inputs}
+    for name in (pinned or {}):
+        if name not in input_names:
+            raise SystemExit(f"[diff] pinned port {name!r} is not an input of {module}")
     spec = {
         "module": module,
         "has_clock": has_clk,
         "has_reset": has_rst,
         "inputs": [asdict(p) for p in inputs],
         "outputs": [asdict(p) for p in outputs],
+        "pinned": dict(pinned or {}),
+        "responder": responder,
     }
     (build / "diff_spec.json").write_text(json.dumps(spec, indent=2) + "\n")
     return path, spec
@@ -426,7 +477,14 @@ def run_sim(module: str, build: Path, sources: list[Path], *, seeds: list[int],
 
     if report.exists():
         return json.loads(report.read_text())
-    return {"ok": not failed, "reason": "driver wrote no report"}
+    # The report is unlinked before the run and only written when the driver
+    # reaches the end, so its absence means the driver crashed (a responder
+    # ValueError, an import error, ...) whether or not cocotb 2.1's runner
+    # raised -- it does not raise on a failed test. Never report that as PASS.
+    print("[diff] driver wrote no report: treating as FAIL "
+          f"(cocotb raised: {failed}); see {build / 'sim'} for results.xml",
+          flush=True)
+    return {"ok": False, "reason": "driver wrote no report", "cocotb_raised": failed}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -470,7 +528,7 @@ def main(argv: list[str] | None = None) -> int:
     build = args.build_dir or (BUILD_ROOT / module)
     build.mkdir(parents=True, exist_ok=True)
 
-    spinal_v = ensure_spinal(entry.spinal, force=args.force_gen)
+    spinal_v = ensure_spinal(entry.spinal, force=args.force_gen, copy_to=build)
     am_v, dut = emit_amaranth(entry, module, build)
     pm = load_portmap(entry, spinal_v, build)
     pairs, am_port_widths = pair_ports(pm, entry, spinal_v, am_v, dut)
@@ -478,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     wrapper_v, spec = emit_wrapper(
         module, pairs, am_port_widths, build,
         has_clk="clk" in spinal_ports, has_rst="reset" in spinal_ports,
+        pinned=entry.pinned, responder=entry.responder,
     )
 
     print(f"[diff] {module}: {len(pairs)} ports paired "
