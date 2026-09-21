@@ -29,6 +29,14 @@ _C = Config.voodoo1()
 _FB = _mp.fb_mem_bmb_params(_C)
 _ALIGNER_OP = _MemBusParameter(
     _Aligner.output_access_parameter(_FB.access, _mp.AXI_BURST_LOG2))
+# Phase 1.5 (AXI bridges): the BAR width and the post-aligner/fixer parameter
+# that BmbToAxi4SharedBridge sees inside BmbToAxi4Mem.
+from avoodoo.lib.axilite4_to_membus import axi_config as _lite_cfg, bar_address_width as _bar_aw
+from avoodoo.lib.membus_to_axi4_mem import aligned_parameter as _aligned_parameter
+from avoodoo.lib.membus_to_axi4_mem import tex_axi_config as _tex_axi_config
+
+_BAR_AW = _bar_aw()
+_FIXER_OP = _aligned_parameter(_FB, _mp.AXI_BURST_LOG2)
 
 
 @dataclass(frozen=True)
@@ -103,7 +111,43 @@ def _register_bank_overrides() -> dict[str, str]:
     return spinal_port_overrides()
 
 
+def _pci_fifo_params() -> dict:
+    """``PciFifo``'s four constructor arguments, as ``Core.scala:102`` builds them.
+
+    ``GenOne`` elaborates the Spinal side with the real ``RegisterBank(c).busif``
+    metadata (``RegisterBankMeta``); the Amaranth side takes the same three
+    tables from :mod:`avoodoo.frontend.regdef`, which ``tests/test_regdef.py``
+    pins against that elaboration.
+    """
+    from avoodoo.frontend import regdef
+
+    return {
+        "bus_params": _mp.register_bank_params(_C),
+        "categories": regdef.categories(),
+        "float_aliases": regdef.float_aliases(),
+        "command_addresses": regdef.command_addresses(),
+    }
+
+
 REGISTRY: dict[str, DiffEntry] = {
+    # --- Phase 1.6 ------------------------------------------------------
+    "PciFifo": DiffEntry(
+        spinal="PciFifo",
+        factory="avoodoo.bus.pci_fifo:PciFifo",
+        note="Core.scala:102 — PciFifo(RegisterBank.bmbParams(c), busif.getCategories "
+             "(158), busif.getFloatAliases (30), busif.getCommandStreamReady.keys (5)) "
+             "(ext/SpinalVoodoo/src/voodoo/bus/PciFifo.scala -> avoodoo/bus/pci_fifo.py)",
+        params=_pci_fifo_params(),
+        # No overrides: the two Bmb buses pair like AddressRemapper's, the
+        # Vec `io_commandReady_<N>` pairs against `In(1).array(5)` ->
+        # `command_ready__<N>`, and the `floatShadow` Flow's leaves land in
+        # the packed `float_shadow__payload` (address, then the signed 50-bit
+        # `raw`). The stimulus caveat is in tests/diff/test_diff_pci_fifo.py:
+        # a 12-bit random address hits the 158 decoded registers ~4% of the
+        # time, the 30 float aliases ~0.7%, and the 5 command addresses
+        # ~0.1%, so the sync / command-blocked drain paths are exercised but
+        # thinly per run — hence the 1e6-cycle gate rather than the short one.
+    ),
     # --- Phase 1.3 ------------------------------------------------------
     "FpxxDiffWrap": DiffEntry(
         spinal="FpxxDiffWrap",
@@ -224,6 +268,24 @@ REGISTRY: dict[str, DiffEntry] = {
         # re-randomised each cycle. The Scala io bundles are `i`/`o`, not `io`,
         # so the paths keep that first segment: i__from_pipeline__payload__*.
     ),
+    # --- Phase 4 (avoodoo/pixel/color_combine.py) -------------------------
+    "ColorCombine": DiffEntry(
+        spinal="ColorCombine",
+        factory="avoodoo.pixel.color_combine:ColorCombine",
+        note="PixelPipeline.scala:225 — ColorCombine(c), Config.voodoo1(); the "
+             "spinal.lib.misc.pipeline user (n0..n8, eight StageLinks, 34 payloads) "
+             "(ext/SpinalVoodoo/src/voodoo/pixel/ColorCombine.scala -> "
+             "avoodoo/pixel/color_combine.py)",
+        # No overrides: the two streams are the only ports, and all 126
+        # payload leaves (io_input_payload_config_alphaMselect ->
+        # input__payload__config__alpha_mselect, io_input_payload_color0Alpha
+        # -> input__payload__color0_alpha, the AFix leaf io_input_payload_depth
+        # -> input__payload__depth, ...) pair against slices of the packed
+        # Amaranth `input__payload` / `output__payload` mechanically.
+        # The 150 payload stage registers are reset-less on both sides (plain
+        # Spinal `Reg`), the eight `valid` registers reset to 0; the harness
+        # resetting before every seed is what proves the enables match.
+    ),
     # --- Phase 4 (agent p4-dither owns avoodoo/pixel/dither.py) ----------
     "Dither": DiffEntry(
         spinal="Dither",
@@ -251,6 +313,49 @@ REGISTRY: dict[str, DiffEntry] = {
         # by the mechanical camelCase -> snake_case rule, widths included
         # (checked against fpga/rtl/diff/SpanWalker_spinal.v).
     ),
+    # --- Phase 3 (fastfill, 3 files: avoodoo/raster/fastfill*.py) ---------
+    "Fastfill": DiffEntry(
+        spinal="Fastfill",
+        factory="avoodoo.raster.fastfill:Fastfill",
+        note="PixelPipeline — Fastfill(c), Config.voodoo1(); the StreamWhile clip-rectangle "
+             "pixel generator (ext/SpinalVoodoo/src/voodoo/raster/Fastfill.scala -> "
+             "avoodoo/raster/fastfill.py)",
+        # No overrides: `i` is Stream(NoData) (zero-width payload, no Spinal
+        # port -- tests/diff/test_diff_nodata.py is the proof that pairs), the
+        # `o_payload_coords_0/_1` Vec pairs against the ArrayLayout slices of
+        # `o__payload`, and the four clip inputs are bare `clipLeft` ->
+        # `clip_left`.
+    ),
+    "FastfillWrite": DiffEntry(
+        spinal="FastfillWrite",
+        factory="avoodoo.raster.fastfill_write:FastfillWrite",
+        note="PixelPipeline — FastfillWrite(c), Config.voodoo1(); Fastfill.Output -> "
+             "Write.PreDither with capture-on-cmdFire "
+             "(ext/SpinalVoodoo/src/voodoo/raster/FastfillWrite.scala -> "
+             "avoodoo/raster/fastfill_write.py)",
+        # No overrides: `io_regs_*` (24 leaves incl. the FbzMode bundle) pair
+        # against slices of the packed `regs` input, `io_pixels_payload_coords_0`
+        # against `pixels__payload__coords__0`, `io_output_payload_coords_x`
+        # against `output__payload__coords__x` (PixelCoords is a Bundle, not
+        # a Vec, on the PreDither side).  `captured` is reset-less on both
+        # sides; `ffActive` resets.
+    ),
+    "FastfillWordWriter": DiffEntry(
+        spinal="FastfillWordWriter",
+        factory="avoodoo.raster.fastfill_word_writer:FastfillWordWriter",
+        note="Fastfill — FastfillWordWriter(c), Config.voodoo1(); word-pair fastfill writer "
+             "with two Dither instances, StreamFork2 x3, StreamJoin x2, m2sPipe, halfPipe "
+             "(ext/SpinalVoodoo/src/voodoo/raster/FastfillWordWriter.scala -> "
+             "avoodoo/raster/fastfill_word_writer.py)",
+        # No overrides: `io_cmd` is Stream(NoData), `io_regs_*` pairs like
+        # FastfillWrite's, `io_colorWrite_payload_*` / `io_auxWrite_payload_*`
+        # against the packed FramebufferWriteReq payloads, and the five status
+        # outputs are bare leaves.  The random driver's `io_cmd_valid` at
+        # --valid-density retriggers the walk as soon as `active` drops, and
+        # the two write streams' `ready` at --ready-density exercise the
+        # halfPipe / synchronous-fork drain path; the width-10 clip inputs are
+        # free, so most rectangles are large and many are empty.
+    ),
     # --- Phase 5 ---------------------------------------------------------
     "TmuTexelDecoder": DiffEntry(
         spinal="TmuTexelDecoder",
@@ -263,6 +368,56 @@ REGISTRY: dict[str, DiffEntry] = {
         # cycles, interleaved with the P8/AP88 lookups; `nccTables` is 688 bits
         # of free input, re-randomised every cycle, which is a strictly harder
         # stimulus than the register-written tables the real core supplies.
+    ),
+    "TmuTextureCache": DiffEntry(
+        spinal="TmuTextureCache",
+        factory="avoodoo.texture.tmu_texture_cache:TmuTextureCache",
+        note="Tmu.scala:597 — TmuTextureCache(c) when c.useTexFillCache, Config.voodoo1(): "
+             "16 slots x 2 ways x 8-word lines, 16-deep request window "
+             "(ext/SpinalVoodoo/src/voodoo/texture/TmuTextureCache.scala -> "
+             "avoodoo/texture/tmu_texture_cache.py)",
+        # `io.sampleFetch.valid.setName("dbgDataValid")` renames the output
+        # port itself in the Spinal Verilog (the only markSimulationOnly alias
+        # that reaches the ports), so ports.py sees a bare scalar; map it back
+        # onto the stream's valid.  io_sampleFetch_ready still classifies as
+        # the stream's ready and is driven at --ready-density.
+        overrides={"dbgDataValid": "sample_fetch__valid"},
+        # Random 26-bit tap addresses never revisit a line (16 x 32 bytes out
+        # of 64 MiB), and a random io_texRead_rsp parks on haltWhen(!fill.active)
+        # or ends a burst on a random `last`; the responder answers each cmd
+        # with exactly lineWords beats and drives io_sampleRequest from a small
+        # address pool so hits, bilinear multi-fills, continue fills and epoch
+        # invalidation all happen in lockstep.
+        responder="tests.diff.tmu_texture_cache_stimulus:cache_traffic",
+    ),
+    "Tmu": DiffEntry(
+        spinal="Tmu",
+        factory="avoodoo.texture.tmu:Tmu",
+        note="PixelPipeline.scala:294 — Tmu(c), Config.voodoo1(): the whole texture "
+             "unit -- S/T/W front end, reciprocal + log2 ROMs, LOD, coordinate and "
+             "packed address generation, the 16-deep request FIFO, TmuTextureCache "
+             "and TmuTexelDecoder inside, bypass/in-flight accounting "
+             "(ext/SpinalVoodoo/src/voodoo/texture/Tmu.scala -> avoodoo/texture/tmu.py)",
+        # The cache only takes an io_texRead_rsp beat while a fill is
+        # outstanding, so a random held beat parks that stream; the responder
+        # answers each cmd with the burst it asked for.  It also drives
+        # io_input with texture-shaped pixels (per-seed table set-ups, a random
+        # walk in S/T, sane 1/W) so cache *hits* happen -- random 48-bit S/T
+        # never revisit a line -- with one pixel in ten fully random for the
+        # bypass / clamp-to-zero / wrap corners, and pulses io_invalidate rarely.
+        responder="tests.diff.tmu_stimulus:tmu_traffic",
+    ),
+    "TmuMemOnly": DiffEntry(
+        spinal="TmuMemOnly",
+        portmap="Tmu",
+        factory="avoodoo.texture.tmu:Tmu",
+        note="Tmu with every arithmetic input random: S, T, 1/W, the gradients, "
+             "the LOD register and the mode bits are raw random patterns on every "
+             "pixel (every clz / shift / wrap path, both signs of 1/W, zero), only "
+             "the packed tables stay consistent with the format so the cache can "
+             "resolve the taps -- a fully random io_input parks it on the first "
+             "address outside every LOD (34 pixels per 1e6 cycles)",
+        responder="tests.diff.tmu_stimulus:tmu_wild",
     ),
     "TextureMemSubsystem": DiffEntry(
         spinal="TextureMemSubsystem",
@@ -294,19 +449,6 @@ REGISTRY: dict[str, DiffEntry] = {
         # (`tmudSdX` -> `tmud_sd_x`, `tLOD`/`tmuTLOD` -> `t_lod`/`tmu_tlod`,
         # `clipLowY` -> `clip_low_y`), and they come out of
         # tools/diff/naming.camel_to_snake unchanged.
-    ),
-    # --- Phase 5 ---------------------------------------------------------
-    "TmuTexelDecoder": DiffEntry(
-        spinal="TmuTexelDecoder",
-        factory="avoodoo.texture.tmu_texel_decoder:TmuTexelDecoder",
-        note="texel format decode + bilinear blend, Config.voodoo1() "
-             "(ext/SpinalVoodoo/src/voodoo/texture/TmuTexelDecoder.scala)",
-        # The generic driver covers this module's two odd inputs on its own:
-        # `paletteWrite` is a Flow (valid, no ready), so it is randomised every
-        # cycle and the 256-entry RAMs are fully written within a few thousand
-        # cycles, interleaved with the P8/AP88 lookups; `nccTables` is 688 bits
-        # of free input, re-randomised every cycle, which is a strictly harder
-        # stimulus than the register-written tables the real core supplies.
     ),
     # --- Phase 0.2 -------------------------------------------------------
     "AfixOps": DiffEntry(
@@ -440,6 +582,62 @@ REGISTRY: dict[str, DiffEntry] = {
         note="FramebufferPlaneBufferWbSmall with locality-biased writes",
         responder="tests.diff.plane_buffer_stimulus:local_writes_2",
     ),
+    "SimBmbMemorySmall": DiffEntry(
+        spinal="SimBmbMemorySmall",
+        factory="avoodoo.sim_membus_memory:SimMemBusMemory",
+        params=dict(p=_FB, size=64 * 1024),
+        note="CoreSim.scala:32's SimBmbMemory at a diffable 64 KiB instead of 4 MiB "
+             "(ext/SpinalVoodoo/src/voodoo/SimBmbMemory.scala). Two deliberate "
+             "differences, neither observable at the ports: the array is 64 KiB, "
+             "and Spinal splits a byte-enabled Mem into ram_symbol0..3 while "
+             "Amaranth/yosys keep one 32-bit `mem`. Both start all-zero.",
+    ),
+    "SimBmbMemory": DiffEntry(
+        spinal="SimBmbMemory",
+        factory="avoodoo.sim_membus_memory:SimMemBusMemory",
+        params=dict(p=_FB, size=4 * 1024 * 1024),
+        note="the real CoreSim instance, 4 MiB — diff it as SimBmbMemorySmall instead",
+        pending=(
+            "not lockstep-diffable at this size: 1 048 576 words makes "
+            "`amaranth_yosys` write_verilog run for minutes and emit a file "
+            "Verilator then has to chew through, and the Spinal side is four "
+            "1 Mi-entry byte arrays on top. Use MOD=SimBmbMemorySmall (64 KiB, "
+            "same parameters and timing); only `wordAddrWidth` differs, and the "
+            "logic is otherwise depth-independent. Revisit if a machine with "
+            "time to burn wants the full-size run."
+        ),
+    ),
+    # --- Phase 2.3 (agent p2-lfb-frontdoor) ------------------------------
+    "Lfb": DiffEntry(
+        spinal="Lfb",
+        factory="avoodoo.frontend.lfb:Lfb",
+        note="PixelPipeline.scala — Lfb(c), Config.voodoo1() "
+             "(ext/SpinalVoodoo/src/voodoo/frontend/Lfb.scala -> avoodoo/frontend/lfb.py)",
+        # No overrides. `io_regs_*` (lfbMode/fbzMode/alphaMode/fogMode/
+        # fogColor/zaColor/writeRouting/readRouting) is one packed 266-bit
+        # `regs` port (core_types.LfbRegs) whose leaves amports.py slices;
+        # both output payloads are packed the same way. The generic driver
+        # re-randomises `regs` every cycle, so writeFormat / rgbaLanes / the
+        # swap+swizzle bits change under a captured command -- harsher than
+        # the register bank, and exactly what the decode mux is measured on.
+        # Reads: fbReadBus.rsp is a free input stream, so the two fetches
+        # complete whenever the driver raises rsp.valid in RFETCH1/2, and the
+        # RWAIT gate (pciFifoEmpty && !pipelineBusy) is random too.
+    ),
+    "CoreCpuFrontdoor": DiffEntry(
+        spinal="CoreCpuFrontdoor",
+        factory="avoodoo.core.cpu_frontdoor:CoreCpuFrontdoor",
+        note="Core.scala:110 — CoreCpuFrontdoor(c), Config.voodoo1() "
+             "(ext/SpinalVoodoo/src/voodoo/core/CoreCpuFrontdoor.scala -> "
+             "avoodoo/core/cpu_frontdoor.py)",
+        # No overrides: four Bmb buses plus the TexWritePayload stream, all
+        # pairing through the packed cmd/rsp payloads; `io_texBaseAddr` ->
+        # `tex_base_addr`. Almost entirely combinational -- the only
+        # registers are texWriteRspPending (reset) and texWriteRspSource
+        # (plain Reg, reset_less) -- so the interesting cycles are the ones
+        # where a texture write is accepted while the previous one's
+        # acknowledgement is still pending.
+    ),
     # --- Phase 6 (agent p6-planereader) ----------------------------------
     # The generic driver deadlocks FramebufferPlaneReader within ~30 cycles
     # (a held random source=1 rsp beat with no direct miss outstanding is
@@ -498,61 +696,71 @@ REGISTRY: dict[str, DiffEntry] = {
              "every rsp beat answers a real command",
         responder="tests.diff.plane_reader_stimulus:mem_slave",
     ),
-    "SimBmbMemorySmall": DiffEntry(
-        spinal="SimBmbMemorySmall",
-        factory="avoodoo.sim_membus_memory:SimMemBusMemory",
-        params=dict(p=_FB, size=64 * 1024),
-        note="CoreSim.scala:32's SimBmbMemory at a diffable 64 KiB instead of 4 MiB "
-             "(ext/SpinalVoodoo/src/voodoo/SimBmbMemory.scala). Two deliberate "
-             "differences, neither observable at the ports: the array is 64 KiB, "
-             "and Spinal splits a byte-enabled Mem into ram_symbol0..3 while "
-             "Amaranth/yosys keep one 32-bit `mem`. Both start all-zero.",
+    # --- Phase 1.5: AXI boundary bridges (fpga/src, not upstream) ---------
+    # Every Spinal leaf (io_axi_aw_payload_addr, io_output_arw_payload_write,
+    # ...) pairs against a slice of the packed Amaranth stream payload
+    # (`axi__aw__payload`, `output__arw__payload`) through amports.py; the
+    # AxiLite4/Axi4 layouts in avoodoo/lib/axi.py follow the Scala bundle
+    # declaration order, so no overrides.
+    "Axi4ToAxiLite4": DiffEntry(
+        spinal="Axi4ToAxiLite4",
+        factory="avoodoo.lib.axi4_to_axilite4:Axi4ToAxiLite4",
+        params=dict(address_width=_BAR_AW),
+        note="AmdAc701.scala:56 — Axi4ToAxiLite4(CoreArtix.barAddressWidth), idWidth 4 "
+             "(fpga/src/voodoo/artix/Axi4ToAxiLite4.scala -> avoodoo/lib/axi4_to_axilite4.py)",
     ),
-    "SimBmbMemory": DiffEntry(
-        spinal="SimBmbMemory",
-        factory="avoodoo.sim_membus_memory:SimMemBusMemory",
-        params=dict(p=_FB, size=4 * 1024 * 1024),
-        note="the real CoreSim instance, 4 MiB — diff it as SimBmbMemorySmall instead",
-        pending=(
-            "not lockstep-diffable at this size: 1 048 576 words makes "
-            "`amaranth_yosys` write_verilog run for minutes and emit a file "
-            "Verilator then has to chew through, and the Spinal side is four "
-            "1 Mi-entry byte arrays on top. Use MOD=SimBmbMemorySmall (64 KiB, "
-            "same parameters and timing); only `wordAddrWidth` differs, and the "
-            "logic is otherwise depth-independent. Revisit if a machine with "
-            "time to burn wants the full-size run."
-        ),
+    "AxiLite4ToBmbBridge": DiffEntry(
+        spinal="AxiLite4ToBmbBridge",
+        factory="avoodoo.lib.axilite4_to_membus:AxiLite4ToMemBusBridge",
+        params=dict(address_width=_BAR_AW, bmb_params=_mp.cpu_bmb_params()),
+        note="CoreGowin.scala:37 — AxiLite4ToBmbBridge(barAddressWidth, Core.cpuBmbParams), "
+             "timeoutLog2 = 20 (fpga/src/voodoo/artix/CoreArtix.scala -> "
+             "avoodoo/lib/axilite4_to_membus.py)",
     ),
-    # --- Phase 2.3 (agent p2-lfb-frontdoor) ------------------------------
-    "Lfb": DiffEntry(
-        spinal="Lfb",
-        factory="avoodoo.frontend.lfb:Lfb",
-        note="PixelPipeline.scala — Lfb(c), Config.voodoo1() "
-             "(ext/SpinalVoodoo/src/voodoo/frontend/Lfb.scala -> avoodoo/frontend/lfb.py)",
-        # No overrides. `io_regs_*` (lfbMode/fbzMode/alphaMode/fogMode/
-        # fogColor/zaColor/writeRouting/readRouting) is one packed 266-bit
-        # `regs` port (core_types.LfbRegs) whose leaves amports.py slices;
-        # both output payloads are packed the same way. The generic driver
-        # re-randomises `regs` every cycle, so writeFormat / rgbaLanes / the
-        # swap+swizzle bits change under a captured command -- harsher than
-        # the register bank, and exactly what the decode mux is measured on.
-        # Reads: fbReadBus.rsp is a free input stream, so the two fetches
-        # complete whenever the driver raises rsp.valid in RFETCH1/2, and the
-        # RWAIT gate (pciFifoEmpty && !pipelineBusy) is random too.
+    "AxiLite4ToBmbBridgeFastTimeout": DiffEntry(
+        spinal="AxiLite4ToBmbBridgeFastTimeout",
+        factory="avoodoo.lib.axilite4_to_membus:AxiLite4ToMemBusBridge",
+        params=dict(address_width=_BAR_AW, bmb_params=_mp.cpu_bmb_params(), timeout_log2=4),
+        note="same bridge, timeoutLog2 = 4: the wedged / timeout / droppedWrites paths are "
+             "reachable by random stimulus (run it with --ready-density 0.1 too)",
     ),
-    "CoreCpuFrontdoor": DiffEntry(
-        spinal="CoreCpuFrontdoor",
-        factory="avoodoo.core.cpu_frontdoor:CoreCpuFrontdoor",
-        note="Core.scala:110 — CoreCpuFrontdoor(c), Config.voodoo1() "
-             "(ext/SpinalVoodoo/src/voodoo/core/CoreCpuFrontdoor.scala -> "
-             "avoodoo/core/cpu_frontdoor.py)",
-        # No overrides: four Bmb buses plus the TexWritePayload stream, all
-        # pairing through the packed cmd/rsp payloads; `io_texBaseAddr` ->
-        # `tex_base_addr`. Almost entirely combinational -- the only
-        # registers are texWriteRspPending (reset) and texWriteRspSource
-        # (plain Reg, reset_less) -- so the interesting cycles are the ones
-        # where a texture write is accepted while the previous one's
-        # acknowledgement is still pending.
+    "BmbToAxi4SharedBridge": DiffEntry(
+        spinal="BmbToAxi4SharedBridge",
+        factory="avoodoo.lib.membus_to_axi4_mem:MemBusToAxi4SharedBridge",
+        params=dict(bmb_config=_FIXER_OP),
+        note="CoreArtix.scala:228 — BmbToAxi4SharedBridge(fixer.op), pendingMax 31, halfRateAw "
+             "(spinal/lib/bus/bmb/BmbToAxi4Bridge.scala -> avoodoo/lib/membus_to_axi4_mem.py)",
+    ),
+    "BmbToAxi4Mem": DiffEntry(
+        spinal="BmbToAxi4Mem",
+        factory="avoodoo.lib.membus_to_axi4_mem:MemBusToAxi4Mem",
+        params=dict(p=_FB, burst_log2=_mp.AXI_BURST_LOG2),
+        note="CoreGowin.scala:44 — BmbToAxi4Mem(Core.fbMemBmbParams(c), 8): aligner + fixer + "
+             "shared bridge + toAxi4 (fpga/src/voodoo/artix/CoreArtix.scala)",
+    ),
+    "BmbToAxi4MemTex": DiffEntry(
+        spinal="BmbToAxi4MemTex",
+        factory="avoodoo.lib.membus_to_axi4_mem:MemBusToAxi4Mem",
+        params=dict(p=_mp.tex_mem_bmb_params(_C), burst_log2=_mp.AXI_BURST_LOG2),
+        note="CoreGowin.scala:45 — BmbToAxi4Mem(Core.texMemBmbParams(c), 8), sourceWidth 6",
+    ),
+    "AxiLite4ClockCrossing": DiffEntry(
+        spinal="AxiLite4ClockCrossing",
+        factory="avoodoo.gowin.axilite4_clock_crossing:AxiLite4ClockCrossing",
+        params=dict(config=_lite_cfg(_BAR_AW)),
+        note="TangMega138kPro.scala:76 / AmdAc701.scala:60 — five StreamFifoCC(depth 4); both "
+             "domains are `sync` here because the harness drives one clock, so this proves the "
+             "FIFO logic and the buffered pop reset, not the asynchrony (pysim covers that) "
+             "(fpga/src/voodoo/gowin/AxiLite4ClockCrossing.scala -> "
+             "avoodoo/gowin/axilite4_clock_crossing.py)",
+    ),
+    "Axi4AddressRelocate": DiffEntry(
+        spinal="Axi4AddressRelocate",
+        factory="avoodoo.gowin.axi4_address_relocate:Axi4AddressRelocate",
+        params=dict(config=_tex_axi_config(_C), offset=4 * 1024 * 1024),
+        note="CoreGowin.scala:46 — Axi4AddressRelocate(texAxiConfig(c), GowinAddressMap.texMemBase "
+             "= 4 MiB); combinational, no clk/reset on either side "
+             "(fpga/src/voodoo/gowin/CoreGowin.scala -> avoodoo/gowin/axi4_address_relocate.py)",
     ),
 }
 

@@ -522,7 +522,24 @@ Spinal core does.
   `SIM_DIR=` override.
 
 ### Phase 1
-- [x] stream helpers  - [x] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [ ] axi  - [x] bus_interface  - [ ] pci_fifo
+- [x] stream helpers  - [x] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [x] axi  - [x] bus_interface  - [x] pci_fifo
+- [x] **axi** (2026-09-21). `avoodoo/lib/axi.py` (AXI4/AXI4-Lite signatures in Scala
+      field order), `lib/axi4_to_axilite4.py`, `lib/axilite4_to_membus.py`
+      (AxiLite4ToBmbBridge incl. the requestTimeoutSeen/responseTimeoutSeen outputs the
+      console-SDRAM CoreArtix added, timeoutLog2 = 30), `lib/membus_to_axi4_mem.py`
+      (BmbToAxi4Mem + BmbToAxi4SharedBridge), `gowin/axilite4_clock_crossing.py`,
+      `gowin/axi4_address_relocate.py`. 22 pysim tests. Eight GenOne rows; all eight
+      diff clean at 1e6 x seeds 1,2,3 AND at --valid-density 0.9 --ready-density 0.12;
+      the clock crossing also seeds 4-7 x 2e5. Findings: (a) Spinal's
+      `withBufferedResetFrom` = `ResetCtrl.asyncAssertSyncDeassertCreateCd` keeps the pop
+      domain's SYNC resetKind (only the 2-flop bridge is async); `lib/stream.py:FifoCC`
+      declares that domain async_reset=True, which the 1e6 gate caught at seed 3 cycle 0
+      via stale RAM-read state across seeds. The crossing builds the sync-reset domain
+      itself and passes with_pop_buffered_reset=False; **FifoCC's default must be fixed
+      before HdmiScanout** (Phase 7.1). (b) The first failing diff was only the two new
+      timeout ports missing from the signature.
+- [x] **pci_fifo** (2026-09-20/21). `avoodoo/bus/pci_fifo.py`; 26 pysim tests; diff
+      against the real 158-entry decode table clean at 1e6 x 3 (commit f14fb0d).
 - [x] 1.1 stream helpers — 2026-09-20. `amaranth/avoodoo/lib/stream.py` (+ `lib/fragment.py`,
       `bus/stream_while.py`), transliterated from the SpinalHDL 1.15.0 `spinal/lib/Stream.scala`,
       `Flow.scala`, `Counter.scala` and `Utils.scala` sources. 66 pysim tests in
