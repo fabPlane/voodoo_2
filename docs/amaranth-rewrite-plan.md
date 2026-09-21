@@ -1474,7 +1474,25 @@ Spinal core does.
         model incl. the `|<< 12` and `.resized` wraps.
 
 ### Phase 7
-- [x] scanout  - [x] core + core_sim + dbg  - [ ] Glide suite identical  - [ ] trace replays identical  - [ ] SpinalSim tests ported
+- [x] scanout  - [x] core + core_sim + dbg  - [x] Glide suite identical (the 3 SDK traces present locally)  - [x] trace replays identical (tomb)  - [ ] SpinalSim tests ported
+- [x] **7.3 parity gate** (2026-09-21, first run, no fixes needed). `make sim-trace-check
+      TEST=<t>` (`tools/trace_check.py` + `emu/sim/Makefile`) replays each trace through the
+      Amaranth CoreSim under the copied harness; `tests/test_parity.py` pins the result to
+      the Spinal CoreSim's on the same trace. **Every screenshot is byte-identical to the
+      Spinal CoreSim's** (md5 equal), and the harness cycle counts match:
+
+      | trace | Spinal/Amaranth sim md5 | cycles Spinal | cycles Amaranth | px differing from 86Box (both) |
+      |---|---|---|---|---|
+      | test04 | d467a4c2...8f15 | 1,375,051 | 1,375,051 | 143 |
+      | test_alphabet | e413f7c4...1ecb | 1,290,051 | 1,290,051 | 400 |
+      | test16 | b712ccf9...c811ecb | 2,245,052 | 2,245,052 | 103,033 |
+      | tomb (1967 tris) | 28b26a88...51c3 | 3,170,025 | 3,170,024 | 8,538 |
+
+      The "differing from 86Box" column is the Spinal core's own known deviation from the
+      86Box model, reproduced to the pixel. Tomb's one-cycle delta is the `dbg_swap_count`
+      load port costing the state-snapshot restore one clock. quake/screamer2/valley_of_ra
+      /tower have no reference: their traces deadlock the Spinal CoreSim itself (and the
+      LFS blobs for some were never fetched). Texture memory compares equal on all four.
 - [x] **scanout** (2026-09-21). `amaranth/avoodoo/hdmi/scanout.py`, all of
       `hdmi/HdmiScanout.scala` (working-tree version): `VideoTiming` (+ `DMT_640X480`,
       `CEA_720X480P`), `Rgb888` helpers (`rgb888_from_rgb565`, `apply_gamma` + integer

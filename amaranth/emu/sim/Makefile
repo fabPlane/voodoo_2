@@ -20,6 +20,8 @@
 #   * TRACE_DIR points back into the submodule: voodoo_trace_writer.[ch] and
 #     the trace format header are shared verbatim, not forked.
 #
+#   * VERILATOR_FLAGS gains -Wno-fatal (Phase 7.3; see the flags below).
+#
 # Everything else is deliberately identical to upstream — VERILATOR_FLAGS
 # (including --public-flat-rw, which is what exposes the framebuffer and
 # texture arrays to the harness), the -m32 CXX32 build, the OBJ_DIR layout
@@ -55,10 +57,18 @@ SIM_LIB     = $(OBJ_DIR)/V$(SIM_TOP)__ALL.a
 SIM_MK      = V$(SIM_TOP).mk
 HARNESS_SRC = $(HARNESS_DIR)/sim_harness.cpp
 
-# Verilator settings — must match upstream, see the note above.
+# Verilator settings — upstream's verbatim plus -Wno-fatal (see the note
+# above).  The Amaranth/yosys CoreSim.v carries ~150 warnings the Spinal one
+# does not: CASEINCOMPLETE on every yosys `casez`, ASCRANGE `[-1:0]`, three
+# LATCH false positives on the gamma-LUT `full_case`, and three UNOPTFLAT
+# false loops (the scanout CDC FIFO's gray-to-binary chains, the TMU's
+# compareMissSel priority chain).  Verilator treats warnings as fatal by
+# default, so without -Wno-fatal the real core (Phase 7.2) never verilates —
+# the Phase 0.5 stub was small enough not to trip any.  Same flag
+# tools/diff/harness.py and the Makefile's sim-trace-check pass.
 VERILATOR = verilator
 VERILATOR_ROOT ?= $(shell $(VERILATOR) --getenv VERILATOR_ROOT)
-VERILATOR_FLAGS = --cc --output-split 20000 --output-split-cfuncs 5000 --decorations none --public-flat-rw --x-assign fast --x-initial fast --noassert -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CMPCONST -Wno-UNSIGNED
+VERILATOR_FLAGS = --cc --output-split 20000 --output-split-cfuncs 5000 --decorations none --public-flat-rw --x-assign fast --x-initial fast --noassert -Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CMPCONST -Wno-UNSIGNED
 ifeq ($(TRACE),1)
 VERILATOR_FLAGS += --trace-fst --trace-structs --trace-underscore
 endif
