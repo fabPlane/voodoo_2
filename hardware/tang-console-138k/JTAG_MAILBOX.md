@@ -11,9 +11,9 @@ The tested adapter is the Sipeed USB Debugger's FT2232H channel A
 
 ## Build and load the open image
 
-Apicula commit `bd7cbbb` describes the GW5AST `GW_JTAG` hard block and emits
-the two ER enable fuses.  Build with a nextpnr chip database regenerated from
-that Apicula checkout:
+Apicula commit `cf6ab5f` describes the GW5AST `GW_JTAG` hard block, models its
+cross-tile fabric nodes, and emits the two ER enable fuses. Build with a
+nextpnr chip database regenerated from that Apicula checkout:
 
 ```sh
 cd fpga/hw/gowin-open
@@ -95,9 +95,20 @@ chain, DFFs, and JTAG readback all work together.
 
 ## Open-source flow status
 
-The host protocol is open and proven against the vendor oracle.  The open
-Yosys/nextpnr/Apicula build now synthesizes one `GW_JTAG`, places it at
-`X165Y108/GW_JTAG`, routes all arcs, and packs a 4.1 MiB binary without Gowin
-EDA.  Hardware read/write validation of that open image still requires the
-FT2232 adapter to be connected; the last attempt could not open USB device
-`0403:6010`.
+The host protocol and the fully open FPGA image are hardware-proven. The open
+Yosys/nextpnr/Apicula build synthesizes one `GW_JTAG`, places its hard block at
+`X166Y108/GW_JTAG`, connects its outputs through the adjacent `X165Y108`
+routing tile, routes all arcs, and packs the bitstream without Gowin EDA.
+
+On 2026-09-21 the mailbox entered user mode with status `0x00022230`, returned
+its initial `0x4a544147` value, and correctly echoed this six-write sequence:
+
+```text
+0xa5c35a7e, 0x13579bdf, 0x2468ace0,
+0xa5c35a7e, 0x13579bdf, 0x2468ace0
+```
+
+The open clock probe also passed: eight 100 ms samples advanced by roughly
+5,000,000 counts each, directly confirming the 50 MHz input clock, counter,
+and JTAG clock-domain readback. Keep JTAG tests exclusive; a second process
+using the FT2232 can cause misleading transport failures and scan values.
