@@ -1,0 +1,51 @@
+diff --git a/emu/glide/glide2x/sst1/init/init.c b/emu/glide/glide2x/sst1/init/init.c
+index 1a3adf0..54ed2c8 100644
+--- a/emu/glide/glide2x/sst1/init/init.c
++++ b/emu/glide/glide2x/sst1/init/init.c
+@@ -190,6 +190,16 @@ initEnumHardware( InitHWEnumCallback *cb )
+           sst1InitGetDeviceInfo( base, &info );
+           de10EnumStage("initEnumHardware: after sst1InitGetDeviceInfo");
+ 
++          /* The simulator backend cannot probe the real RAM-sizing registers,
++             so sst1InitGetDeviceInfo() may report 0MB. Assume a standard 2MB
++             Voodoo Graphics (2MB FBI + 2MB per TMU) so that texture-memory
++             managers built on grTexMaxAddress()/tfxRam (e.g. Mesa's fxMesa
++             fx driver) size their heaps correctly instead of underflowing. */
++          if( info.fbiMemSize == 0 ) info.fbiMemSize = 2;
++          if( info.numberTmus == 0 ) info.numberTmus = 1;
++          { int _tmu; for( _tmu = 0; _tmu < 3; _tmu++ )
++              if( info.tmuMemSize[_tmu] == 0 ) info.tmuMemSize[_tmu] = 2; }
++
+           hwInfo[numDevicesInSystem].hwDep.vgInfo.vgBaseAddr = (FxU32) base;
+           hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRev    = info.fbiRevision;
+           hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRam    = info.fbiMemSize;
+diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
+index a24d46b..c1997b3 100644
+--- a/emu/test/trace_test.cpp
++++ b/emu/test/trace_test.cpp
+@@ -1273,6 +1273,25 @@ int main(int argc, char **argv) {
+                     fb_offset, presented_changed, total, (presented_changed * 100.0) / total,
+                     other_offset, other_changed, total, (other_changed * 100.0) / total);
+         }
++
++        /*
++         * Swap-parity fallback: for a static scene the app may quit (or be
++         * stopped) with the freshly-drawn frame still in the back buffer, so
++         * the buffer we recorded as "presented" is the stale/cleared one. If
++         * that presented buffer is essentially all black but the other buffer
++         * clearly has content, display the other buffer instead. This makes
++         * single-frame captures robust to which buffer the last swap left in
++         * front (e.g. GLQuake stopped with SIGTERM at the start map).
++         */
++        if (presented_black >= (total * 99) / 100 &&
++            other_black + (total / 20) < presented_black) {
++            fprintf(stderr,
++                    "[trace_test] Presented buffer @0x%x is essentially black; "
++                    "displaying buffer @0x%x which holds the drawn frame.\n",
++                    fb_offset, other_offset);
++            fb_offset = other_offset;
++            ref_fb = (uint16_t *)((uint8_t *)ref_fb_base + fb_offset);
++        }
+     }
+ 
+     /* Get sim framebuffer.
