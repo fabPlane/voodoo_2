@@ -770,6 +770,39 @@ REGISTRY: dict[str, DiffEntry] = {
         spinal="BmbToAxi4SharedBridge",
         factory="avoodoo.lib.membus_to_axi4_mem:MemBusToAxi4SharedBridge",
         params=dict(bmb_config=_FIXER_OP),
+    # --- Phase 6 (agent p6-fbmemsub) --------------------------------------
+    # The whole framebuffer memory front end: two plane buffers, three cached
+    # readers, four arbiters, fourteen s2mPipes.  The generic driver parks it
+    # the way it parks FramebufferPlaneReader (a random rsp beat on a bus with
+    # nothing outstanding is never accepted), so the main row carries
+    # tests/diff/framebuffer_mem_subsystem_stimulus.py: an in-order memory
+    # slave on each of the four live fbMem ports (echoing `source`, which the
+    # arbiters route responses by), span-shaped prefetch/read traffic on the
+    # colour, aux and scanout readers (the scanout one strictly in order,
+    # since allowDirectMiss = false makes a read behind the pointer wait for
+    # ever), and single-beat lfbReadBus commands.  Writes, flush and every
+    # `ready` stay with the generator.
+    "FramebufferMemSubsystem": DiffEntry(
+        spinal="FramebufferMemSubsystem",
+        factory="avoodoo.core.framebuffer_mem_subsystem:FramebufferMemSubsystem",
+        note="Core.scala:111 — FramebufferMemSubsystem(c), Config.voodoo1(): "
+             "useFbWriteBuffer = false (one-input write bridges, fbMemWrite tied "
+             "off), useFbReadCache = true (cached colour/aux readers) "
+             "(ext/SpinalVoodoo/src/voodoo/core/FramebufferMemSubsystem.scala -> "
+             "avoodoo/core/framebuffer_mem_subsystem.py)",
+        responder="tests.diff.framebuffer_mem_subsystem_stimulus:subsystem_traffic",
+        # No overrides: io_stats_<x> / io_status_<x> pair against slices of the
+        # packed `stats` / `status` StructLayout ports, the five Bmb masters
+        # and lfbReadBus as for BmbArbiter, the streams as for the readers.
+    ),
+    "FramebufferMemSubsystemRandom": DiffEntry(
+        spinal="FramebufferMemSubsystemRandom",
+        portmap="FramebufferMemSubsystem",
+        factory="avoodoo.core.framebuffer_mem_subsystem:FramebufferMemSubsystem",
+        note="FramebufferMemSubsystem under the bare random generator: the read "
+             "buses park within a few hundred cycles (see the main row), the "
+             "write path and lfbReadBus keep going; kept so that stays reproducible",
+    ),
         note="CoreArtix.scala:228 — BmbToAxi4SharedBridge(fixer.op), pendingMax 31, halfRateAw "
              "(spinal/lib/bus/bmb/BmbToAxi4Bridge.scala -> avoodoo/lib/membus_to_axi4_mem.py)",
     ),

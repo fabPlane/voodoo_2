@@ -953,3 +953,179 @@ class FloatShadowWriteLayout(data.StructLayout):
     def __init__(self, bus_addr_width: int) -> None:
         self.bus_addr_width = bus_addr_width
         super().__init__({"address": unsigned(bus_addr_width), "raw": signed(50)})
+
+
+# ---------------------------------------------------------------------------
+# core/CoreTypes.scala -- FramebufferLayout, FramebufferMemStatus,
+# FramebufferMemStats (appended by the framebuffer_mem_subsystem port;
+# `core/framebuffer_mem_subsystem.py`).
+# ---------------------------------------------------------------------------
+
+from amaranth import Signal, Value  # noqa: E402
+
+__all__ += [
+    "FramebufferLayout",
+    "framebuffer_layout_from_register_bank",
+    "FramebufferMemStatus",
+    "FramebufferMemStats",
+    "FRAMEBUFFER_MEM_STAT_NAMES",
+]
+
+
+class FramebufferLayout(data.StructLayout):
+    """``case class FramebufferLayout(c: Config)`` (``core/CoreTypes.scala:8``).
+
+    The resolved buffer bases and the three ``FbRouting``\\ s (draw, LFB write,
+    LFB read) that ``Core`` derives from the register bank each cycle.
+    """
+
+    def __init__(self, c: Config) -> None:
+        self.c = c
+        aw = c.address_width
+        super().__init__({
+            "front": unsigned(aw),
+            "back": unsigned(aw),
+            "aux": unsigned(aw),
+            "draw": FbRouting(c),
+            "lfb_write": FbRouting(c),
+            "lfb_read": FbRouting(c),
+            "displayed_buffer": unsigned(2),
+            "swaps_pending": unsigned(3),
+        })
+
+
+def framebuffer_layout_from_register_bank(m, c: Config, fb_base_addr, reg_bank,
+                                          swap_buffer, *, name: str = "layout"):
+    """``FramebufferLayout.fromRegisterBank(c, fbBaseAddr, regBank, swapBuffer)``
+    (``core/CoreTypes.scala:20``): combinational, returns a ``Signal`` of
+    :class:`FramebufferLayout` driven in ``m.d.comb``.
+
+    ``reg_bank`` is the :class:`~avoodoo.frontend.register_bank.RegisterBank`
+    (``init.fbi_init1.video_tiles_x``, ``init.fbi_init2.buffer_offset``,
+    ``render_config.fbz_mode.draw_buffer``, ``render_config.lfb_mode.*``) and
+    ``swap_buffer`` the :class:`~avoodoo.frontend.swap_buffer.SwapBuffer`
+    (``swap_count``, ``swaps_pending``); ``fb_base_addr`` is the
+    ``c.address_width``-bit base ``Core.io.fbBaseAddr``.  Any object with the
+    same attribute paths (a test stub) does as well.
+
+    Width bookkeeping, as Spinal does it: ``videoTilesX << 6`` is 10 bits
+    then ``resize(11)``; ``bufferOffset.resize(aw) |<< 12`` keeps ``aw`` bits
+    (``|<<`` is the width-preserving shift); ``fbBaseAddr + x`` keeps ``aw``
+    bits (``UInt + UInt`` = ``max`` width, wrapping); ``(bufferOffsetBytes <<
+    1).resized`` grows by one bit and is cut back to ``aw``.
+    """
+    aw = c.address_width
+    layout = Signal(FramebufferLayout(c), name=name)
+    video_tiles_x = Value.cast(reg_bank.init.fbi_init1.video_tiles_x)
+    buffer_offset = Value.cast(reg_bank.init.fbi_init2.buffer_offset)
+    fb_base_addr = Value.cast(fb_base_addr)
+
+    def resize(v, width):
+        v = Value.cast(v)
+        return v[:width] if len(v) >= width else Cat(v, Const(0, width - len(v)))
+
+    # val fbPixelStride = (regBank.init.fbiInit1_videoTilesX << 6).resize(11 bits)
+    fb_pixel_stride = resize(Cat(Const(0, 6), video_tiles_x), 11)
+    # val bufferOffsetBytes = fbiInit2_bufferOffset.resize(aw) |<< 12
+    buffer_offset_bytes = resize(Cat(Const(0, 12), resize(buffer_offset, aw)), aw)
+    buffer0_base = fb_base_addr
+    buffer1_base = (fb_base_addr + buffer_offset_bytes)[:aw]
+    # val auxBufferBase = fbBaseAddr + (bufferOffsetBytes << 1).resized
+    aux_buffer_base = (fb_base_addr + resize(Cat(Const(0, 1), buffer_offset_bytes), aw))[:aw]
+    # val displayed = swapBuffer.io.swapCount(0)
+    displayed = Value.cast(swap_buffer.swap_count)[0]
+    front_buffer_base = Mux(displayed, buffer1_base, buffer0_base)
+    back_buffer_base = Mux(displayed, buffer0_base, buffer1_base)
+    fbz_mode = reg_bank.render_config.fbz_mode
+    lfb_mode = reg_bank.render_config.lfb_mode
+    m.d.comb += [
+        layout.front.eq(front_buffer_base),
+        layout.back.eq(back_buffer_base),
+        layout.aux.eq(aux_buffer_base),
+        # drawBuffer(0) ? backBufferBase | frontBufferBase
+        layout.draw.color_base_addr.eq(
+            Mux(Value.cast(fbz_mode.draw_buffer)[0], back_buffer_base, front_buffer_base)),
+        layout.draw.aux_base_addr.eq(aux_buffer_base),
+        layout.draw.pixel_stride.eq(fb_pixel_stride),
+        layout.lfb_write.color_base_addr.eq(
+            Mux(Value.cast(lfb_mode.write_buffer_select)[0], back_buffer_base,
+                front_buffer_base)),
+        layout.lfb_write.aux_base_addr.eq(aux_buffer_base),
+        layout.lfb_write.pixel_stride.eq(fb_pixel_stride),
+        layout.lfb_read.color_base_addr.eq(
+            Mux(Value.cast(lfb_mode.read_buffer_select)[0], back_buffer_base,
+                front_buffer_base)),
+        layout.lfb_read.aux_base_addr.eq(aux_buffer_base),
+        layout.lfb_read.pixel_stride.eq(fb_pixel_stride),
+        # displayed.asUInt.resize(2 bits)
+        layout.displayed_buffer.eq(displayed),
+        layout.swaps_pending.eq(swap_buffer.swaps_pending),
+    ]
+    return layout
+
+
+class FramebufferMemStatus(data.StructLayout):
+    """``case class FramebufferMemStatus()`` (``core/CoreTypes.scala:77``)."""
+
+    def __init__(self) -> None:
+        super().__init__({"color_busy": unsigned(1), "aux_busy": unsigned(1)})
+
+
+#: ``FramebufferMemStats``'s fields in declaration order; all ``UInt(32 bits)``
+#: except the last, ``readMaxQueueOccupancy``, which is 8.
+FRAMEBUFFER_MEM_STAT_NAMES = (
+    "fill_hits",
+    "fill_misses",
+    "fill_burst_count",
+    "fill_burst_beats",
+    "fill_stall_cycles",
+    "write_stall_cycles",
+    "write_drain_count",
+    "write_full_drain_count",
+    "write_partial_drain_count",
+    "write_drain_reason_full_count",
+    "write_drain_reason_rotate_count",
+    "write_drain_reason_flush_count",
+    "write_drain_dirty_word_total",
+    "write_rotate_blocked_cycles",
+    "write_single_word_drain_count",
+    "write_single_word_drain_start_at_zero_count",
+    "write_single_word_drain_start_at_last_count",
+    "write_rotate_adjacent_line_count",
+    "write_rotate_same_line_gap_count",
+    "write_rotate_other_line_count",
+    "mem_color_write_cmd_count",
+    "mem_aux_write_cmd_count",
+    "mem_color_read_cmd_count",
+    "mem_aux_read_cmd_count",
+    "mem_lfb_read_cmd_count",
+    "mem_color_write_blocked_cycles",
+    "mem_aux_write_blocked_cycles",
+    "mem_color_read_blocked_cycles",
+    "mem_aux_read_blocked_cycles",
+    "mem_lfb_read_blocked_cycles",
+    "read_req_count",
+    "read_req_forward_step_count",
+    "read_req_backward_step_count",
+    "read_req_same_word_count",
+    "read_req_same_line_count",
+    "read_req_other_count",
+    "read_single_beat_burst_count",
+    "read_multi_beat_burst_count",
+    "read_max_queue_occupancy",
+)
+
+
+class FramebufferMemStats(data.StructLayout):
+    """``case class FramebufferMemStats()`` (``core/CoreTypes.scala:87``).
+
+    Thirty-eight 32-bit counters and the 8-bit ``readMaxQueueOccupancy``,
+    produced by ``FramebufferMemSubsystem`` and consumed by ``PixelPipeline``
+    (``io.fbStats``).  ``exposeToSim()`` has no RTL.
+    """
+
+    def __init__(self) -> None:
+        super().__init__({
+            name: unsigned(8 if name == "read_max_queue_occupancy" else 32)
+            for name in FRAMEBUFFER_MEM_STAT_NAMES
+        })

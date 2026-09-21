@@ -323,6 +323,11 @@ object GenOne {
       FramebufferMemSubsystem(c)
     ),
 
+    // Alias for the amaranth row that runs the subsystem under the bare random generator
+    // (the main row attaches tests/diff/framebuffer_mem_subsystem_stimulus.py).
+    "FramebufferMemSubsystemRandom" -> ok("alias of FramebufferMemSubsystem")(
+      FramebufferMemSubsystem(c)
+    ),
     // ---- hdmi scanout --------------------------------------------------------------------------
     "VideoScanout" -> ok("HdmiScanout.scala:133 — VideoScanout() (VideoTiming() default)")(
       VideoScanout()

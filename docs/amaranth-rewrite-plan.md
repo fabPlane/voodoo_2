@@ -1143,7 +1143,7 @@ Spinal core does.
       hardware table compute; dedupe onto `compute_tables` later.
 
 ### Phase 6
-- [x] address_math  - [x] plane_buffer  - [x] plane_reader  - [x] plane_direct_reader  - [ ] framebuffer_mem_subsystem
+- [x] address_math  - [x] plane_buffer  - [x] plane_reader  - [x] plane_direct_reader  - [x] framebuffer_mem_subsystem
 - [x] **address_math** (2026-09-20). `amaranth/avoodoo/framebuffer/address_math.py`
       is the canonical port of `FramebufferAddressMath.scala` (`mul_by_small_unsigned`,
       `pixel_byte_offset`, `plane_address`) plus exact-integer models;
@@ -1264,3 +1264,53 @@ Spinal core does.
 
 ### Phase 9
 - [ ] formal  - [ ] docs  - [ ] archival decision
+- [x] **framebuffer_mem_subsystem** (2026-09-21). `amaranth/avoodoo/core/framebuffer_mem_subsystem.py`
+      (`FramebufferMemSubsystem.scala`, 442 lines with the local patch: the ten `scanout*`
+      diagnostics and `fbScanoutReader = FramebufferPlaneReader(c, allowDirectMiss = false)`).
+      Pure composition: two `FramebufferPlaneBuffer`s, three readers (cached or direct per
+      `useFbReadCache`, scanout always cached), the four `BmbArbiter`s from `lib/membus.py`
+      (the two write bridges and the aux read arbiter are the `portCount == 1` bypass; the
+      colour read arbiter is 3 -> 1 with `lfbReadBus` on input 2), sixteen `s2mPipe`s and
+      the ten `mem*` counters. `FramebufferLayout` + `fromRegisterBank`,
+      `FramebufferMemStatus` and `FramebufferMemStats` (`CoreTypes.scala`) landed in
+      `core/core_types.py`. Findings:
+      * Both `if (c.useFbWriteBuffer)` branches and both reader kinds are ported; the
+        Scala repeats every counter `when` per branch with the arbiter renamed, here the
+        arbiter input is picked once. `Config.voodoo1()` (no write buffer, cached readers)
+        is the diffed one: `fbMemWrite` tied off, per-plane write ports through the bypass
+        bridges. The other three configurations elaborate and run under pysim
+        (`tests/test_framebuffer_mem_subsystem.py`).
+      * **Stimulus.** The bare generator parks both read ports within a few hundred cycles
+        (same cause as the lone reader) -- kept as row `FramebufferMemSubsystemRandom`
+        (GenOne alias). The main row carries
+        `tests/diff/framebuffer_mem_subsystem_stimulus.py`: an in-order read+write
+        `MemSlave` on each of the four live `fbMem` ports (echoing `source`, which the
+        arbiters route responses by), the `plane_reader_stimulus` span traffic re-targeted
+        to the three prefetch/read pairs (scanout strictly in order, because with
+        `allowDirectMiss = false` a read behind the pointer waits for ever), and an
+        `LfbReads` responder issuing `Lfb.scala:341`-shaped single-word reads plus a few
+        `source = 1`, multi-word and write bursts. Writes, `flush` and every `ready` stay
+        random. The first LFB responder read `rsp.last` live instead of from the fired
+        beat's snapshot and lost track of its pending count after ~35 reads; the diff was
+        clean either way, the activity counters caught it.
+      * **Gate.** `make diff MOD=FramebufferMemSubsystem` clean at 1e6 cycles x seeds
+        1,2,3 (576 s on the Mac; per seed ~573k single-beat writes on each write port,
+        ~100k colour-port reads of which ~17.6k scanout fills, ~24k colour-reader bursts
+        and ~62k LFB commands incl. ~3k write bursts, ~100k aux-port reads, ~547k scanout
+        hits, ~436k colour+aux hits, ~12k direct misses) and at 2e5 cycles with
+        `--valid-density 0.9 --ready-density 0.1` (seed 7: ~20k writes per port, 7.6k LFB
+        commands, 33k hits; 90 % of cycles `memColorWriteBlockedCycles`). `tests/diff/test_diff_framebuffer_mem_subsystem.py` runs three
+        short versions and asserts every port stayed live. No `overrides`: `io_stats_*` /
+        `io_status_*` pair against slices of the packed `stats` / `status` layouts.
+      * Registers: the sixteen `S2MPipe`s (`rValidN` init 1, `rData` reset_less, in
+        `lib/stream.py`) and the ten `Reg(UInt(32)) init(0)` counters; nothing else, so
+        nothing new is `reset_less` here. No memories of its own.
+      * `tests/test_framebuffer_mem_subsystem.py` (11 tests): all four configurations
+        elaborate with the same 30 ports; routing of every master to its port with the
+        route tags and the data back on the right stream; the `fragmentLock.lowerFirst`
+        grant order on the colour read port (the lock is taken on `output.valid`, so
+        whoever was offered first wins even while the port is stalled, then 0 > 1 > 2);
+        the tie-offs and the `flush` pass-through per configuration; a per-cycle Python
+        model of the ten counters plus every `stats.*` sum, zero-gating and
+        `readMaxQueueOccupancy`; `FramebufferLayout.fromRegisterBank` against an integer
+        model incl. the `|<< 12` and `.resized` wraps.
