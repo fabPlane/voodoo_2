@@ -9,7 +9,7 @@ GOWIN_PACK   ?= gowin_pack
 NEXTPNR_CHIPDB ?=
 CHIPDB_ARG   := $(if $(NEXTPNR_CHIPDB),--chipdb $(NEXTPNR_CHIPDB),)
 
-DEMOS        := blinky blinky_local button_toggle button_latch reset_toggle reset_shift bram_test uart_hello gpio_probe gpio_probe_key1 jtag_mailbox jtag_clock_probe
+DEMOS        := blinky blinky_local button_toggle button_latch reset_toggle reset_shift bram_test uart_hello gpio_probe gpio_probe_key1 jtag_mailbox jtag_clock_probe jtag_bram_probe
 BUILD_DIR    := build
 CST          := tang_console_138k_open.cst
 OPEN_SUFFIX  := -open
@@ -46,6 +46,9 @@ $(BUILD_DIR)/jtag_mailbox-synth.json: rtl/jtag_mailbox.v rtl/gw_jtag_primitive.v
 	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
 
 $(BUILD_DIR)/jtag_clock_probe-synth.json: rtl/jtag_clock_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
+
+$(BUILD_DIR)/jtag_bram_probe-synth.json: rtl/jtag_bram_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
 	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
 
 $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
