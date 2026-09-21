@@ -247,6 +247,9 @@ object GenOne {
     "FramebufferAccess" -> ok("PixelPipeline.scala:226 — FramebufferAccess(c)")(
       FramebufferAccess(c)
     ),
+    // Alias for the amaranth row that answers the two plane reads from a memory model
+    // (tests/diff/framebuffer_access_stimulus.py); same component, same parameters.
+    "FramebufferAccessMem" -> ok("alias of FramebufferAccess")(FramebufferAccess(c)),
     "Write" -> ok("PixelPipeline.scala:227 — Write(c) (writeColor / writeAux are the same module)")(
       Write(c)
     ),

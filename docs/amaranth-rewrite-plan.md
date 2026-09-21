@@ -932,7 +932,7 @@ Spinal core does.
       `WriteReq` stream) and adds a 400-case stride sweep.
 
 ### Phase 4
-- [ ] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [ ] framebuffer_access  - [ ] pixel_pipeline
+- [ ] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [x] framebuffer_access  - [ ] pixel_pipeline
 - [x] **fog** (2026-09-20). `amaranth/avoodoo/pixel/fog.py`, three `m2sPipe`
       stages, `ColorCombine.Output` in / `Fog.Output` out. **The fog table is
       not a `Mem`**: `io.fogTable` is `in Vec(Bits(16 bits), 64)`, 64 flat input
@@ -994,6 +994,56 @@ Spinal core does.
       annotations as strings and raises "does not have signature member
       annotations" — so the members go to `super().__init__()`, as in
       `frontend/swap_buffer.py`.
+- [x] **framebuffer_access** (2026-09-21). `amaranth/avoodoo/pixel/framebuffer_access.py`
+      (`FramebufferAccess.scala`, 493 lines): `Fog.Output` in, `FramebufferAccess.Output`
+      out (layout lives in the module, like `FogOutput`), the two plane read
+      request/response pairs, `busy`/`zFuncFail`/`debug`. The `StreamFork(5,
+      synchronous = false)`, three `queue(32)`, per-plane `StreamDemux` -> `StreamJoin`
+      with the `queue(4)`'d response -> hand-written fetched/bypass priority mux, the
+      double `StreamJoin` + `queue(32)` (`fetched`), `throwWhen(depthKill).m2sPipe()`,
+      `blendPrep.m2sPipe()` and the combinational `translateFrom` all come straight from
+      `lib/stream.py`; the only register of the module's own is `inFlightCount`
+      (`Reg init 0`, so it resets). **Diff-clean at 1e6 cycles x seeds 1,2,3** on both
+      rows (`FramebufferAccess`: bare generator, 110 ports paired, zero overrides;
+      `FramebufferAccessMem`: `tests/diff/framebuffer_access_stimulus.py` answers every
+      request in order from a lazily random plane image with a 0..4-cycle latency and
+      reports pixels in/out, reads per plane, `zFuncFail` cycles — ~300k pixels in,
+      ~300k colour reads, ~200k aux reads per 1e6-cycle seed) and at `--valid-density
+      0.9 --ready-density 0.12` (both rows), which is the run that wraps the counter.
+      `tests/test_framebuffer_access.py` (43 tests, 16 s) is a pysim run against a
+      Python model of the depth path, the eight compares, every src/dst factor incl.
+      the undefined codes, `divBy255`, the RGB565 expansion and the dsub ROM lookup
+      through `dither_tables.packed_index`, with per-cycle hold-rule / `zFuncFail` /
+      `busy` invariants and a random-latency plane memory. Findings:
+      * **The `dsubRbRom`/`dsubGRom` are not `Mem`s.** They are `Vec`s of 5120 constants
+        read with a dynamic index — a combinational 5120-way `case` in the Spinal
+        Verilog — so the `streamReadSync` clock-enable subtlety from `dither.py` does not
+        apply. Ported as two `amaranth.lib.memory.Memory` with `read_port(domain="comb")`
+        (yosys: `assign data = rom[addr]`), one `rb` image with two read ports for R and
+        B. The address is provably in range so Spinal's `default` arm is dead.
+      * **Depth bias wraps at 17 bits**: `compDepthPreBias.resize(17).asSInt +
+        zaColorSigned.resize(17)` is SInt(17) + SInt(17) = SInt(17), so 0xFFFF + 0x7FFF
+        goes negative and clamps to 0, not 0xFFFF. Reproduced (`[0:17].as_signed()`)
+        and pinned by `test_depth_bias_wraps_at_17_bits`.
+      * **Upstream ordering hazard, ported as-is.** `colorRsp` prefers `colorFetched`
+        but lets `colorBypass` (the head of `colorCtlBase`, i.e. the *next* pixel) go
+        whenever the fetched join is not valid yet, while the older read pixels sit in
+        `colorCtlRoutes(1).queue(32)`. A pixel with `needColorRead = 0` directly after
+        one with `needColorRead = 1` therefore overtakes it — even with the response on
+        the very next cycle (bypass reaches the mux after one queue, fetched after two
+        plus the response queue) — and the `passMeta` join pairs the read pixel with the
+        bypass's `data = 0` and the following pixel with the real word. Same for the aux
+        plane (`oldDepth = 0`). Within a triangle the mode bits are constant, so it only
+        bites at a blend->no-blend / Z->no-Z boundary that the rasterizer does not
+        naturally drain; `test_bypass_overtakes_an_outstanding_read` pins the as-ported
+        behaviour, the model tests keep read-needs constant per run, and the bare-
+        generator diff row flips the bits per pixel and stays clean (both sides do it).
+        Candidate for the v2 list, not for this port.
+      * `inFlightCount` is 5 bits for up to ~66 pixels between `io.input` and `fetched`,
+        so it wraps under back-pressure and `busy` reads low with 32 pixels inside
+        (`test_backpressure_fills_the_queues`; the back-pressure diff run reaches it).
+      * Chroma key is a pass-through here; the kill is in `PixelPipeline` on this
+        module's output.
 
 ### Phase 5
 - [x] tex_layout_tables  - [x] tmu_texel_decoder  - [x] tmu_texture_cache  - [ ] tmu  - [x] texture_mem  - [x] texture_mem_subsystem

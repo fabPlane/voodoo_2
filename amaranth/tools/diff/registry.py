@@ -302,6 +302,37 @@ REGISTRY: dict[str, DiffEntry] = {
         # equal from reset if the enables match exactly; they do, and the
         # harness resetting before every seed is what proves it.
     ),
+    # --- Phase 4 (agent p4-fbaccess owns avoodoo/pixel/framebuffer_access.py) --
+    "FramebufferAccess": DiffEntry(
+        spinal="FramebufferAccess",
+        factory="avoodoo.pixel.framebuffer_access:FramebufferAccess",
+        note="PixelPipeline.scala:226 — FramebufferAccess(c), Config.voodoo1(); the "
+             "StreamFork(5, synchronous = false) / StreamDemux / StreamJoin fetch "
+             "adapter, depth test and alpha blend with two comb-read dsub ROMs "
+             "(ext/SpinalVoodoo/src/voodoo/pixel/FramebufferAccess.scala -> "
+             "avoodoo/pixel/framebuffer_access.py)",
+        # No overrides: io_fbReadColorReq_* -> fb_read_color_req__*,
+        # io_zFuncFail -> z_func_fail, and the Fog.Output / Output payload
+        # leaves (io_input_payload_wDepth -> input__payload__w_depth,
+        # io_output_payload_newDepth -> output__payload__new_depth, the AFix
+        # leaf io_input_payload_depth) pair against the packed payloads.
+        # The bare generator drives the two read responses at random, which
+        # the module accepts whenever its 4-deep response queues have room
+        # (nothing parks: an unmatched response just waits for the next
+        # pixel that needs one, identically on both sides); the responder
+        # row below answers real requests instead.
+    ),
+    "FramebufferAccessMem": DiffEntry(
+        spinal="FramebufferAccessMem",
+        portmap="FramebufferAccess",
+        factory="avoodoo.pixel.framebuffer_access:FramebufferAccess",
+        note="FramebufferAccess behind tests/diff/framebuffer_access_stimulus.py: "
+             "a plane memory answers every fbReadColorReq / fbReadAuxReq beat in "
+             "order from a lazily random image, with random latency and idle "
+             "cycles, so each response is the one its pixel asked for and the "
+             "pixel/read/output counts are reported per seed",
+        responder="tests.diff.framebuffer_access_stimulus:plane_memory",
+    ),
     # --- Phase 3 ---------------------------------------------------------
     "SpanWalker": DiffEntry(
         spinal="SpanWalker",
