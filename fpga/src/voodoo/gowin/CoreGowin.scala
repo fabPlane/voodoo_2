@@ -31,15 +31,48 @@ case class CoreGowin(c: Config) extends Component {
     val memTex = master(Axi4(CoreGowin.texAxiConfig(c)))
     val hdmi = master(HdmiScanoutPort(c))
     val hostWedged = out Bool ()
+    val hostRequestTimeout = out Bool ()
+    val hostResponseTimeout = out Bool ()
+    val pipelineBusySources = out Bits (32 bits)
+    val scanoutPrefetchCount = out UInt (16 bits)
+    val scanoutReadReqCount = out UInt (16 bits)
+    val scanoutReadRspCount = out UInt (16 bits)
+    val scanoutCacheDebug = out Bits (64 bits)
+    val scanoutCacheReadAddr = out UInt (c.addressWidth)
+    val scanoutCacheExpectedAddr = out UInt (c.addressWidth)
+    val scanoutCacheRemaining = out UInt (log2Up(c.maxFbDims._1 + 1) bits)
+    val scanoutCacheOccupancy = out Bits (32 bits)
+    val scanoutFillHits = out UInt (32 bits)
+    val scanoutFillMisses = out UInt (32 bits)
+    val scanoutFillBurstCount = out UInt (32 bits)
+    val scanoutFillBurstBeats = out UInt (32 bits)
+    val scanoutFillStallCycles = out UInt (32 bits)
+    val scanoutSampleMeta = out Bits (32 bits)
+    val scanoutSampleHash = out Bits (32 bits)
+    val scanoutSampleLast = out Bits (32 bits)
+    val scanoutSampleWords = out Vec(Bits(32 bits), 12)
   }
 
   val core = Core(c)
-  val barBridge = AxiLite4ToBmbBridge(CoreGowin.barAddressWidth, Core.cpuBmbParams)
+  // A full-screen colour+aux clear is hundreds of thousands of 32-bit writes.
+  // Even with line-write combining it can legitimately keep a sync command
+  // behind the PCI FIFO for seconds. Preserve a watchdog for real lockups,
+  // but do not mistake normal framebuffer draining for a wedged host bus.
+  val barBridge = AxiLite4ToBmbBridge(
+    CoreGowin.barAddressWidth,
+    Core.cpuBmbParams,
+    timeoutLog2 = 30
+  )
 
   val fbArbiter = BmbArbiter(
     inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
     outputParameter = Core.fbMemBmbParams(c),
-    lowerFirstPriority = true
+    // The Console SDRAM bridge accepts one transaction at a time.  Fixed
+    // priority puts all three write ports ahead of the color/scanout and aux
+    // read ports, so a continuously rendering demo can starve HDMI forever.
+    // Round-robin retains transaction locking while guaranteeing scanout a
+    // turn between sustained write bursts.
+    lowerFirstPriority = false
   )
   val fbAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), CoreGowin.axiBurstLog2)
   val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreGowin.axiBurstLog2)
@@ -51,6 +84,26 @@ case class CoreGowin(c: Config) extends Component {
   io.bar <> barBridge.io.axi
   core.io.cpuBus <> barBridge.io.cpuBus
   io.hostWedged := barBridge.io.wedged
+  io.hostRequestTimeout := barBridge.io.requestTimeoutSeen
+  io.hostResponseTimeout := barBridge.io.responseTimeoutSeen
+  io.pipelineBusySources := core.io.pipelineBusySources
+  io.scanoutPrefetchCount := core.io.scanoutPrefetchCount
+  io.scanoutReadReqCount := core.io.scanoutReadReqCount
+  io.scanoutReadRspCount := core.io.scanoutReadRspCount
+  io.scanoutCacheDebug := core.io.scanoutCacheDebug
+  io.scanoutCacheReadAddr := core.io.scanoutCacheReadAddr
+  io.scanoutCacheExpectedAddr := core.io.scanoutCacheExpectedAddr
+  io.scanoutCacheRemaining := core.io.scanoutCacheRemaining
+  io.scanoutCacheOccupancy := core.io.scanoutCacheOccupancy
+  io.scanoutFillHits := core.io.scanoutFillHits
+  io.scanoutFillMisses := core.io.scanoutFillMisses
+  io.scanoutFillBurstCount := core.io.scanoutFillBurstCount
+  io.scanoutFillBurstBeats := core.io.scanoutFillBurstBeats
+  io.scanoutFillStallCycles := core.io.scanoutFillStallCycles
+  io.scanoutSampleMeta := core.io.scanoutSampleMeta
+  io.scanoutSampleHash := core.io.scanoutSampleHash
+  io.scanoutSampleLast := core.io.scanoutSampleLast
+  io.scanoutSampleWords := core.io.scanoutSampleWords
 
   fbArbiter.io.inputs(0) <> core.io.fbMemWrite
   fbArbiter.io.inputs(1) <> core.io.fbColorWriteMem

@@ -1,9 +1,9 @@
 # SpinalVoodoo → Gowin port: handoff brief
 
-Written 2026-09-17 for whoever (human or AI) takes the Gowin port from
-"generates Verilog" to "renders on the Sipeed Tang Mega 138K Pro Dock".
-Everything below was checked on the machine that wrote it; anything not
-checked is marked as such.
+Written 2026-09-17. The board in hand is the **Tang Retro Console 138K**
+(GW5AST-LV138PG484A **version C**), not the 676-ball Pro Dock. Take this from
+"generates Verilog" to "HDMI menu on the Console". Everything below was
+checked on the machine that wrote it; anything not checked is marked as such.
 
 ## 1. What this is
 
@@ -16,25 +16,39 @@ board ports under `fpga/` without modifying upstream:
 |---|---|---|---|---|
 | `voodoo.artix` | Artix-7 card (own PCB) | AXI4-Lite | 2× AXI4 → MIG | parallel RGB |
 | `voodoo.gowin` | Tang Mega 138K Pro Dock | Gowin PCIe TLP → AXI4-Lite | AXI4 → Gowin DDR3 native UI | parallel RGB → `DVI_TX_Top` |
+| `voodoo.gowin` | **Tang Retro Console 138K (live)** | USB-pad menu, RISC-V Quake SW/Glide | AXI4 → Gowin DDR3 native UI | parallel RGB → `DVI_TX_Top` |
 
 The Gowin port reuses the Artix bridges (`AxiLite4ToBmbBridge`,
-`BmbToAxi4Mem`) and adds only what Gowin's vendor IP needs.
+`BmbToAxi4Mem`) and adds only what Gowin's vendor IP needs. The Console top
+(`TangConsole138k`) has no PCIe.
 
 ## 2. State on 2026-09-17 (verified)
 
-From `fpga/`:
+From `fpga/` on this Mac (no `gw_sh`):
 
 | Step | Command | Result |
 |---|---|---|
-| Type-check both ports | `make compile` | passes (6 s warm) |
-| Generate Gowin Verilog | `make rtl-gowin` | `rtl/gowin/TangMega138kPro.v`, 9.9 MB, plus 11 `.bin` ROM sidecars |
-| Verilator lint | `make lint` | clean (Verilator 5.052) |
-| SpinalSim tests | `make test` | 6/6 pass: 3× `AxiLite4ToBmbBridgeTest`, 3× `PcieTlpBarTargetTest` (TLP write, TLP read + CplD, 0x250 window) |
-| Gowin bitstream | `make gowin` | **not run**: `gw_sh` is not installed here and `hw/gowin/ip/` is empty |
-| Board bring-up | — | **not done** |
+| Type-check | `make compile` | passes |
+| Console Verilog | `make rtl-console` | `rtl/gowin/TangConsole138k.v` (two-item Quake menu) |
+| Dock Verilog | `make rtl-gowin` | `rtl/gowin/TangMega138kPro.v` (PCIe path; not the live board) |
+| SpinalSim tests | `make test` | TLP BAR + AXI-Lite tests pass |
+| Console bitstream | `make gowin-console` | **not run**: no Gowin EDA here, `hw/gowin/ip/` is empty |
+| Board bring-up | — | **blocked on bitstream** |
 
-Nothing in `fpga/` is committed yet (`git status` shows `?? fpga/`). Commit it
-before you start so you have a baseline to diff against.
+Live SD card (`/Volumes/NO NAME/`, factory TangCore FAT32):
+
+- Stock `cores/console138k/{nes,snes,gba,sms,md,pc,monitor}tang.bin` **untouched**.
+- Staging copy at `voodoo/` (`README.txt`, CoreSim/86Box stills, packed traces). **Not** a TangCore core.
+- TangCore only lists `cores/console138k/*.bin`. Do **not** drop a dummy `voodootang.bin`; the Console would fail to configure.
+- There is no `cores/console138k/voodootang.bin` until another machine runs Gowin.
+
+On a machine with Gowin EDA 1.9.10+:
+
+1. Generate PLL / DDR3 native / DVI TX IP for **GW5AST-LV138PG484AC1/I0, device version C**. Skip PCIe. See `ip.md`.
+2. `cd fpga && make gowin-console`
+3. Copy `spinalvoodoo_tang_console_138k.bin` to `cores/console138k/voodootang.bin` on the card.
+
+HDMI 640×480. USB pad: D-pad move, A run, B back. See `hardware/tang-console-138k/README.md`.
 
 Toolchain quirks that cost time (also in `fpga/README.md`):
 
@@ -51,44 +65,43 @@ Toolchain quirks that cost time (also in `fpga/README.md`):
 
 ```
 fpga/
-  project.scala                       scala-cli project; pulls ../ext/SpinalVoodoo/src as source
-  Makefile                            compile / rtl-gowin / lint / test / gowin
+  Makefile                            compile / rtl-console / gowin-console / …
   src/voodoo/gowin/
-    TangMega138kPro.scala             SpinalHDL top: TLP BAR → CDC → CoreGowin → DDR bridge, RGB out, LEDs
-    CoreGowin.scala                   Core + BAR bridge + 5-way fb BMB arbiter + BMB→AXI4 + texture relocate
-    PcieTlpBarTarget.scala            Gowin TLP (256-bit, 8 valid bits) BAR0 → AXI4-Lite, 1 MiB window at 0x250
-    Axi4ToGowinDdrNative.scala        one-outstanding AXI4 (32-bit) → Gowin DDR3 native UI (256-bit)
-    AxiLite4ClockCrossing.scala       StreamFifoCC-based AXI-Lite CDC (100 MHz TLP ↔ DDR UI clock)
-    GowinAddressMap.scala             fb at 0, 4 MiB; textures at 4 MiB, 8 MiB; DDR 29-bit addr / 256-bit data
-    CoreGowinGen.scala                generators; SYNC active-high reset for all clock domains
-  test/voodoo/gowin/PcieTlpBarTargetTest.scala
+    TangConsole138k.scala             Console top: DDR wait → HDMI menu (Quake SW / Glide)
+    Bl616Link.scala                   TangCore UART HID (command 0x09)
+    CoreGowin.scala                   Core + BMB→AXI4 + texture relocate (shared with dock)
+    Axi4ToGowinDdrNative.scala        one-outstanding AXI4 → Gowin DDR3 native UI
+    GowinAddressMap.scala             fb at 0, 4 MiB; textures at 4 MiB
   hw/gowin/
-    build.tcl                         gw_sh script; top = board_top; device GW5AST-138B GW5AST-LV138FPG676AES
-    src/board_top.v                   vendor-IP wrapper (PLLs, PCIe, DDR3, DVI TX) around TangMega138kPro
-    tang_mega_138k_pro.cst            86 IO_LOC lines: clk50, pcie_rstn, LEDs, TMDS, full DDR3 pinout
-    tang_mega_138k_pro.sdc            clk50 / clk100 / clk400 / hdmi serial+pixel, all async groups
-    ip.md                             the four IP cores to generate, with required port names
+    ip.md                             PLL / DDR3 native / DVI TX; skip PCIe for Console
     ip/                               EMPTY — generated IP Verilog goes here as ip/<name>/*.v
+    console/
+      board_top.v                     PLLs, DDR3, DVI TX around TangConsole138k; no PCIe
+      build_console.tcl               device GW5AST-LV138PG484AC1/I0 -device_version C
+      tang_console_138k.cst/.sdc
+      (packed traces unused by the two-item Quake menu)
 ```
+
+Pro Dock (676-ball, PCIe) files stay under `hw/gowin/` (`build.tcl`,
+`src/board_top.v`, `tang_mega_138k_pro.cst`). Do not use those for this card.
 
 ## 4. The work, in order
 
 ### 4.1 Generate the vendor IP (Gowin EDA GUI, IP Core Generator)
 
-Full parameters are in `ip.md`. Summary:
+Device **GW5AST-LV138PG484AC1/I0**, version **C**. Full parameters in `ip.md`.
+**Do not generate the PCIe core** for the Console.
 
 | IP | Module name | Key settings |
 |---|---|---|
 | PLL | `Gowin_PLL_Sys` | 50 MHz in → `clkout0` 100 MHz, `clkout1` 400 MHz, `lock` |
 | PLL | `Gowin_PLL_Hdmi` | 50 MHz in → `clkout0` 126 MHz (5× 25.2 MHz), `lock` |
-| PCIe | `PCIE_Controller_Top` | Endpoint, Gen2 x4, TLP clock 100 MHz, data width **256**, BAR0 32-bit memory, largest size (1 MiB) |
 | DDR3 | `DDR3_Memory_Interface_Top` | **native** UI (not AXI), 32-bit DDR3, data 256, addr 29, `memory_clk` 400 MHz, `clk` 50 MHz |
 | DVI | `DVI_TX_Top` | RGB888 in, `I_serial_clk` = 5× pixel |
 
-Port names must match the instantiations in `board_top.v`. If Gowin's
-generator emits different names (it has done so across EDA versions; the PCIe
-IP may come out wrapped as `SerDes_Top`), write a thin Verilog shim in
-`ip/<name>/` rather than editing `board_top.v` — keeps the wrapper stable.
+Port names must match the instantiations in `hw/gowin/console/board_top.v`.
+If Gowin's generator emits different names, write a thin Verilog shim in
+`ip/<name>/` rather than editing `board_top.v`.
 
 Use the same Gowin EDA version for IP generation and `gw_sh`. The DDR3 IP
 changed after 1.9.10.
@@ -96,9 +109,13 @@ changed after 1.9.10.
 ### 4.2 Build the bitstream
 
 ```
-make rtl-gowin
-make gowin           # cd hw/gowin && gw_sh build.tcl
+make rtl-console
+make gowin-console           # cd hw/gowin/console && gw_sh build_console.tcl
 ```
+
+Copy `hw/gowin/console/impl/pnr/spinalvoodoo_tang_console_138k.bin`
+(exact impl path may vary with EDA version) to the SD card as
+`cores/console138k/voodootang.bin`. Leave the stock NES/SNES/… bins alone.
 
 Expect the first synthesis to surface things Verilator does not:
 
@@ -126,109 +143,78 @@ Expect the first synthesis to surface things Verilator does not:
   report and record LUT/BSRAM/DSP in `fpga/README.md`; that number is also
   what the Artix-100T decision depends on.
 
-### 4.3 Bring-up on the dock
+### 4.3 Bring-up on the Console
 
-Program with the Gowin programmer or `openFPGALoader -c ft2232`.
-**Cold-plug** the PCIe finger; Gowin's IP does not hot-plug, and the Sipeed
-demo assumes the FPGA is configured before the host enumerates.
+Program via TangCore (the `.bin` on the SD card) or `openFPGALoader` once the
+BL616 is in GAO-bridge / MCU USB JTAG mode. TangCore’s Select core list only
+includes files already under `cores/console138k/`.
 
-LEDs (`led_n`, active low): `[0]` heartbeat, `[1]` PCIe link, `[2]` DDR3
-calibration done, `[3]` host bridge wedged. Order of checks:
+LEDs (`led_n`, active low): `[0]` heartbeat, `[1]` info page open.
+Order of checks:
 
 1. Heartbeat blinks → PLL locked, fabric clock alive.
-2. Calib LED on → DDR3 trained. If not, revisit DDR3 IP timing vs. the actual
-   chips on the module (ip.md assumes H5TQ4G63EFR).
-3. `lspci` shows the endpoint (bring-up IDs 10ee:0007). If the link LED is on
-   but nothing enumerates, retry a cold boot — enumeration happens before the
-   bitstream loads from flash unless you have flashed it.
-4. Host access: map BAR0 (1 MiB) via `/sys/bus/pci/devices/<bdf>/resource0`.
-   Write the megabyte index to **BAR0+0x250**, then the 1 MiB window maps
-   `[index<<20, +1 MiB)` of the 16 MiB Voodoo register/LFB/texture space.
-   **BAR0+0x254** reads the bridge status word (bit 0 wedged, bit 1 request
-   timeout, bit 2 response timeout, bit 4 in flight); it never hangs, so poll
-   it first. Semantics are in `src/voodoo/artix/CoreArtix.scala:20-40`.
-5. Video: DVI TX pins per Sipeed's dock schematic. LiteX found DVI TX dead
-   on some docks and used the DVI RX pins as output instead; if the monitor
-   stays dark with a valid HDMI pixel clock, swap the TMDS locations in the
-   CST. With DDR3 up, the scanout reads the front buffer at fb base 0 and
-   displays 640×480 regardless of whether the host has done anything, so a
-   seeded framebuffer (see next step) is the video smoke test.
+2. HDMI 640×480 text menu after DDR3 trains. If the monitor stays dark, swap
+   TMDS locations in `console/tang_console_138k.cst` (same LiteX DVI TX/RX
+   gotcha as the dock). If it never leaves a blank screen, DDR calib failed —
+   regenerate DDR3 IP for the chips actually on the Console module.
+3. USB pad (SNES layout from BL616 command 0x09): D-pad moves, A/Start opens
+   the highlighted info page, B/Select returns. Onboard USER cycles, RESET
+   selects. Live play waits for A25 (or a soft RV32) on the AXI-lite BAR.
+4. Menu: Quake RISC-V SW, Quake RISC-V Glide. Same engine
+   (`sw/quake-riscv`), two vid backends. A25 is not in this fabric yet.
 
-### 4.4 Host-side tool (nothing exists for PCIe yet)
+Packed Glide traces on the SD card (`voodoo/traces/`) are leftover from the
+earlier splash work. The Console menu does not replay them.
 
-Upstream host tools are all DE10 HPS `/dev/mem` mmaps at `0xC0000000`
-(`ext/SpinalVoodoo/tools/de10-*.c`, `de10-trace-replay.cpp`). Port
-`de10-trace-replay.cpp` to a `pci-trace-replay`:
+### 4.4 Pro Dock / PCIe (not the live board)
 
-- Replace the `/dev/mem` mmap with an mmap of `resource0`.
-- Wrap every register/LFB access in a helper that sets the 0x250 window when
-  the target megabyte changes. Trace replays cross megabytes constantly
-  (registers at 0, LFB at 4 MiB, textures at 8 MiB in the Voodoo map), so
-  cache the current window and only write when it changes.
-- Texture and framebuffer physical addresses differ from DE10: see
-  `GowinAddressMap.scala` (fb 0, tex 4 MiB in DDR3). `kDefaultFbBase` /
-  `kTextureOffset` in the DE10 tool are HPS-side and don't apply.
-- Keep `-DSIM_INTERFACE` style separation so the same replay drives the
-  Verilator `TangMega138kPro` model if you want to compare.
-
-Then replay `ext/SpinalVoodoo/traces/*.bin` (start with the 3dfx logo, which is
-exactly known-good: CoreSim matches 86Box on 0/307,200 pixels) and read the
-framebuffer back over the same window for a pixel diff.
+The 676-ball Tang Mega 138K Pro path is `make gowin` / `hw/gowin/build.tcl`,
+device `GW5AST-LV138FPG676AES`. That needs the PCIe IP as well. Host tools are
+still DE10 `/dev/mem`; a `pci-trace-replay` wrapping BAR0+0x250 does not exist
+yet. Skip this until the Console menu works.
 
 ## 5. Known risks (real, not hypothetical)
 
+- **Wrong package.** Console is PG484 version **C**. Pro Dock is FPG676
+  version B. Mixing CST/IP between them will fail DDR calib or not fit.
 - **Heavy traces wedge the sim.** With this SpinalVoodoo tree's HDMI scanout
   in `Core`, CoreSim on the Screamer 2 / Quake / Valley of Ra traces stalls: a
   PCI write to a remapped triangle-setup register (`0x2000e0` / `0x20008c`)
-  never completes after 5M cycles. The logo and `test_alphabet` finish. This
-  is upstream `Core`, not the Gowin bridge, but it will show up on the board
-  as the wedge LED lighting mid-frame, and the 0x254 status word will report
-  a request timeout. Treat "wedge LED on with the logo trace" as a bridge bug
-  and "wedge LED on with Quake" as this known upstream issue.
+  never completes after 5M cycles. The logo, `test04`, `test16`, and
+  `test_alphabet` finish. That is why the Console menu is RISC-V Quake
+  (software + Glide MMIO), not a packed game-trace replay.
 - **`Axi4ToGowinDdrNative` is one-outstanding and serialises fb/tex.** It's
   correct and simple; every AXI burst is 256-byte aligned/extended
   (`axiBurstLog2`). Expect low fill rate. Pipelining it (multiple outstanding
-  native commands, separate read/write paths) is the obvious performance
-  follow-up once pixels are correct — not before.
-- **Gowin BAR0 is 1 MiB max**, hence the window register. Any host software
-  that assumes a flat 16 MiB BAR (the Artix path) must go through the window.
-- **TLP framing assumptions** in `PcieTlpBarTarget`: 256-bit native data with
-  header dword 0 in bits 255:224; 32-bit MRd/MWr only, one DW; no 64-bit
-  addressing; completions sized to one DW. Verified in sim against the
-  encoding in IPUG1020, not against the real IP. If the first host read
-  returns garbage or the host gets a completion timeout, dump `tl_rx_data`
-  with an ILA (Gowin Analyzer Oscilloscope) before touching the FSM.
-- **CST pin table** was transcribed from the Sipeed reference project. It has
-  not been cross-checked against a board. Do the DDR3 pins first — a single
-  swapped DQS pair fails calibration silently.
+  native commands, separate read/write paths) is the follow-up once pixels
+  are correct — not before.
+- **CST pin table** for the Console HDMI/clock/LED pins was taken from
+  working TangCore cores. DDR3 pins must still match the module. A swapped
+  DQS pair fails calibration silently.
 
 ## 6. Acceptance
 
-The port is done when, on the dock:
+The Console port is done when:
 
-1. All four LEDs report the right thing after cold plug (heartbeat, link,
-   calib, not wedged).
-2. `pci-trace-replay traces/logo.bin` runs to completion with 0x254 bit 0 clear.
-3. The framebuffer read back over BAR0 matches `ext/SpinalVoodoo/test-output/logo_sim.png`
-   pixel-for-pixel (that's the 86Box-verified reference).
-4. The monitor on the DVI port shows the same image.
+1. `cores/console138k/voodootang.bin` appears in TangCore Select core (or
+   the bitstream is programmed over MCU JTAG) and LED0 heartbeats.
+2. HDMI shows the text menu after DDR3 trains.
+3. USB pad walks the two Quake entries and A opens the matching info page.
+4. LED1 lights on an info page. Live SW/Glide play is `sw/quake-riscv` once
+   A25 (or a soft RV32) is on the BAR.
 
-Then commit `fpga/hw/gowin/ip/` shims (not the generated IP if the licence
-forbids it — Gowin IP is fine to commit, the PCIe core needs the free licence
-for GW5AST but the generated Verilog is redistributable) and update
-`fpga/README.md` with the EDA version used.
+Then record the Gowin EDA version in `fpga/README.md`. Commit IP shims, not
+generated vendor files if the licence forbids it.
 
 ## 7. Quick reference
 
 ```bash
 cd fpga
-make compile          # 6 s
-make rtl-gowin        # ~1 min, writes rtl/gowin/TangMega138kPro.v
-make lint             # Verilator, ~6 s
-make test             # 6 SpinalSim tests, ~15 s
-make gowin            # needs gw_sh + hw/gowin/ip/*
+make compile              # type-check
+make rtl-console          # TangConsole138k.v
+make test
+make gowin-console        # needs gw_sh + hw/gowin/ip/* (PLL, DDR3, DVI; no PCIe)
+# copy spinalvoodoo_tang_console_138k.bin → cores/console138k/voodootang.bin
 ```
 
-Upstream reference flows (in `ext/SpinalVoodoo`, need `scala-cli --power` and
-JDK 17): `make native/sim/check/logo` is the 86Box-vs-CoreSim pixel check the
-acceptance criterion above mirrors.
+Device: `GW5AST-LV138PG484AC1/I0 -device_version C`.

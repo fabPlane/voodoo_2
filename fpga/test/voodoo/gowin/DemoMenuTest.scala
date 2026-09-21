@@ -124,6 +124,22 @@ class DemoMenuTest extends AnyFunSuite {
     }
   }
 
+  test("USER/Down cannot escape from a running demo") {
+    compiled.doSim("demo-menu-down-back") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.io.ready #= true
+      dut.clockDomain.waitSampling(20)
+
+      pulse(dut, SnesPad.A)
+      assert(dut.io.playing.toBoolean)
+      pulse(dut, SnesPad.Down)
+      assert(dut.io.playing.toBoolean)
+      pulse(dut, SnesPad.B)
+      assert(!dut.io.playing.toBoolean)
+    }
+  }
+
   test("Glide test04 starts the SST player") {
     compiled.doSim("demo-menu-test04") { dut =>
       dut.clockDomain.forkStimulus(10)

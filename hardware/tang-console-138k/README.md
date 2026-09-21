@@ -89,9 +89,11 @@ it for roughly 84 ms after reset and latches `DBG=1` until the next reload. In
 this mode:
 
 - MODE and RESET are displayed but cannot generate menu actions.
-- The TangCore `iosys_hid` block is held in reset, so the BL616 cannot inject
-  HID state or switch the Voodoo menu through that UART.
-- The HUD remains visible over a playing demo.
+- The TangCore parser remains alive as a passive traffic monitor, but both of
+  its HID buses are forced to zero before the Voodoo menu. The diagnostic UART
+  also owns FPGA TX, so the BL616 cannot control or switch the diagnostic core.
+- The HUD remains visible over a playing demo in both normal and diagnostic
+  modes, so a black renderer frame still exposes player/BAR/UART progress.
 - Both LEDs blink together during DDR calibration, alternate when healthy, and
   stay lit on a core wedge.
 - FTDI channel B carries a compact, DDR-independent `V2BOOT ...` health line at
@@ -115,7 +117,35 @@ monitor requests 500 kbaud from FTDI to sample the 2 Mbaud FPGA wire. Add
 `--hex` if the output is not readable; that distinguishes framing/baud trouble
 from no FPGA traffic. Normal boots still use the BL616 TangCore protocol, and
 the case MODE button remains a local FPGA menu-down pulse after the startup
-window. The wrapper permanently ties `joy1` and `joy2` toward the MCU to zero.
+window. When installed as `monitor.bin`, the core reports a short synthetic
+Select+Right chord once per second until the BL616 returns its first USB HID
+command 0x09. The retry begins independently of the receive-side link flag
+because the MCU's startup query can occur while the FPGA is still resetting.
+This dismisses TangCore's otherwise invisible startup OSD even when its
+core-ID/config redraw races the first chord. The retries stop on the first HID
+frame, so the FPGA cannot steal controller presses afterward.
+Holding MODE selects the highlighted entry, so the local fallback is
+usable even when BL616 USB HID is unavailable. MODE/Down cannot exit a running
+demo; only B/Select can. The wrapper reports zero `joy1`/`joy2` state after
+the HID handoff succeeds.
+
+For a volatile load through the debugger USB (no flash or SD-card write), keep
+both case buttons released and run this in a second Terminal:
+
+```
+hardware/tang-console-138k/program_debug_sram.sh
+```
+
+Do not hold MODE during programming: on the tested Console it prevents the
+GW5AST from entering user mode after the payload reaches 100% (programmer
+status `0x00004000`, USER_CODE zero). Wait for the programmer to report the
+bitstream's nonzero USER_CODE, then start the GUI or terminal monitor. The
+direct FTDI line is intentionally generated from the independent
+50 MHz control clock. The renderer now uses a dedicated 15 MHz divided clock below
+its routed Fmax and crosses framebuffer/texture AXI traffic into the 75 MHz DDR
+UI through a compact bundled-data toggle bridge. HDMI retains standard 640x480 timing and
+repeats each sampled source pixel four times horizontally to leave scanout
+bandwidth margin.
 
 TangCore’s menu will only list the core if the BL616 firmware sees that
 filename; if it does not, program the bitstream over the MCU USB JTAG

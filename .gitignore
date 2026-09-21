@@ -4,8 +4,12 @@ fpga/.bsp/
 fpga/rtl/
 fpga/simWorkspace/
 fpga/hw/gowin/impl/
+fpga/hw/gowin/console/impl/
+fpga/hw/gowin/console-sdram/impl/
 fpga/hw/gowin/ip/**/*.v
 fpga/hw/gowin/ip/**/*.vo
+fpga/test/voodoo/gowin/.scala-build/
+fpga/test/voodoo/gowin/.bsp/
 __pycache__/
 
 # Official Quake shareware (pak0.pak ~18 MiB) and unpack cache

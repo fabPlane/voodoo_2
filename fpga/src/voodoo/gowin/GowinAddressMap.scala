@@ -15,4 +15,22 @@ object GowinAddressMap {
 
   val ddrNativeAddrWidth = 29
   val ddrNativeDataWidth = 256
+  // Console 138K only uses the first x16 DDR3 chip (LiteX / nand2mario).
+  // Gowin 1:4 native UI is 128-bit / 28-bit address.
+  val consoleDdrNativeAddrWidth = 28
+  val consoleDdrNativeDataWidth = 128
+
+  /** Soft RV32 / Andes A25 view. BAR is identity-mapped so `sst_set_base(0)`
+    * matches host_probe / vid_glide. BarRv32 reset firmware stays in 32 KiB
+    * BRAM. The A25 ELF (`sw/quake-riscv/build-rv32/quake-sw`) wants 32 MiB of
+    * DDR at cpuRamBase (phys 16 MiB) plus shareware pak0 at cpuPakBase.
+    */
+  val cpuBarBase = 0x0L
+  val cpuRamBase = 0x80000000L
+  val cpuRamBytes = 32 * 1024
+  val cpuDdrPhys = 16 * 1024 * 1024
+  val cpuDdrBytes = 32 * 1024 * 1024
+  val cpuPakBase = 0x82000000L
+  val cpuPakBytes = 20 * 1024 * 1024
+  val cpuHidBase = 0x10000000L
 }

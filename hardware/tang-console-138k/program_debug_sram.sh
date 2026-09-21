@@ -17,7 +17,8 @@ fi
 BITSTREAM_DIR=$(CDPATH= cd -- "$(dirname -- "$BITSTREAM")" && pwd)
 BITSTREAM="$BITSTREAM_DIR/$(basename -- "$BITSTREAM")"
 
-echo "Hold the case MODE button now and keep holding until the LEDs alternate." >&2
+echo "Keep both case buttons RELEASED while SRAM programming completes." >&2
+echo "Holding MODE prevents the GW5AST from entering user mode (status 0x00004000)." >&2
 exec "$PROGRAMMER" \
     --device GW5AST-138C \
     --operation_index 2 \

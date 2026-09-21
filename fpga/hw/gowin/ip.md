@@ -5,7 +5,9 @@ Generate these in Gowin EDA → IP Core Generator and drop the Verilog into
 `src/board_top.v`. If a generated wrapper uses longer names (for example
 `PCIE_Controller_Top_pcie_rstn_i`), add a thin Verilog shim.
 
-Device: `GW5AST-LV138FPG676AES` / `GW5AST-138B`.
+Device: `GW5AST-LV138FPG676AES` / `GW5AST-138B` for the Pro Dock.
+For the Tang Retro Console 138K use `GW5AST-LV138PG484AC1/I0` / version **C**,
+and skip the PCIe core (`fpga/hw/gowin/console/build_console.tcl`).
 
 ## Gowin_PLL_Sys
 

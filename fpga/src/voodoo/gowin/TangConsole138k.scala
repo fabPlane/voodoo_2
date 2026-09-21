@@ -28,6 +28,8 @@ case class TangConsole138k(c: Config) extends Component {
         dataWidth = GowinAddressMap.consoleDdrNativeDataWidth
       )
     )
+    val ddrClk = in Bool ()
+    val ddrReset = in Bool ()
 
     /** BL616 USB HID pads (TangCore cmd 0x09). UART lives in Verilog iosys_hid. */
     val hid1 = in Bits (16 bits)
@@ -59,17 +61,36 @@ case class TangConsole138k(c: Config) extends Component {
     val ledWedge = out Bool ()
     val ledHeartbeat = out Bool ()
 
+    // Sixteen read-only 32-bit pages selected through GW_JTAG ER1 by the
+    // board wrapper.  Keeping the hard JTAG primitive outside generated RTL
+    // lets the same core remain usable on boards without that primitive.
+    val jtagDebug = out Vec(Bits(32 bits), 16)
+    val jtagFramebuffer = out Vec(Bits(32 bits), 16)
+    val jtagWrites = out Vec(Bits(32 bits), 16)
+
     /** Full-speed CDC gadget on Soft-USB Type-C (S1). */
     val usbOnline = in Bool ()
     val debugTx = master(Flow(Bits(8 bits)))
   }
 
   val core = CoreGowin(c)
+  val coreCd = ClockDomain.current
+  val ddrCd = ClockDomain(
+    clock = io.ddrClk,
+    reset = io.ddrReset,
+    config = ClockDomain.current.config
+  )
   val ddr = Axi4ToGowinDdrNative(
     CoreGowin.fbAxiConfig(c),
     CoreGowin.texAxiConfig(c),
     nativeDataWidth = GowinAddressMap.consoleDdrNativeDataWidth,
     nativeAddrWidth = GowinAddressMap.consoleDdrNativeAddrWidth
+  )
+  val ddrCc = GowinDdrNativeClockCrossing(
+    GowinAddressMap.consoleDdrNativeAddrWidth,
+    GowinAddressMap.consoleDdrNativeDataWidth,
+    coreCd,
+    ddrCd
   )
   val player = DemoAxiLitePlayer(DemoTraceRom.banks(), DemoCatalog.playerLoopAt)
   val ctrlCd = ClockDomain(
@@ -123,7 +144,10 @@ case class TangConsole138k(c: Config) extends Component {
   io.debugMode := ctrl.buttons.io.debugMode
 
   val usePlayer = BufferCC(ctrl.menu.io.playing, init = False)
-  player.io.enable := usePlayer
+  // Stop issuing commands after the first bridge timeout. The bridge answers
+  // subsequent writes with immediate SLVERR, which otherwise makes the player
+  // counters race and hides the command that actually failed.
+  player.io.enable := usePlayer && !core.io.hostWedged
   player.io.loop := BufferCC(ctrl.loopNow, init = False)
   player.io.select := BufferCC(ctrl.playerSel, U(0, player.io.select.getWidth bits))
   player.io.start := PulseCCByToggle(ctrl.menu.io.start, ctrlCd, ClockDomain.current)
@@ -131,7 +155,8 @@ case class TangConsole138k(c: Config) extends Component {
 
   ddr.io.fb << core.io.memFb
   ddr.io.tex << core.io.memTex
-  io.ddr <> ddr.io.ddr
+  ddrCc.io.input <> ddr.io.ddr
+  io.ddr <> ddrCc.io.output
 
   core.io.hdmi.clock := io.hdmiClk
   core.io.hdmi.reset := io.hdmiReset
@@ -139,12 +164,51 @@ case class TangConsole138k(c: Config) extends Component {
   val lastBarAddr = Reg(UInt(32 bits)) init (0)
   val lastBarData = Reg(Bits(32 bits)) init (0)
   val barWrites = Reg(UInt(16 bits)) init (0)
-  when(core.io.bar.aw.fire) {
+  when(core.io.bar.aw.fire && !core.io.hostWedged) {
     lastBarAddr := core.io.bar.aw.addr.resized
   }
-  when(core.io.bar.w.fire) {
+  when(core.io.bar.w.fire && !core.io.hostWedged) {
     lastBarData := core.io.bar.w.data
     barWrites := barWrites + 1
+  }
+  val wedgePc = Reg(UInt(32 bits)) init (0)
+  val wedgeBusySources = Reg(Bits(32 bits)) init (0)
+  val ddrTransactions = Reg(UInt(16 bits)) init (0)
+  val ddrReadIssues = Reg(UInt(16 bits)) init (0)
+  val ddrReadResponses = Reg(UInt(16 bits)) init (0)
+  val ddrWriteIssues = Reg(UInt(16 bits)) init (0)
+  val ddrNonzeroWriteCount = Reg(UInt(32 bits)) init (0)
+  val ddrLastWriteAddr = Reg(UInt(32 bits)) init (0)
+  val ddrLastWriteData = Reg(Bits(128 bits)) init (0)
+  val ddrLastWriteMask = Reg(Bits(16 bits)) init (0)
+  val wedgeDdrTransactions = Reg(UInt(16 bits)) init (0)
+  val wedgePhysicalTransactions = Reg(UInt(16 bits)) init (0)
+  val wedgeDdrStatus = Reg(Bits(8 bits)) init (0)
+  when(ddr.io.ddr.cmdEn && ddr.io.ddr.cmdReady) {
+    ddrTransactions := ddrTransactions + 1
+    when(ddr.io.ddr.cmd === GowinDdrNative.cmdRead) {
+      ddrReadIssues := ddrReadIssues + 1
+    }.elsewhen(ddr.io.ddr.cmd === GowinDdrNative.cmdWrite) {
+      ddrWriteIssues := ddrWriteIssues + 1
+      when(ddr.io.ddr.wrData.orR) {
+        ddrNonzeroWriteCount := ddrNonzeroWriteCount + 1
+        // Retain the last meaningful write across the long zero-valued
+        // color/aux clears so JTAG can identify its memory region and data.
+        ddrLastWriteAddr := ddr.io.ddr.addr.resize(32 bits)
+        ddrLastWriteData := ddr.io.ddr.wrData
+        ddrLastWriteMask := ddr.io.ddr.wrDataMask
+      }
+    }
+  }
+  when(ddr.io.ddr.rdDataValid) {
+    ddrReadResponses := ddrReadResponses + 1
+  }
+  when(!core.io.hostWedged) {
+    wedgePc := player.io.index.resize(32 bits)
+    wedgeBusySources := core.io.pipelineBusySources
+    wedgeDdrTransactions := ddrTransactions
+    wedgePhysicalTransactions := ddrCc.io.debugPhysicalCount
+    wedgeDdrStatus := ddrCc.io.debugStatus
   }
 
   val hdmiCd = ClockDomain(
@@ -172,7 +236,10 @@ case class TangConsole138k(c: Config) extends Component {
     hud.io.de := scan.io.active
     hud.io.calib := BufferCC(io.ddr.initCalibComplete, init = False)
     hud.io.wedge := BufferCC(core.io.hostWedged, init = False)
-    hud.io.usbOnline := BufferCC(io.usbOnline, init = False)
+    // The core's underflow output is sticky until reset, so UF=1 is direct
+    // evidence that moving horizontal bands came from scanout starvation.
+    hud.io.underflow := BufferCC(core.io.hdmi.underflow, init = False)
+    hud.io.fifoLevel := BufferCC(core.io.hdmi.fifoLevel.resize(16 bits), U(0, 16 bits))
     hud.io.overlay := overlay
     hud.io.playing := BufferCC(ctrl.menu.io.playing, init = False)
     hud.io.debugMode := BufferCC(ctrl.buttons.io.debugMode, init = False)
@@ -180,48 +247,121 @@ case class TangConsole138k(c: Config) extends Component {
     hud.io.resetKey := BufferCC(ctrl.buttons.io.resetPressed, init = False)
     hud.io.cursor := BufferCC(ctrl.cursor4, U(0, 4 bits))
     hud.io.hid := BufferCC(ctrl.hid16, B(0, 16 bits))
-    hud.io.pc := BufferCC(player.io.index.resize(32 bits), U(0, 32 bits))
-    hud.io.barAddr := BufferCC(lastBarAddr, U(0, 32 bits))
-    hud.io.barData := BufferCC(lastBarData, B(0, 32 bits))
-    hud.io.barCount := BufferCC(barWrites, U(0, 16 bits))
+    hud.io.pc := BufferCC(wedgePc, U(0, 32 bits))
+    hud.io.scanoutPrefetchCount := BufferCC(core.io.scanoutPrefetchCount, U(0, 16 bits))
+    hud.io.scanoutReadReqCount := BufferCC(core.io.scanoutReadReqCount, U(0, 16 bits))
+    hud.io.scanoutReadRspCount := BufferCC(core.io.scanoutReadRspCount, U(0, 16 bits))
+    hud.io.readIssueCount := BufferCC(ddrReadIssues, U(0, 16 bits))
+    hud.io.physicalReadCount := BufferCC(ddrCc.io.debugPhysicalReadCount, U(0, 16 bits))
+    hud.io.physicalReadRspCount := BufferCC(ddrCc.io.debugPhysicalReadRspCount, U(0, 16 bits))
+    hud.io.cdcReadRspCount := BufferCC(ddrReadResponses, U(0, 16 bits))
+    hud.io.ddrStatus := BufferCC(wedgeDdrStatus, B(0, 8 bits))
     hud.io.uartLink := BufferCC(io.uartLink, init = False)
     hud.io.uartLastCmd := BufferCC(io.uartLastCmd, B(0, 8 bits))
     hud.io.uartRxCount := BufferCC(io.uartRxCount, U(0, 16 bits))
     hud.io.uartHidCount := BufferCC(io.uartHidCount, U(0, 16 bits))
     val beat = CounterFreeRun(1 << 23)
     io.ledHeartbeat := !beat.msb
+
+    // Register the complete video boundary before the vendor DVI encoder.
+    // Besides keeping RGB and timing aligned, this cuts the long
+    // BufferCC -> HUD glyph/mux -> TMDS-disparity path that otherwise misses
+    // the 25 MHz pixel-clock constraint in congested Console builds.
+    val nextR = UInt(8 bits)
+    val nextG = UInt(8 bits)
+    val nextB = UInt(8 bits)
+    val nextHs = Bool()
+    val nextVs = Bool()
+    val nextDe = Bool()
+    nextR := 0
+    nextG := 0
+    nextB := 0
+    nextHs := False
+    nextVs := False
+    nextDe := False
     when(overlay) {
-      io.hdmiHs := scan.io.hSync
-      io.hdmiVs := scan.io.vSync
-      io.hdmiDe := scan.io.active
+      nextHs := scan.io.hSync
+      nextVs := scan.io.vSync
+      nextDe := scan.io.active
       when(hud.io.hit) {
-        io.hdmiR := hud.io.r
-        io.hdmiG := hud.io.g
-        io.hdmiB := hud.io.b
+        nextR := hud.io.r
+        nextG := hud.io.g
+        nextB := hud.io.b
       } otherwise {
-        io.hdmiR := osd.io.r
-        io.hdmiG := osd.io.g
-        io.hdmiB := osd.io.b
+        nextR := osd.io.r
+        nextG := osd.io.g
+        nextB := osd.io.b
       }
     } otherwise {
-      io.hdmiHs := core.io.hdmi.video.hSync
-      io.hdmiVs := core.io.hdmi.video.vSync
-      io.hdmiDe := core.io.hdmi.video.de
-      when(hud.io.debugMode && hud.io.hit) {
-        io.hdmiR := hud.io.r
-        io.hdmiG := hud.io.g
-        io.hdmiB := hud.io.b
+      nextHs := core.io.hdmi.video.hSync
+      nextVs := core.io.hdmi.video.vSync
+      nextDe := core.io.hdmi.video.de
+      // Keep the two diagnostic rows visible over a running demo. The first
+      // hardware image hid all BAR/player/UART evidence at exactly the point
+      // where a failed renderer produced an otherwise featureless black frame.
+      when(hud.io.hit) {
+        nextR := hud.io.r
+        nextG := hud.io.g
+        nextB := hud.io.b
       } otherwise {
-        io.hdmiR := core.io.hdmi.video.rgb.r
-        io.hdmiG := core.io.hdmi.video.rgb.g
-        io.hdmiB := core.io.hdmi.video.rgb.b
+        nextR := core.io.hdmi.video.rgb.r
+        nextG := core.io.hdmi.video.rgb.g
+        nextB := core.io.hdmi.video.rgb.b
       }
     }
+    io.hdmiR := RegNext(nextR) init (0)
+    io.hdmiG := RegNext(nextG) init (0)
+    io.hdmiB := RegNext(nextB) init (0)
+    io.hdmiHs := RegNext(nextHs) init (False)
+    io.hdmiVs := RegNext(nextVs) init (False)
+    io.hdmiDe := RegNext(nextDe) init (False)
   }
 
   io.ledCalib := !io.ddr.initCalibComplete
   io.ledDone := !BufferCC(ctrl.menu.io.info, init = False)
   io.ledWedge := !core.io.hostWedged
+
+  io.jtagDebug(0) := B(0x564f0001L, 32 bits) // "VO", protocol version 1
+  io.jtagDebug(1) := core.io.scanoutPrefetchCount.asBits ## core.io.scanoutReadReqCount.asBits
+  io.jtagDebug(2) := core.io.scanoutReadRspCount.asBits ## core.io.hdmi.fifoLevel.resize(16 bits).asBits
+  io.jtagDebug(3) := ddrReadIssues.asBits ## ddrCc.io.debugPhysicalReadCount.asBits
+  io.jtagDebug(4) := ddrCc.io.debugPhysicalReadRspCount.asBits ## ddrReadResponses.asBits
+  io.jtagDebug(5) := core.io.scanoutCacheDebug(31 downto 0)
+  io.jtagDebug(6) := core.io.scanoutCacheDebug(63 downto 32)
+  io.jtagDebug(7) := core.io.scanoutCacheReadAddr.resize(32 bits).asBits
+  io.jtagDebug(8) := core.io.scanoutCacheExpectedAddr.resize(32 bits).asBits
+  io.jtagDebug(9) := core.io.scanoutCacheOccupancy
+  io.jtagDebug(10) := core.io.scanoutCacheRemaining.resize(32 bits).asBits
+  io.jtagDebug(11) := core.io.scanoutFillHits.asBits
+  io.jtagDebug(12) := core.io.scanoutFillMisses.asBits
+  io.jtagDebug(13) := core.io.scanoutFillBurstCount.asBits
+  io.jtagDebug(14) := core.io.scanoutFillBurstBeats.asBits
+  io.jtagDebug(15) := core.io.scanoutFillStallCycles.asBits
+  io.jtagFramebuffer(0) := B(0x46420001L, 32 bits) // "FB", protocol version 1
+  io.jtagFramebuffer(1) := core.io.scanoutSampleMeta
+  io.jtagFramebuffer(2) := core.io.scanoutSampleHash
+  io.jtagFramebuffer(3) := core.io.scanoutSampleLast
+  for (index <- 0 until 12) {
+    io.jtagFramebuffer(index + 4) := core.io.scanoutSampleWords(index)
+  }
+  io.jtagWrites(0) := B(0x57520001L, 32 bits) // "WR", protocol version 1
+  io.jtagWrites(1) := ddrTransactions.asBits ## ddrWriteIssues.asBits
+  io.jtagWrites(2) := ddrCc.io.debugPhysicalCount.asBits ##
+    (ddrCc.io.debugPhysicalCount - ddrCc.io.debugPhysicalReadCount).asBits
+  io.jtagWrites(3) := lastBarAddr.asBits
+  io.jtagWrites(4) := lastBarData
+  io.jtagWrites(5) := barWrites.asBits ## player.io.index.resize(16 bits).asBits
+  io.jtagWrites(6) := ddrLastWriteAddr.asBits
+  io.jtagWrites(7) := ddrLastWriteData(31 downto 0)
+  io.jtagWrites(8) := ddrLastWriteData(63 downto 32)
+  io.jtagWrites(9) := ddrLastWriteData(95 downto 64)
+  io.jtagWrites(10) := ddrLastWriteData(127 downto 96)
+  io.jtagWrites(11) := B(0, 16 bits) ## ddrLastWriteMask
+  io.jtagWrites(12) := ddrNonzeroWriteCount.asBits
+  io.jtagWrites(13) := core.io.pipelineBusySources
+  io.jtagWrites(14) := wedgePc.asBits
+  io.jtagWrites(15) := B(0, 21 bits) ## ddrCc.io.debugStatus ##
+    core.io.hostWedged.asBits ## player.io.done.asBits ## usePlayer.asBits
 
   val log = CoreDebugLog()
   log.io.calib := io.ddr.initCalibComplete
