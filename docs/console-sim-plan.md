@@ -2,6 +2,8 @@
 
 Status: first end-to-end simulator working, 2026-09-21. Companion to
 `amaranth-rewrite-plan.md` §4.
+For setup, commands, expected screenshots, pass criteria, and failure triage,
+use the [whole-console simulator runbook](../amaranth/emu/console/README.md).
 Goal: run **`TangConsole138k` unmodified** under Verilator, drive it the way the
 board does (buttons, HID, trace player), and get **PNG frames off the HDMI
 port** — so a logic change is judged in seconds to minutes instead of a
@@ -236,5 +238,25 @@ The fault was in `gen_logo_spin.py`. Every animation frame selected and
 fast-cleared both the front and back buffers. Immediately after a swap, the
 next frame therefore erased the buffer that HDMI had just begun displaying.
 The stream now clears only the current back buffer. The end-to-end `run-logo`
-scenario captures 5,012 non-black output pixels after the delay and fails if
-the image is effectively black or the HDMI FIFO underflows.
+scenario captures thousands of non-black output pixels after the delay and
+fails if the image is effectively black or the HDMI FIFO underflows.
+
+## 6. Second finding: corrupted Glide demo scanlines
+
+`test04` and `test16` rendered correctly in raw DDR dumps but their HDMI
+captures contained short, displaced horizontal segments. The corruption was
+periodic at 4 KiB address boundaries: a request just above a boundary could
+receive pixels from 4 KiB earlier even though request/response counts matched
+and the scanout FIFO did not underflow.
+
+The scanout producer now divides each logical line into 256-byte cached
+prefetch spans. Those spans cannot cross an AXI 4 KiB boundary, while the
+pixel request stream and 640x480 HDMI timing remain continuous. Horizontal
+scanout uses 2x pixel repetition; full-rate reads underflowed at the Console's
+30 MHz core clock, while the former 4x setting discarded too much detail.
+
+The final whole-console run selects every demo through the real HID menu and
+captures coherent frames for `logo`, `test04`, `test16`, and `alphabet`.
+All four complete with zero HDMI underflow. A focused regression checks the
+five boundary-safe prefetch spans of a repeated 640-pixel line, and the full
+`voodoo.gowin` suite passes 42 tests.
