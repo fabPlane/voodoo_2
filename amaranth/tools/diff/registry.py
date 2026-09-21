@@ -360,6 +360,37 @@ REGISTRY: dict[str, DiffEntry] = {
             "time to burn wants the full-size run."
         ),
     ),
+    # --- Phase 2.3 (agent p2-lfb-frontdoor) ------------------------------
+    "Lfb": DiffEntry(
+        spinal="Lfb",
+        factory="avoodoo.frontend.lfb:Lfb",
+        note="PixelPipeline.scala — Lfb(c), Config.voodoo1() "
+             "(ext/SpinalVoodoo/src/voodoo/frontend/Lfb.scala -> avoodoo/frontend/lfb.py)",
+        # No overrides. `io_regs_*` (lfbMode/fbzMode/alphaMode/fogMode/
+        # fogColor/zaColor/writeRouting/readRouting) is one packed 266-bit
+        # `regs` port (core_types.LfbRegs) whose leaves amports.py slices;
+        # both output payloads are packed the same way. The generic driver
+        # re-randomises `regs` every cycle, so writeFormat / rgbaLanes / the
+        # swap+swizzle bits change under a captured command -- harsher than
+        # the register bank, and exactly what the decode mux is measured on.
+        # Reads: fbReadBus.rsp is a free input stream, so the two fetches
+        # complete whenever the driver raises rsp.valid in RFETCH1/2, and the
+        # RWAIT gate (pciFifoEmpty && !pipelineBusy) is random too.
+    ),
+    "CoreCpuFrontdoor": DiffEntry(
+        spinal="CoreCpuFrontdoor",
+        factory="avoodoo.core.cpu_frontdoor:CoreCpuFrontdoor",
+        note="Core.scala:110 — CoreCpuFrontdoor(c), Config.voodoo1() "
+             "(ext/SpinalVoodoo/src/voodoo/core/CoreCpuFrontdoor.scala -> "
+             "avoodoo/core/cpu_frontdoor.py)",
+        # No overrides: four Bmb buses plus the TexWritePayload stream, all
+        # pairing through the packed cmd/rsp payloads; `io_texBaseAddr` ->
+        # `tex_base_addr`. Almost entirely combinational -- the only
+        # registers are texWriteRspPending (reset) and texWriteRspSource
+        # (plain Reg, reset_less) -- so the interesting cycles are the ones
+        # where a texture write is accepted while the previous one's
+        # acknowledgement is still pending.
+    ),
 }
 
 

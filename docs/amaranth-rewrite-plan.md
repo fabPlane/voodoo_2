@@ -751,7 +751,7 @@ Spinal core does.
       lockstep diff will prove it).
 
 ### Phase 2
-- [x] regdef  - [ ] register_bank  - [x] address_remapper  - [x] swap_buffer  - [ ] lfb  - [ ] cpu_frontdoor  - [ ] core_types
+- [x] regdef  - [ ] register_bank  - [x] address_remapper  - [x] swap_buffer  - [x] lfb  - [x] cpu_frontdoor  - [ ] core_types
 - [x] 2.1 regdef — 2026-09-20. `amaranth/avoodoo/frontend/regdef.py`: 136 registers (2 of them
       simulation-only), 279 fields, 30 float aliases, 5 command streams, 158 PciFifo decode
       entries (143 FIFO=Yes, 71 Sync=Yes, 15 FIFO=No), all as frozen dataclasses with no
@@ -788,6 +788,40 @@ Spinal core does.
       unreachable as written (`cover(io.cmd.ready && state === Sampling)` contradicts the
       asserted `cmd.ready === (state === Idle)`) — they have never failed only because
       `FormalConfig.withBMC` runs sby in `bmc` mode, which ignores `cover`.
+- [x] 2.3 lfb + cpu_frontdoor — 2026-09-20. `amaranth/avoodoo/frontend/lfb.py` (496 Scala
+      lines) and `amaranth/avoodoo/core/cpu_frontdoor.py` (92), both 1:1, both through the
+      full §4.2 gate on the Mac: `make diff MOD=Lfb` and `MOD=CoreCpuFrontdoor` clean at
+      1e6 cycles x seeds 1,2,3, plus 1e6 x 3 each at `--valid-density 0.9 --ready-density
+      0.12`; `tests/diff/test_diff_{lfb,cpu_frontdoor}.py` run 20k x 3 + a stalled case in
+      `make test`. No `DiffEntry.overrides`: `io_regs_*` (66 leaves) pairs against one
+      packed 266-bit `regs` port (`core_types.LfbRegs`) through `amports.py`, and the
+      `io_regBus_*` / `io_regs` names were the trigger for the `tools/diff/vlog.py`
+      word-boundary fix in 1a96914 (`input reg_bus__cmd__ready` parsed as type `reg`).
+      pysim: `tests/test_lfb.py` (42 tests) drives the real MemBus port and checks every
+      emitted pixel against a Python converter over all 16 `writeFormat`s x 4 `rgbaLanes`
+      x word-swap x byte-swizzle x {full, lo-half, hi-half} mask x both
+      `pixelPipelineEnable` routings under random stalls, plus the two-fetch read path
+      against a Python framebuffer with the `pciFifoEmpty && !pipelineBusy` gate;
+      `tests/test_cpu_frontdoor.py` (7) pins the `DECODE_QUIRKS` table (chip-field zeroing,
+      `texBaseAddr[18:0] << 3` read relocation, raw offset on writes) and the fixed-priority
+      response chain. Appended to `core_types.py`: `LfbMode`, `LfbRegs`, `TexWritePayload`
+      (PciFifo.scala:12), `expand_rgb565/555`, `word_swap_and_swizzle`.
+      Four things worth knowing:
+      (a) **The LFB does not dither.** The Scala comment says it and the Verilog confirms it:
+      bypass mode emits `Write.PreDither` and the shared `Dither` in `Core` does the work;
+      `enableDithering`/`ditherAlgorithm` are only copied from `fbzMode` into the payload.
+      (b) `writeFormat` 3 and 6-11 have no `is()` in the decode `switch`: they emit
+      RGB 0 / `zaColor[15:0]` depth / `rgbWrite` — format 3 as *two* pixels (it is in
+      `isDualPixel`), the others as one. Reproduced, and the pysim sweep covers them.
+      (c) `CoreCpuFrontdoor`'s texture-write acknowledgement is a one-cycle `rsp.valid`
+      that ignores `rsp.ready`, and a second texture write accepted on the cycle the first
+      is being answered clears `texWriteRspPending` (last assignment wins) — one ack for
+      two writes. Both kept; `test_cpu_frontdoor.py` pins them as documented behaviour.
+      (d) The reset split (plain `Reg` -> `reset_less`): `capturedAddr`, `capturedData`,
+      `capturedRead1/2`, `fbReadAddr`, `capturedSource` and `texWriteRspSource`. Every
+      other register is `RegInit`. Register writes are kept in the Scala's statement
+      order — the `Lfb` sync block relies on last-wins for `state` (`stateRresp` exit vs
+      the `Rwait` entry) and for `fbReadCmdPending` (cmd.fire clears, rsp.fire re-arms).
 
 ### Phase 3
 - [x] triangle_setup  - [ ] rasterizer  - [x] span_walker  - [ ] fastfill (3 files)  - [x] write
