@@ -7,7 +7,8 @@ import spinal.lib.bus.amba4.axi._
 object GowinDdrNative {
   val cmdWrite = 0
   val cmdRead = 1
-  val beatBytes = GowinAddressMap.ddrNativeDataWidth / 8
+  def beatBytes(dataWidth: Int = GowinAddressMap.ddrNativeDataWidth): Int =
+    dataWidth / 8
 }
 
 case class GowinDdrNative(
@@ -35,19 +36,35 @@ case class GowinDdrNative(
   }
 }
 
-/** One-outstanding AXI4 (32-bit INCR) to Gowin DDR3 native UI (256-bit).
+/** One-outstanding AXI4 (32-bit INCR) to Gowin DDR3 native UI.
   *
   * Framebuffer wins over texture when both request. wr_data_mask is active-high
-  * inhibit, the inverse of AXI wstrb.
+  * inhibit, the inverse of AXI wstrb. nativeDataWidth is 256 on the 32-bit Pro
+  * Dock and 128 on the Console (one x16 chip).
   */
-case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
-    extends Component {
+case class Axi4ToGowinDdrNative(
+    fbConfig: Axi4Config,
+    texConfig: Axi4Config,
+    nativeDataWidth: Int = GowinAddressMap.ddrNativeDataWidth,
+    nativeAddrWidth: Int = GowinAddressMap.ddrNativeAddrWidth
+) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
+  require(nativeDataWidth % 32 == 0 && nativeDataWidth >= 32)
+  val nativeWords = nativeDataWidth / 32
+  val beatBytes = GowinDdrNative.beatBytes(nativeDataWidth)
+  // The Gowin native address is a physical DDR word address, not a byte
+  // address. A 1:4 BL8 transfer always consumes eight of those addresses:
+  // x16 Console => 2 bytes/address, x32 Pro Dock => 4 bytes/address.
+  val nativeWordBytes = nativeDataWidth / 64
+  val nativeAddrShift = log2Up(nativeWordBytes)
+  val beatOffsetBits = log2Up(beatBytes)
+  val lastIdx = nativeWords - 1
+  require(nativeWordBytes >= 1 && (nativeWordBytes & (nativeWordBytes - 1)) == 0)
 
   val io = new Bundle {
     val fb = slave(Axi4(fbConfig))
     val tex = slave(Axi4(texConfig))
-    val ddr = master(GowinDdrNative())
+    val ddr = master(GowinDdrNative(addrWidth = nativeAddrWidth, dataWidth = nativeDataWidth))
   }
 
   object State extends SpinalEnum {
@@ -58,11 +75,11 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
   val useTex = RegInit(False)
   val addr = Reg(UInt(32 bits)) init (0)
   val beatsLeft = Reg(UInt(9 bits)) init (0)
-  val groupIdx = Reg(UInt(3 bits)) init (0)
-  val words = Vec(Reg(Bits(32 bits)) init (0), 8)
-  val strbs = Vec(Reg(Bits(4 bits)) init (0), 8)
-  val readWords = Vec(Reg(Bits(32 bits)) init (0), 8)
-  val unpackIdx = Reg(UInt(3 bits)) init (0)
+  val groupIdx = Reg(UInt(log2Up(nativeWords) bits)) init (0)
+  val words = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
+  val strbs = Vec(Reg(Bits(4 bits)) init (0), nativeWords)
+  val readWords = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
+  val unpackIdx = Reg(UInt(log2Up(nativeWords) bits)) init (0)
   val fbId = if (fbConfig.useId) Reg(UInt(fbConfig.idWidth bits)) init (0) else null
   val texId = if (texConfig.useId) Reg(UInt(texConfig.idWidth bits)) init (0) else null
 
@@ -92,12 +109,20 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
 
   io.ddr.cmd := 0
   io.ddr.cmdEn := False
-  io.ddr.addr := addr.resized
+  val nativeAddr = UInt(nativeAddrWidth bits)
+  nativeAddr := (addr >> nativeAddrShift).resized
+  // BL8 commands start on an eight-address boundary. AXI's low address bits
+  // select a 32-bit lane through the byte mask instead of shifting the DDR
+  // command itself into the middle of a physical burst.
+  nativeAddr(2 downto 0) := 0
+  io.ddr.addr := nativeAddr
   io.ddr.burst := False
-  io.ddr.wrData := Cat(words.reverse)
+  // Cat(Iterable) places the first element at the least-significant end.
+  // Keep write lane i symmetric with rdData(i * 32, 32 bits) below.
+  io.ddr.wrData := Cat(words)
   io.ddr.wrDataEn := False
   io.ddr.wrDataEnd := False
-  io.ddr.wrDataMask := ~Cat(strbs.reverse)
+  io.ddr.wrDataMask := ~Cat(strbs)
 
   switch(state) {
     is(State.idle) {
@@ -108,7 +133,9 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
           beatsLeft := (io.fb.aw.len.resize(9) + 1).resized
           if (fbConfig.useId) fbId := io.fb.aw.id
           io.fb.aw.ready := True
-          groupIdx := 0
+          groupIdx := io.fb.aw.addr(beatOffsetBits - 1 downto 2).resized
+          words.foreach(_ := 0)
+          strbs.foreach(_ := 0)
           state := State.wrCollect
         } elsewhen (io.fb.ar.valid) {
           useTex := False
@@ -116,6 +143,7 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
           beatsLeft := (io.fb.ar.len.resize(9) + 1).resized
           if (fbConfig.useId) fbId := io.fb.ar.id
           io.fb.ar.ready := True
+          unpackIdx := io.fb.ar.addr(beatOffsetBits - 1 downto 2).resized
           state := State.rdIssue
         } elsewhen (io.tex.aw.valid) {
           useTex := True
@@ -123,7 +151,9 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
           beatsLeft := (io.tex.aw.len.resize(9) + 1).resized
           if (texConfig.useId) texId := io.tex.aw.id
           io.tex.aw.ready := True
-          groupIdx := 0
+          groupIdx := io.tex.aw.addr(beatOffsetBits - 1 downto 2).resized
+          words.foreach(_ := 0)
+          strbs.foreach(_ := 0)
           state := State.wrCollect
         } elsewhen (io.tex.ar.valid) {
           useTex := True
@@ -131,6 +161,7 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
           beatsLeft := (io.tex.ar.len.resize(9) + 1).resized
           if (texConfig.useId) texId := io.tex.ar.id
           io.tex.ar.ready := True
+          unpackIdx := io.tex.ar.addr(beatOffsetBits - 1 downto 2).resized
           state := State.rdIssue
         }
       }
@@ -146,7 +177,7 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
         words(groupIdx) := wData
         strbs(groupIdx) := wStrb
         beatsLeft := beatsLeft - 1
-        when(groupIdx === 7 || wLast || beatsLeft === 1) {
+        when(groupIdx === lastIdx || wLast || beatsLeft === 1) {
           groupIdx := 0
           state := State.wrIssue
         } otherwise {
@@ -161,7 +192,7 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
       io.ddr.wrDataEn := fire
       io.ddr.wrDataEnd := True
       when(fire) {
-        addr := addr + GowinDdrNative.beatBytes
+        addr := addr + beatBytes
         when(beatsLeft === 0) {
           state := State.wrResp
         } otherwise {
@@ -188,10 +219,9 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
     }
     is(State.rdHold) {
       when(io.ddr.rdDataValid) {
-        for (i <- 0 until 8) {
+        for (i <- 0 until nativeWords) {
           readWords(i) := io.ddr.rdData(i * 32, 32 bits)
         }
-        unpackIdx := 0
         state := State.rdUnpack
       }
     }
@@ -211,8 +241,9 @@ case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
         beatsLeft := beatsLeft - 1
         when(lastBeat) {
           state := State.idle
-        } elsewhen (unpackIdx === 7) {
-          addr := addr + GowinDdrNative.beatBytes
+        } elsewhen (unpackIdx === lastIdx) {
+          addr := addr + beatBytes
+          unpackIdx := 0
           state := State.rdIssue
         } otherwise {
           unpackIdx := unpackIdx + 1

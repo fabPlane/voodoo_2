@@ -47,6 +47,8 @@ case class AxiLite4ToBmbBridge(
     val axi = slave(AxiLite4(axiConfig(addressWidth)))
     val cpuBus = master(Bmb(bmbParams))
     val wedged = out Bool ()
+    val requestTimeoutSeen = out Bool ()
+    val responseTimeoutSeen = out Bool ()
   }
 
   private val timeoutLimit = 1 << timeoutLog2
@@ -124,6 +126,8 @@ case class AxiLite4ToBmbBridge(
     io.axi.r.setSLVERR()
   }
   io.wedged := wedged
+  io.requestTimeoutSeen := requestTimeoutSeen
+  io.responseTimeoutSeen := responseTimeoutSeen
 
   when(io.axi.b.fire) {
     bPending := False

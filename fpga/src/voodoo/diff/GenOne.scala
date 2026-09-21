@@ -6,6 +6,8 @@ import spinal.core._
 import spinal.lib.bus.bmb._
 import voodoo._
 import voodoo.artix.CoreArtix
+import voodoo.artix.{Axi4ToAxiLite4, AxiLite4ToBmbBridge, BmbToAxi4Mem}
+import voodoo.gowin.{Axi4AddressRelocate, AxiLite4ClockCrossing, CoreGowin, GowinAddressMap}
 import voodoo.bus.{PciFifo, RegisterCategory}
 import voodoo.core.{CoreCpuFrontdoor, FramebufferMemSubsystem, PixelPipeline, TextureMemSubsystem}
 import voodoo.framebuffer.{
@@ -87,7 +89,6 @@ object GenOne {
     useFbWriteBuffer = true,
     useTexFillCache = false
   )
-
 
   // ------------------------------------------------------------------------------------------
   // Registry
@@ -262,6 +263,9 @@ object GenOne {
       TmuNoTextureCache(c.copy(useTexFillCache = false))
     ),
     "Tmu" -> ok("PixelPipeline.scala:294 — Tmu(c)")(Tmu(c)),
+    "TmuMemOnly" -> ok(
+      "alias of Tmu for the diff row that models only the texture-memory slave (io_input random)"
+    )(Tmu(c)),
     "TextureMem" -> todo(
       "TODO params: TextureMem.scala holds only objects/bundles (DownloadConfig, WriteCmd). " +
         "The hardware lives in TextureMemSubsystem."
@@ -353,7 +357,55 @@ object GenOne {
     "Core" -> ok("CoreSim.scala:29 — Core(c)")(Core(c)),
     "CoreSim" -> ok(
       "CoreSimGen with no flags — CoreSim(Config.voodoo1().copy(enableHdmiScanout = false), SimMemoryTiming())"
-    )(CoreSim(simConfig, simTiming))
+    )(CoreSim(simConfig, simTiming)),
+
+    // ---- AXI boundary bridges (plan 1.5: fpga/src, not upstream) ---------------------------------
+    "Axi4ToAxiLite4" -> ok(
+      "AmdAc701.scala:56 — Axi4ToAxiLite4(CoreArtix.barAddressWidth) (idWidth = 4); the 7-series " +
+        "PCIe BAR0 AXI4 -> AXI4-Lite step. Not on the Console, same boundary library."
+    )(Axi4ToAxiLite4(CoreArtix.barAddressWidth)),
+    "AxiLite4ToBmbBridge" -> ok(
+      "CoreGowin.scala:37 — AxiLite4ToBmbBridge(CoreGowin.barAddressWidth, Core.cpuBmbParams), " +
+        "timeoutLog2 = 20 (the shipping value; 2^20 cycles, unreachable by a 1e6-cycle diff)"
+    )(AxiLite4ToBmbBridge(CoreGowin.barAddressWidth, Core.cpuBmbParams)),
+    "AxiLite4ToBmbBridgeFastTimeout" -> ok(
+      "Same bridge with timeoutLog2 = 4: request/response timeouts, wedged, droppedWrites and " +
+        "the SLVERR completions become reachable by constrained-random stimulus at low " +
+        "ready/valid densities"
+    )(AxiLite4ToBmbBridge(CoreGowin.barAddressWidth, Core.cpuBmbParams, timeoutLog2 = 4)),
+    "BmbToAxi4SharedBridge" -> ok(
+      "CoreArtix.scala:228 — BmbToAxi4SharedBridge(fixer.op.toBmbParameter()), i.e. on " +
+        "BmbToAxi4Mem.alignedParameter(Core.fbMemBmbParams(c), 8); pendingMax = 31, halfRateAw = " +
+        "true (spinal/lib/bus/bmb/BmbToAxi4Bridge.scala)"
+    )(
+      BmbToAxi4SharedBridge(
+        BmbToAxi4Mem.alignedParameter(Core.fbMemBmbParams(c), CoreArtix.axiBurstLog2)
+      )
+    ),
+    "BmbToAxi4Mem" -> ok(
+      "CoreGowin.scala:44 / CoreArtix.scala:262 — BmbToAxi4Mem(Core.fbMemBmbParams(c), 8): " +
+        "BmbAligner -> BmbLengthFixer -> BmbToAxi4SharedBridge -> toAxi4()"
+    )(BmbToAxi4Mem(Core.fbMemBmbParams(c), CoreGowin.axiBurstLog2)),
+    "BmbToAxi4MemTex" -> ok(
+      "CoreGowin.scala:45 — BmbToAxi4Mem(Core.texMemBmbParams(c), 8): sourceWidth 6 instead of 4"
+    )(BmbToAxi4Mem(Core.texMemBmbParams(c), CoreGowin.axiBurstLog2)),
+    "AxiLite4ClockCrossing" -> ok(
+      "TangMega138kPro.scala:76 / AmdAc701.scala:60 — AxiLite4ClockCrossing(" +
+        "AxiLite4ToBmbBridge.axiConfig(barAddressWidth), inputCd, outputCd, depth = 4) with BOTH " +
+        "clock domains = ClockDomain.current: the harness drives one clk/reset, so this " +
+        "lockstep-checks the five StreamFifoCC (gray pointers, buffered pop reset) but not the " +
+        "actual asynchrony, which is pysim-only (amaranth/tests/test_axi.py)"
+    )(
+      AxiLite4ClockCrossing(
+        AxiLite4ToBmbBridge.axiConfig(CoreArtix.barAddressWidth),
+        ClockDomain.current,
+        ClockDomain.current
+      )
+    ),
+    "Axi4AddressRelocate" -> ok(
+      "CoreGowin.scala:46 — Axi4AddressRelocate(CoreGowin.texAxiConfig(c), " +
+        "GowinAddressMap.texMemBase = 4 MiB); combinational, no clk/reset"
+    )(Axi4AddressRelocate(CoreGowin.texAxiConfig(c), GowinAddressMap.texMemBase))
   )
 
   lazy val byName: Map[String, Entry] = registry.toMap
