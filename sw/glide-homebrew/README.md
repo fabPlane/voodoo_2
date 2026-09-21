@@ -61,6 +61,26 @@ The capture runs under `setarch -R` (ASLR off): a pointer-dependent path in the
 sim Glide backend is otherwise non-deterministic, and disabling ASLR makes the
 packed ROMs byte-for-byte reproducible.
 
+## Rendering screenshots
+
+```
+make render     # renders each demo to sw/glide-homebrew/shots/<demo>_ref.png
+```
+
+`render/render.sh` replays each captured trace through the SpinalVoodoo
+`trace_test` tool, which renders via the **86Box software Voodoo reference
+model** — the golden model the RTL core is verified against — so the images show
+exactly what each demo's Glide command stream produces. It automatically:
+applies a tiny `CoreSim` HDMI tie-off patch (`render/coresim-hdmi.patch`, needed
+only so the sim top elaborates), initializes the 86Box reference submodule over
+HTTPS, and builds `trace_test`.
+
+The cycle-accurate Verilator **core** render (`trace_test --sim-replay-only`,
+via `RENDER_SIM=1 make render`) drives the exact SpinalVoodoo RTL, but at
+~15-20k cycles/s a full 640x480 frame is impractically slow in CI-class
+environments; use a small `HB_RES` and expect minutes per frame on fast
+hardware.
+
 ## Deploying on the Tang Retro Console 138K
 
 These ROMs are meant to be played by the console demo core (the Voodoo
