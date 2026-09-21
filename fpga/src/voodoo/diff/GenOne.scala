@@ -427,6 +427,11 @@ object GenOne {
       SimBmbMemory(Core.fbMemBmbParams(simConfig), 64 * 1024, simTiming)
     ),
     "Core" -> ok("CoreSim.scala:29 — Core(c)")(Core(c)),
+    // Alias for the amaranth `CoreRandom` row (tools/diff/registry.py, Phase 7.2): the same
+    // Core(c) under the bare random generator on io_cpuBus.
+    "CoreRandom" -> ok("alias of Core (generator on io_cpuBus, memory slaves + pixel clock)")(
+      Core(c)
+    ),
     "CoreSim" -> ok(
       "CoreSimGen with no flags — CoreSim(Config.voodoo1().copy(enableHdmiScanout = false), SimMemoryTiming())"
     )(CoreSim(simConfig, simTiming)),

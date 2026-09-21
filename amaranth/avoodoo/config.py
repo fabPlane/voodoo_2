@@ -191,6 +191,9 @@ class Config:
     packed_tex_layout: bool = True
     enable_hdmi_scanout: bool = True
     hdmi_scanout_pixel_repeat_x: int = 1
+    #: ``Config.hdmiScanoutDmt640x480`` (Config.scala:37): ``Core.scala:135`` picks
+    #: ``VideoTiming.dmt640x480`` over ``cea720x480p`` with it; ``CoreGowinGen`` sets it.
+    hdmi_scanout_dmt640x480: bool = False
     trace: TraceConfig = field(default_factory=TraceConfig)
 
     @staticmethod

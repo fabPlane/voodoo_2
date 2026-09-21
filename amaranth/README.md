@@ -169,7 +169,7 @@ every Glide test binary link against this copy with no source change.
 | Path | What |
 |---|---|
 | `avoodoo/core_sim_ports.py` | the port contract: the 19 Spinal ports + the `dbg` bundle + the memory-backdoor paths. Import this; never retype it. |
-| `avoodoo/core_sim.py` | **stub** CoreSim (Phase 7.2 replaces the body, keeps the ports) |
+| `avoodoo/core_sim.py` | the real `CoreSim` since Phase 7.2 (`Core(dbg=True)` + the two `SimMemBusMemory` RAMs + the five-way arbiter); the port list is `core_sim_ports.py` |
 | `gen/gen_core_sim.py` | `rtl/CoreSim.v` |
 | `emu/sim/Makefile` | copy of upstream's, with the Spinal-RTL generation rule deleted |
 | `emu/sim/harness/sim_harness.{h,cpp}` | the copy; `.h` byte-identical, `.cpp` adapted |
@@ -237,17 +237,22 @@ it does not produce a black screenshot half an hour into a trace replay.
 million lines for the 4 MiB + 8 MiB simulation RAMs, which no C++ compiler
 will get through. The Spinal `Mem` this replaces has no initialiser at all.
 
-`gen/gen_core_sim.py` therefore emits RTLIL, deletes the `$meminit_v2` cells
-(`strip_meminit`), and only then runs yosys. Output is an 11 KB `CoreSim.v`
-with bare `reg [31:0] mem [1048575:0]` arrays and no `initial` block;
-Verilator's `--x-initial fast` zeroes them at construction. The generator
-hard-fails if an `initial` survives.
+`gen/gen_core_sim.py` therefore emits RTLIL, deletes the **all-zero**
+`$meminit_v2` cells (`strip_meminit`), and only then runs yosys. An all-zero
+`DATA` constant is Amaranth's implicit initialiser (or an explicit all-zero
+`init`, which `--x-initial fast` reproduces anyway); a cell with a `1` in it
+is a ROM with real contents and is kept. On the real `CoreSim` (Phase 7.2)
+that is 55 cells stripped — the two sim RAMs, the scanout CDC FIFO, the plane
+readers' lane FIFOs, every `StreamFifo` — and 13 kept: the three Dither
+instances' `rom_r/g/b` and the TMU's LUTs, ~57k `initial` lines in an 11 MB
+`CoreSim.v`. The sim RAMs come out as bare `reg [31:0] mem [1048575:0]`
+arrays with no `initial`; Verilator zeroes them at construction. A kept cell
+deeper than `KEEP_WORDS_LIMIT` (64 Ki words) or more than `MAX_INITIAL_LINES`
+in the output hard-fails the generator.
 
-**Phase 7 must honour this**: any Amaranth `Memory` whose contents are meant
-to start undefined has to go through `strip_meminit`; any memory with *real*
-contents (dither tables, TMU LUTs) must not. Building the initialiser text is
-the slow part — ~35 s on `hyper-ms-lin`, ~55 s on the Mac, for those two RAMs
-alone — and it is why `rtl-core-sim` is not instant.
+Building the RTLIL is the slow part — ~90 s on the Mac for the whole core,
+of which the two RAMs' initialiser text is most — and it is why
+`rtl-core-sim` is not instant.
 
 ### Driving the upstream Makefiles
 

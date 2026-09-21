@@ -138,6 +138,14 @@ def _pci_fifo_params() -> dict:
     }
 
 
+def _core_sim_overrides() -> dict[str, str]:
+    """``CoreSim``'s Amaranth ports are spelled exactly like the Spinal ones
+    (:mod:`avoodoo.core_sim_ports`), so every Spinal name maps to itself."""
+    from avoodoo.core_sim_ports import SPINAL_IO_PORTS
+
+    return {name: name for name, _, _ in SPINAL_IO_PORTS}
+
+
 def _hdmi_small_timing():
     """The ``VideoTiming`` of ``HdmiScanoutTest.scala`` "starts FIFO pixels at HDMI
     frame origin" (8x4 active, 12x7 total), as ``GenOne``'s
@@ -1000,6 +1008,61 @@ REGISTRY: dict[str, DiffEntry] = {
         spinal="TmdsSerializer",
         factory="avoodoo.hdmi.scanout:TmdsSerializer",
         note="HdmiScanout.scala:620 — TmdsSerializer(); random load/symbols",
+    ),
+    # --- Phase 7.2 (avoodoo/core/core.py, avoodoo/core_sim.py) ------------
+    "Core": DiffEntry(
+        spinal="Core",
+        factory="avoodoo.core.core:Core",
+        note="CoreSim.scala:29 / GenOne — Core(Config.voodoo1()), enableHdmiScanout = "
+             "true so the scanout prefetches through fbColorReadMem "
+             "(ext/SpinalVoodoo/src/voodoo/Core.scala -> avoodoo/core/core.py)",
+        # No overrides: io_cpuBus_* / io_fb*Mem_* / io_texMem_* pair through the
+        # packed MemBus payloads, io_statusInputs_* / io_hdmi_video_* /
+        # io_hdmi_status_* are slices of the packed StructLayout ports,
+        # io_hdmi_clock / io_hdmi_reset -> hdmi__clock / hdmi__reset.  The
+        # responder (tests/diff/core_stimulus.py) is a memory slave on each of
+        # the six memory buses (source echoed, so both arbiter layers demux),
+        # the HDMI pixel clock/reset, and a CPU that issues register writes
+        # (mostly to decoded addresses, with sane fbzMode/clip windows so
+        # triangles stay small), real triangle commands, LFB writes/reads and
+        # texture writes/reads through io_cpuBus; statusInputs, flushFbCaches
+        # and every ready stay random.
+        responder="tests.diff.core_stimulus:core_traffic",
+        # A moving base strands the in-order scanout reader during its
+        # prefill (core_stimulus.py has the mechanism); CoreSim ties it to 0.
+        pinned={"io_fbBaseAddr": 0},
+    ),
+    "CoreRandom": DiffEntry(
+        spinal="CoreRandom",
+        portmap="Core",
+        factory="avoodoo.core.core:Core",
+        note="Core under the memory slaves and the HDMI clock only, io_cpuBus from the "
+             "bare generator: random 24-bit addresses, so mostly texture writes and "
+             "undecoded register writes, with the odd garbage triangle",
+        responder="tests.diff.core_stimulus:core_random",
+    ),
+    "CoreSim": DiffEntry(
+        spinal="CoreSim",
+        factory="avoodoo.core_sim:CoreSim",
+        params=dict(async_reset=False),
+        note="CoreSimGen with no flags — CoreSim(Config.voodoo1().copy(enableHdmiScanout "
+             "= false), SimMemoryTiming()); GenOne emits it SYNC-reset, hence "
+             "async_reset=False here (ext/SpinalVoodoo/src/voodoo/CoreSim.scala -> "
+             "avoodoo/core_sim.py)",
+        # The Amaranth port list IS the Spinal one (core_sim_ports.py), so the
+        # mechanical camel_to_snake rule would look for cpu_bus__cmd__valid
+        # where the port is literally io_cpuBus_cmd_valid: identity overrides.
+        overrides=_core_sim_overrides(),
+        pinned={"dbg_swap_count_we": 0, "dbg_swap_count_set": 0},
+        pending=(
+            "not lockstep-diffable at this size: the 4 MiB + 8 MiB SimBmbMemory "
+            "arrays (see the SimBmbMemory row) make the Spinal side four 1 Mi-entry "
+            "and four 2 Mi-entry byte arrays and the Amaranth side, through "
+            "gen_module's plain write_verilog, 3.1 M `initial` lines. The wrapper "
+            "also has no way to hold the Amaranth-only dbg_* inputs. Core is the "
+            "diffed row; CoreSim's own wiring is covered by tests/test_core.py "
+            "(pysim smoke) and the Glide/trace parity gate (plan 7.3)."
+        ),
     ),
 }
 

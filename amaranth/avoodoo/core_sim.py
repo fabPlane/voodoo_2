@@ -1,113 +1,121 @@
-"""**STUB** — Phase 0.5 placeholder for the Amaranth ``CoreSim``.
+"""``CoreSim`` -- the Verilator top: ``Core`` plus its two simulation RAMs.
 
-Scala counterpart: ``ext/SpinalVoodoo/src/voodoo/CoreSim.scala``.
+1:1 port of ``ext/SpinalVoodoo/src/voodoo/CoreSim.scala`` (plan Phase 7.2;
+this file replaces the Phase 0.5 stub of the same name)::
 
-This is *not* the Voodoo core.  It exists so Phase 0.5 can prove the copied
-Verilator/Glide harness in ``amaranth/emu/sim/`` compiles, links and starts
-against an Amaranth top with the right port list and the right memory
-backdoor.  Phase 7.2 replaces the body wholesale; whoever does that should
-keep:
+    case class CoreSim(
+        c: Config = Config.voodoo1().copy(enableHdmiScanout = false),
+        memTiming: SimMemoryTiming = SimMemoryTiming()
+    ) extends Component
 
-* the signature, which lives in :mod:`avoodoo.core_sim_ports` — import it,
-  do not retype it;
-* the two simulation RAM submodule names (``fbWriteRam``, ``texRam``) and the
-  ``mem`` array inside each, because the C harness addresses them by the
-  Verilator path those names produce;
-* the ``dbg_*`` port semantics described in :mod:`avoodoo.core_sim_ports`.
+Wraps :class:`avoodoo.core.Core` with:
 
-What the stub actually does:
+* ``fbWriteRam`` -- :class:`~avoodoo.sim_membus_memory.SimMemBusMemory`
+  (``SimBmbMemory``), 4 MiB, ``Core.fbMemBmbParams(c)``, behind ``fbArbiter``,
+  a five-input ``BmbArbiter`` (``lowerFirstPriority = true``) over
+  ``fbMemWrite``, ``fbColorWriteMem``, ``fbAuxWriteMem``, ``fbColorReadMem``,
+  ``fbAuxReadMem`` in that order;
+* ``texRam`` -- the same, 8 MiB, ``Core.texMemBmbParams(c)``, straight on
+  ``texMem``;
+* the unified 24-bit ``cpuBus`` (address decode inside ``Core``);
+* ``vRetrace`` from the harness, ``memFifoFree = 0xffff``, ``pciInterrupt =
+  False``, ``fbBaseAddr = 0``, ``flushFbCaches`` from the harness;
+* the HDMI domain held in reset with its clock low (``hdmi.clock := False``,
+  ``hdmi.reset := True``): trace replay does not need scanout, and the
+  ``enableHdmiScanout = false`` config clears ``framebufferEnable`` so the
+  prefetcher cannot fill the CDC FIFO.
 
-* accepts every ``io_cpuBus`` command in one cycle and answers with a
-  single-beat response on the next;
-* reads of register offset 0 (the SST-1 status register) return ``0x3F`` —
-  "FIFO empty, not busy, no swaps pending" — so ``sim_idle_wait()`` in the
-  harness terminates instead of spinning for five million cycles.  Every
-  other register read returns 0;
-* reads and writes in ``0x400000..0x7FFFFF`` (LFB) and ``0x800000..0xFFFFFF``
-  (texture) go straight to the corresponding simulation RAM, byte-masked.
-  That is enough to keep the two memory arrays alive through yosys and to
-  give ``sim_read_fb`` something to observe.
+What is *not* in the Scala (all of it from :mod:`avoodoo.core_sim_ports`,
+which owns the contract; see ``amaranth/README.md`` "Phase 0.5"):
 
-Reset is **asynchronous, active high** by default, matching the upstream sim
-build the golden screenshots came from (``CoreSim.json`` records
-``reset_kind: async``; see ``docs/amaranth/spinal-naming-and-harness.md`` §0).
+* the flat ``io_*`` port spelling and the explicit ``clk``/``reset`` ports.
+  The harness drives ``top->clk`` / ``top->reset`` and binds ``io_cpuBus_*``
+  by name, so the signature is the Spinal port list verbatim and the ``sync``
+  domain is built by hand from those two ports;
+* the ``dbg_*`` bundle, forwarded from ``Core(dbg=True)``: the five live
+  hierarchical taps the upstream harness reads, and the ``swapCountReg``
+  load port (``dbg_swap_count_set`` / ``dbg_swap_count_we``);
+* the two RAM submodule names (``fbWriteRam``, ``texRam``) with the
+  ``Memory`` bound as ``m.submodules.mem`` inside each, which is what makes
+  ``CoreSim__DOT__fbWriteRam__DOT__mem`` the Verilator path the C harness
+  spells.
+
+Reset is **asynchronous, active high** by default, matching the upstream
+sim build the golden screenshots came from (``CoreSim.json`` records
+``reset_kind: async``; ``GenOne``'s ``CoreSim`` row is SYNC unless
+``--async-reset``, and the diff registry builds this side to match).
+
+Both RAMs are ``Memory(init=[])``; ``gen/gen_core_sim.py`` strips their
+``$meminit`` cells (and every other uninitialised memory's -- the CDC FIFO
+in the scanout, the plane readers' lane FIFOs) before Verilog emission, or
+the 4 MiB + 8 MiB become three million ``initial`` lines.
 """
 
 from __future__ import annotations
 
-from amaranth import ClockDomain, ClockSignal, Cat, Module, Mux, ResetSignal, Signal, unsigned
-from amaranth.lib import memory, wiring
+from dataclasses import replace
 
+from amaranth import ClockDomain, ClockSignal, Const, Module, ResetSignal
+from amaranth.lib import wiring
+
+from avoodoo.config import Config
+from avoodoo.core import membus_params as _mp
 from avoodoo.core_sim_ports import (
+    DBG_PORTS,
+    FB_BYTES,
     FB_RAM_INSTANCE,
-    FB_WORDS,
-    RAM_ARRAY_NAME,
+    TEX_BYTES,
     TEX_RAM_INSTANCE,
-    TEX_WORDS,
     core_sim_signature,
 )
+from avoodoo.lib import membus
+from avoodoo.lib.membus import Arbiter
+from avoodoo.sim_membus_memory import SimMemBusMemory, SimMemoryTiming
 
-__all__ = ["CoreSim", "SimRamStub"]
-
-_BMB_OPCODE_WRITE = 1
-_STATUS_IDLE = 0x3F
+__all__ = ["CoreSim", "core_sim_config"]
 
 
-class SimRamStub(wiring.Component):
-    """Byte-enabled synchronous RAM holding the array the C harness pokes.
-
-    The only thing that matters structurally is that the ``Memory`` is added
-    as ``m.submodules.<RAM_ARRAY_NAME>``: yosys emits it as
-    ``reg [31:0] mem [depth-1:0]`` inside this module, and Verilator's
-    ``--public-flat-rw`` then exposes it as
-    ``CoreSim__DOT__<instance>__DOT__mem``.
-
-    Phase 7.2 will replace this with the real ``SimBmbMemory`` port (BMB
-    interface plus the ``SimMemoryTiming`` latency model).  Keep the Memory
-    submodule name.
-    """
-
-    def __init__(self, depth: int):
-        self._depth = depth
-        addr_width = (depth - 1).bit_length()
-        super().__init__(
-            wiring.Signature(
-                {
-                    "addr": wiring.In(addr_width),
-                    "wdata": wiring.In(32),
-                    "wmask": wiring.In(4),
-                    "we": wiring.In(1),
-                    "rdata": wiring.Out(32),
-                }
-            )
-        )
-
-    @property
-    def depth(self) -> int:
-        return self._depth
-
-    def elaborate(self, platform):
-        m = Module()
-        mem = memory.Memory(shape=unsigned(32), depth=self._depth, init=[])
-        setattr(m.submodules, RAM_ARRAY_NAME, mem)
-        wp = mem.write_port(granularity=8)
-        rp = mem.read_port()
-        m.d.comb += [
-            wp.addr.eq(self.addr),
-            wp.data.eq(self.wdata),
-            wp.en.eq(Cat(*(self.we & self.wmask[i] for i in range(4)))),
-            rp.addr.eq(self.addr),
-            self.rdata.eq(rp.data),
-        ]
-        return m
+def core_sim_config() -> Config:
+    """``Config.voodoo1().copy(enableHdmiScanout = false)`` -- the default ``c``."""
+    return replace(Config.voodoo1(), enable_hdmi_scanout=False)
 
 
 class CoreSim(wiring.Component):
-    """Phase 0.5 stub with the Spinal ``CoreSim`` port list plus ``dbg``."""
+    """``case class CoreSim(c, memTiming) extends Component``.
 
-    def __init__(self, *, async_reset: bool = True):
-        self._async_reset = async_reset
+    Parameters
+    ----------
+    c : Config
+        Defaults to :func:`core_sim_config`.
+    mem_timing : SimMemoryTiming
+        ``SimBmbMemory`` latency model, the zero-latency default.
+    async_reset : bool
+        ``sync`` domain reset kind; ``True`` is the upstream sim build.
+    simulation : bool
+        Forwarded to :class:`~avoodoo.core.Core` (``GenerationFlags.simulation``
+        for the register bank); ``False`` like ``CoreSimGen``.
+    """
+
+    def __init__(self, c: Config | None = None, mem_timing: SimMemoryTiming | None = None,
+                 *, async_reset: bool = True, simulation: bool = False):
+        from avoodoo.core.core import Core
+
+        self.c = core_sim_config() if c is None else c
+        self.mem_timing = SimMemoryTiming() if mem_timing is None else mem_timing
+        self._async_reset = bool(async_reset)
         super().__init__(core_sim_signature())
+
+        # The Scala `val`s, built here so tests can reach them; attached
+        # under the Scala names in `elaborate`.
+        self.core = Core(self.c, simulation=simulation, dbg=True)
+        self.fb_write_ram = self._sim_ram(_mp.fb_mem_bmb_params(self.c), FB_BYTES)
+        self.tex_ram = self._sim_ram(_mp.tex_mem_bmb_params(self.c), TEX_BYTES)
+        fb_p = _mp.fb_mem_bmb_params(self.c)
+        self.fb_arbiter = Arbiter([fb_p] * 5, fb_p, lower_first_priority=True)
+
+    def _sim_ram(self, p, size: int) -> SimMemBusMemory:
+        """``def simRam(p, size) = SimBmbMemory(p = p, size = size, timing = memTiming)``."""
+        return SimMemBusMemory(p=p, size=size, timing=self.mem_timing)
 
     def elaborate(self, platform):
         m = Module()
@@ -120,82 +128,63 @@ class CoreSim(wiring.Component):
         m.d.comb += ClockSignal("sync").eq(self.clk)
         m.d.comb += ResetSignal("sync").eq(self.reset)
 
-        fb = SimRamStub(FB_WORDS)
-        tex = SimRamStub(TEX_WORDS)
-        setattr(m.submodules, FB_RAM_INSTANCE, fb)
-        setattr(m.submodules, TEX_RAM_INSTANCE, tex)
+        core = self.core
+        fb_write_ram = self.fb_write_ram
+        tex_ram = self.tex_ram
+        fb_arbiter = self.fb_arbiter
+        m.submodules.core = core
+        setattr(m.submodules, FB_RAM_INSTANCE, fb_write_ram)
+        setattr(m.submodules, TEX_RAM_INSTANCE, tex_ram)
+        m.submodules.fbArbiter = fb_arbiter
 
-        addr = self.io_cpuBus_cmd_payload_fragment_address
-        is_write = self.io_cpuBus_cmd_payload_fragment_opcode == _BMB_OPCODE_WRITE
-        is_tex = addr[23]
-        is_lfb = ~addr[23] & addr[22]
-
-        rsp_valid = Signal()
-        rsp_source = Signal(4)
-        rsp_status = Signal()  # last accepted read hit register offset 0
-        rsp_from_tex = Signal()
-        rsp_from_ram = Signal()
-
-        cmd_ready = ~rsp_valid | self.io_cpuBus_rsp_ready
-        fire = self.io_cpuBus_cmd_valid & cmd_ready
-
+        # core.io.cpuBus <> io.cpuBus  -- the flat Spinal port list onto the
+        # structured MemBus.
+        cmd, rsp = core.cpu_bus.cmd, core.cpu_bus.rsp
+        cf, rf = cmd.payload.fragment, rsp.payload.fragment
         m.d.comb += [
-            self.io_cpuBus_cmd_ready.eq(cmd_ready),
-            self.io_cpuBus_rsp_valid.eq(rsp_valid),
-            self.io_cpuBus_rsp_payload_last.eq(1),
-            self.io_cpuBus_rsp_payload_fragment_source.eq(rsp_source),
-            self.io_cpuBus_rsp_payload_fragment_opcode.eq(0),
-            self.io_cpuBus_rsp_payload_fragment_data.eq(
-                Mux(
-                    rsp_from_ram,
-                    Mux(rsp_from_tex, tex.rdata, fb.rdata),
-                    Mux(rsp_status, _STATUS_IDLE, 0),
-                )
-            ),
+            cmd.valid.eq(self.io_cpuBus_cmd_valid),
+            self.io_cpuBus_cmd_ready.eq(cmd.ready),
+            cmd.payload.last.eq(self.io_cpuBus_cmd_payload_last),
+            cf.source.eq(self.io_cpuBus_cmd_payload_fragment_source),
+            cf.opcode.eq(self.io_cpuBus_cmd_payload_fragment_opcode),
+            cf.address.eq(self.io_cpuBus_cmd_payload_fragment_address),
+            cf.length.eq(self.io_cpuBus_cmd_payload_fragment_length),
+            cf.data.eq(self.io_cpuBus_cmd_payload_fragment_data),
+            cf.mask.eq(self.io_cpuBus_cmd_payload_fragment_mask),
+            self.io_cpuBus_rsp_valid.eq(rsp.valid),
+            rsp.ready.eq(self.io_cpuBus_rsp_ready),
+            self.io_cpuBus_rsp_payload_last.eq(rsp.payload.last),
+            self.io_cpuBus_rsp_payload_fragment_source.eq(rf.source),
+            self.io_cpuBus_rsp_payload_fragment_opcode.eq(rf.opcode),
+            self.io_cpuBus_rsp_payload_fragment_data.eq(rf.data),
         ]
 
-        # Both RAMs see the command address every cycle; the read port is
-        # synchronous, so its data lands exactly when rsp_valid comes up.
-        m.d.comb += [
-            fb.addr.eq(addr[2:22]),
-            fb.wdata.eq(self.io_cpuBus_cmd_payload_fragment_data),
-            fb.wmask.eq(self.io_cpuBus_cmd_payload_fragment_mask),
-            fb.we.eq(fire & is_write & is_lfb),
-            tex.addr.eq(addr[2:23]),
-            tex.wdata.eq(self.io_cpuBus_cmd_payload_fragment_data),
-            tex.wmask.eq(self.io_cpuBus_cmd_payload_fragment_mask),
-            tex.we.eq(fire & is_write & is_tex),
-        ]
-
-        with m.If(rsp_valid & self.io_cpuBus_rsp_ready):
-            m.d.sync += rsp_valid.eq(0)
-        with m.If(fire):
-            m.d.sync += [
-                rsp_valid.eq(1),
-                rsp_source.eq(self.io_cpuBus_cmd_payload_fragment_source),
-                rsp_status.eq(~is_write & (addr[2:24] == 0)),
-                rsp_from_ram.eq(~is_write & (is_tex | is_lfb)),
-                rsp_from_tex.eq(is_tex),
-            ]
-
-        # --- dbg bundle -------------------------------------------------
-        swap_count = Signal(2, init=0)
-        with m.If(self.dbg_swap_count_we):
-            m.d.sync += swap_count.eq(self.dbg_swap_count_set)
+        # fbArbiter.io.inputs(0..4) <> core.io.fb*  ;  fbArbiter.io.output <> fbWriteRam.io.bus
+        membus.connect(m, fb_arbiter.inputs[0], core.fb_mem_write)
+        membus.connect(m, fb_arbiter.inputs[1], core.fb_color_write_mem)
+        membus.connect(m, fb_arbiter.inputs[2], core.fb_aux_write_mem)
+        membus.connect(m, fb_arbiter.inputs[3], core.fb_color_read_mem)
+        membus.connect(m, fb_arbiter.inputs[4], core.fb_aux_read_mem)
+        membus.connect(m, fb_write_ram.bus, fb_arbiter.output)
+        # core.io.texMem <> texRam.io.bus
+        membus.connect(m, tex_ram.bus, core.tex_mem)
 
         m.d.comb += [
-            self.dbg_swap_count.eq(swap_count),
-            self.dbg_pci_cmd_ready.eq(cmd_ready),
-            self.dbg_frontdoor_cmd_ready.eq(cmd_ready),
-            self.dbg_pci_fifo_free.eq(_STATUS_IDLE),
-            self.dbg_sync_drained.eq(1),
-            self.dbg_pipeline_busy.eq(0),
+            core.status_inputs.v_retrace.eq(self.io_vRetrace),
+            core.status_inputs.mem_fifo_free.eq(0xFFFF),
+            core.status_inputs.pci_interrupt.eq(0),
+            core.fb_base_addr.eq(0),
+            core.flush_fb_caches.eq(self.io_flushFbCaches),
+            # Trace replay does not need scanout. Hold the HDMI domain in reset.
+            core.hdmi.clock.eq(Const(0, 1)),
+            core.hdmi.reset.eq(Const(1, 1)),
         ]
 
-        # Sim-only inputs the stub does not model yet; read them so Amaranth
-        # does not warn about unused signature members.
-        m.d.comb += []
-        _ = self.io_vRetrace, self.io_flushFbCaches, self.io_cpuBus_cmd_payload_last
-        _ = self.io_cpuBus_cmd_payload_fragment_length
+        # --- dbg bundle: straight through from Core(dbg=True) --------------
+        for name, _width, flow in DBG_PORTS:
+            if flow is wiring.Out:
+                m.d.comb += getattr(self, name).eq(getattr(core, name))
+            else:
+                m.d.comb += getattr(core, name).eq(getattr(self, name))
 
         return m

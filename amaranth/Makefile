@@ -33,7 +33,7 @@ help:
 	@echo "venv           uv sync (create/refresh .venv)"
 	@echo "test           pytest"
 	@echo "rtl-module MOD=Counter   elaborate one module -> rtl/<MOD>.v"
-	@echo "rtl-core-sim   CoreSim.v for the Verilator Glide harness (stub until Phase 7.2)"
+	@echo "rtl-core-sim   CoreSim.v for the Verilator Glide harness (~2 min: strip_meminit)"
 	@echo "sim-model      verilate CoreSim.v + build the harness objects (Linux, -m32)"
 	@echo "sim-build TEST=test00   link one Glide test against the Amaranth CoreSim"
 	@echo "sim-run   TEST=test00   run it and convert the screenshot to PNG"

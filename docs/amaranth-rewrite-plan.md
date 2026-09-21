@@ -952,7 +952,7 @@ Spinal core does.
       `WriteReq` stream) and adds a 400-case stride sweep.
 
 ### Phase 4
-- [x] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [x] framebuffer_access  - [ ] pixel_pipeline
+- [x] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [x] framebuffer_access  - [x] pixel_pipeline
 - [x] **color_combine** (2026-09-21, commit 70d386f). lib.pipeline StageLink build, the dead
       AOTHER factor (zero-bit UQ(0,8)) reproduced; 32 pysim tests; clean at 1e6 x 3 and at
       0.9/0.12 backpressure.
@@ -1067,6 +1067,71 @@ Spinal core does.
         (`test_backpressure_fills_the_queues`; the back-pressure diff run reaches it).
       * Chroma key is a pass-through here; the kill is in `PixelPipeline` on this
         module's output.
+- [x] **pixel_pipeline** (2026-09-21). `amaranth/avoodoo/core/pixel_pipeline.py`
+      (`core/PixelPipeline.scala`, 714 lines): the assembly. Pure composition of the
+      already-clean stages through `lib/stream.py` -- `arbiter_on(assumeOhInput)` for
+      the two command streams, the y-origin `map`, `stage`/`fork2(synchronous)` /
+      `queue(64)` / `join` around the TMU, the three hand-written first-wins merges
+      (`fogArbiterInput`, `preDitherRaw`, `colorWriteMerged`/`auxWriteMerged`), the
+      `throwWhen` kills, every `>/->` as `m2s_pipe(s2m_pipe(..))` -- plus the two
+      `SpanPrefetcher`s, the five `Reg init(0)` counters, `CoreBusyMap` /
+      `CoreWritePathMap` / `pipelineBusySources`. Structure map (Scala `val` -> Python
+      name) in the docstring. Also here: `Controls.fromRegisterBank`,
+      `ExternalBusy.fromCore`, `Lfb.Regs.fromRegisterBank`,
+      `FastfillWrite.Regs.fromRegisterBank` (the last two as free functions, since the
+      stage modules were closed) and the four companion-object payload builders
+      (`Tmu.Input.fromRasterizer`, `ColorCombine.Input.fromTmuAndRaster`,
+      `Write.PreDither.fromFramebufferAccess`, `Write.Input.colorFromDither`).
+      **Diff-clean at 1e6 cycles x seeds 1,2,3** (`make diff MOD=PixelPipeline`, 660
+      ports paired, zero overrides, `GenOne`'s `DiffHierWrap` row) with
+      `tests/diff/pixel_pipeline_stimulus.py`: real triangles on
+      `io_triangleCmd`/`io_ftriangleCmd` (one-hot, consistent packed texture tables --
+      a random `texTables` word parks the TMU cache), `tmu_stimulus.TexMemSlave` on
+      `texRead`, `framebuffer_access_stimulus.PlaneMemory` on both read-response
+      streams, everything else random. Per seed: 830-1120 triangles, 66-67k texture
+      bursts (~530k beats), 28-38k colour and 18-22k aux plane reads, 79-210k colour
+      and 60-370k aux word writes, 24-37 fastfills. Back-pressure run
+      (`--valid-density 0.9 --ready-density 0.12`, 1e6 x 3) in the same commit's report.
+      `tests/test_pixel_pipeline.py` (14 tests, 60 s): the 660-leaf port surface minus
+      the nine undriven `CoreDebug` words, `controls_from_register_bank` field by field
+      against a register-bank stub, the (dead-upstream) `buildPaletteWriteFlow`, and
+      pysim triangles through the whole pipeline with `SimMemBusMemory` on `texRead`
+      checked against a *composition of the existing stage models*
+      (`test_triangle_setup.SetupModel` edges + the `test_rasterizer` box scan for
+      coverage, `test_color_combine.model` for the colour, RGB565 truncation, `Write`
+      lane packing): flat triangles on both command streams, a depth-buffered trio
+      (aux plane holds `newDepth`, nearer overwrites, farther is killed pixel for pixel
+      and counted in `zFuncFail`), a textured one over a zero texture memory, the
+      `nopCmdReset` clear, with `pipelineBusy == OR(sources)` and the arbiter's
+      ready-implies-valid checked every cycle. Findings:
+      * **`io.debug` is `CoreDebug` minus nine words.** `fbAccess` and the eight
+        `fb{Color,Aux}Cache*` words are never assigned upstream (naming doc §1.7), so
+        `DiffHierWrap` drops them and the port's `debug` is `PixelPipelineDebug`
+        (`pipelineBusy`, `busy`, `writePath`, `pipelineBusySources` -- the last one
+        exists because of the working tree's one-line local edit). `Core` must zero the
+        nine in `RegisterBank.io.debug`. The harness rejects unpaired Amaranth leaves,
+        so this is the only shape that diffs.
+      * **`AFix.asUInt` clamps negatives to zero** (`AFix.scala:1203`): the first 1e6
+        run failed at seed 1, cycle 149826 with both prefetch addresses off by one
+        sign bit because `SpanPrefetcher.pixelX` / `spanY` had been written as a raw
+        reinterpretation. `lib/fixed.py` already had the clamp
+        (`AFixValue.as_unsigned`); pinned by
+        `test_span_prefetcher_clamps_negative_coordinates_like_afix_asuint`. Not the
+        same as `coords(0).asUInt` in `Write`, which is a plain `SInt` reinterpret.
+      * `chromaKill` (l. 373) and `alphaPassed`/`alphaKill` (l. 432-443) are computed
+        upstream and never read (only the `fbAccess*` pair after `FramebufferAccess`
+        feeds the `throwWhen`); `buildPaletteWriteFlow` is a `private def` nothing
+        calls, so `io.controls.paletteRegs` reaches nothing. Ported as documented
+        dead code (the flow builder) or a comment (the kills); Spinal prunes all three.
+      * The `pixelsOut` counter's two `when`s sit *after* the `clearPerfCounters`
+        block, so a fastfill write landing on a clear cycle still adds -- kept, with
+        the statement order.
+      * Rasterizer coverage is at pixel centres: `TriangleSetup.edgeStart` is
+        `a*(xmin+.5) + b*(ymin+.5) + c`, so the box scan must step from `edgeStart`,
+        not evaluate `a*x + b*y + c` at integer corners (two rows short otherwise).
+      * With random `io.controls` every cycle `nopCmdReset` clears the counters
+        every other cycle, so `io_stats_*` are near zero in the diff report; the pysim
+        tests are where the counters are checked.
 
 ### Phase 5
 - [x] tex_layout_tables  - [x] tmu_texel_decoder  - [x] tmu_texture_cache  - [x] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
