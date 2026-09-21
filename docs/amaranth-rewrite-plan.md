@@ -996,7 +996,20 @@ Spinal core does.
       `frontend/swap_buffer.py`.
 
 ### Phase 5
-- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [ ] tmu_texture_cache  - [ ] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
+- [x] tex_layout_tables  - [x] tmu_texel_decoder  - [x] tmu_texture_cache  - [ ] tmu  - [x] texture_mem  - [x] texture_mem_subsystem
+- [x] **tmu_texture_cache** (2026-09-21). `avoodoo/texture/tmu_texture_cache.py`, 1:1 with
+      `TmuTextureCache.scala` (16 slots x 2 ways x 8-word lines, 16-deep request window);
+      structure map in the docstring. 13 pysim tests (ReuseTest cases, FormalTest asserts
+      per cycle, a request-level model predicting every fill and texel). Diff clean at
+      1e6 x seeds 1,2,3 and at 0.9/0.12 backpressure, 102 ports, one override
+      (`dbgDataValid -> sample_fetch__valid`: Spinal's setName renames the port). Needs the
+      responder `tests/diff/tmu_texture_cache_stimulus.py`: a tap decoding outside every
+      LOD livelocks the cache on both sides, so random stimulus compares two stuck designs.
+      All 13 RAMs `init=[]` + distributed_ram. Findings reproduced 1:1: a cold miss answers
+      with the pre-capture texel (0) for the tap resolved on the emitting beat (confirmed
+      through the whole Tmu; the Console builds without the cache, CoreSim with it); the
+      16-bit bank formula lets bilinear taps alias (formal `noTapBankAlias` assumption);
+      `io.busy` drops one cycle after a push into the empty request FIFO.
 - [x] **tex_layout_tables** (2026-09-20). `amaranth/avoodoo/texture/tex_layout_tables.py`
       is the pure-Python transliteration of the Scala object (`TexConfig`/`Tables`
       dataclasses, `compute`, 22-bit wrapping kept); `tests/test_tex_layout_tables.py`
