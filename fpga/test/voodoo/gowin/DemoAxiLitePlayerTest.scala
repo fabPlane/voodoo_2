@@ -20,6 +20,14 @@ class DemoAxiLitePlayerTest extends AnyFunSuite {
   private lazy val compiled =
     SimConfig.withVerilator.compile(DemoAxiLitePlayer(Seq(bank0, bank1), addressWidth = 24))
 
+  private lazy val paddedCompiled = SimConfig.withVerilator.compile(
+    DemoAxiLitePlayer(
+      Seq(bank0, bank1),
+      addressWidth = 24,
+      physicalBankDepths = Seq(bank0.length + 4, bank1.length)
+    )
+  )
+
   private def init(dut: DemoAxiLitePlayer): Unit = {
     dut.io.enable #= false
     dut.io.start #= false
@@ -77,6 +85,16 @@ class DemoAxiLitePlayerTest extends AnyFunSuite {
   test("start with select replays a later bank") {
     compiled.doSim("demo-player-bank1") { dut =>
       boot(dut)
+      play(dut, 1, bank1)
+    }
+  }
+
+  test("physical padding is skipped and preserves later bank selection") {
+    paddedCompiled.doSim("demo-player-padding") { dut =>
+      boot(dut)
+      play(dut, 0, bank0)
+      dut.io.enable #= false
+      dut.clockDomain.waitSampling()
       play(dut, 1, bank1)
     }
   }

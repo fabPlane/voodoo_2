@@ -12,18 +12,27 @@ import voodoo.artix.AxiLite4ToBmbBridge
 case class DemoAxiLitePlayer(
     banks: Seq[IndexedSeq[(Long, Long)]],
     loopAt: Seq[Int] = Seq.empty,
-    addressWidth: Int = CoreGowin.barAddressWidth
+    addressWidth: Int = CoreGowin.barAddressWidth,
+    physicalBankDepths: Seq[Int] = Seq.empty
 ) extends Component {
   require(banks.nonEmpty && banks.forall(_.nonEmpty), "demo player needs at least one write per bank")
   val loopIdx = if (loopAt.isEmpty) banks.map(_ => 0) else loopAt
   require(loopIdx.length == banks.length)
+  val bankDepths = if (physicalBankDepths.isEmpty) banks.map(_.length) else physicalBankDepths
+  require(bankDepths.length == banks.length, "physical bank depths must match the bank count")
+  require(
+    bankDepths.zip(banks).forall { case (depth, bank) => depth >= bank.length },
+    "physical bank depth cannot be shorter than its trace"
+  )
 
-  val commands = banks.flatten
+  val commands = banks.zip(bankDepths).flatMap { case (bank, depth) =>
+    bank ++ IndexedSeq.fill(depth - bank.length)((0L, 0L))
+  }
   val count = commands.length
   val indexWidth = log2Up(count + 1)
   val selectWidth = log2Up(banks.length max 2)
-  val starts = banks.scanLeft(0)(_ + _.length).dropRight(1)
-  val ends = banks.scanLeft(0)(_ + _.length).tail.map(_ - 1)
+  val starts = bankDepths.scanLeft(0)(_ + _).dropRight(1)
+  val ends = starts.zip(banks).map { case (start, bank) => start + bank.length - 1 }
   val loops = starts.zip(loopIdx).map { case (s, l) => s + l }
 
   val io = new Bundle {

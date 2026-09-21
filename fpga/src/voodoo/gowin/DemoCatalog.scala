@@ -19,6 +19,10 @@ object DemoCatalog {
   )
 
   val logoLoopAt = 362
+  // Keep the first ROM bank at its original routed depth. The corrected logo
+  // trace omits two redundant clear writes per frame, but moving every later
+  // bank made the otherwise-full GW5AST design unroutable.
+  val logoPhysicalDepth = 2630
 
   private def sdk(
       title: String,

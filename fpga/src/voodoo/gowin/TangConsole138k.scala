@@ -96,7 +96,16 @@ case class TangConsole138k(c: Config) extends Component {
     coreCd,
     ddrCd
   )
-  val player = DemoAxiLitePlayer(DemoTraceRom.banks(), DemoCatalog.playerLoopAt)
+  val demoBanks = DemoTraceRom.banks()
+  val demoBankDepths = demoBanks.map(_.length).updated(
+    DemoCatalog.logoIndex,
+    DemoCatalog.logoPhysicalDepth
+  )
+  val player = DemoAxiLitePlayer(
+    demoBanks,
+    DemoCatalog.playerLoopAt,
+    physicalBankDepths = demoBankDepths
+  )
   val ctrlCd = ClockDomain(
     clock = io.ctrlClk,
     reset = io.ctrlReset,
