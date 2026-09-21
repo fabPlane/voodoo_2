@@ -18,20 +18,29 @@
 #include <glide.h>
 #include <glideutl.h>
 
-#define HB_W 640.0f
-#define HB_H 480.0f
+/* Screen size in pixels. Defaults to 640x480 (what the console ROMs capture);
+ * set HB_RES=320x200 (or 320x240) to render smaller/faster screenshots. All
+ * demos place geometry as fractions of HB_W/HB_H, so they scale automatically. */
+static float HB_W = 640.0f;
+static float HB_H = 480.0f;
 
 static GrHwConfiguration hb_hw;
 
-/* Open a 640x480, double-buffered, ABGR window on the first SST. */
+/* Open a double-buffered, ABGR window on the first SST. */
 static int hb_open(void) {
+    GrScreenResolution_t res = GR_RESOLUTION_640x480;
+    const char *want = getenv("HB_RES");
+    if (want && !strcmp(want, "320x200")) { res = GR_RESOLUTION_320x200; HB_W = 320; HB_H = 200; }
+    else if (want && !strcmp(want, "320x240")) { res = GR_RESOLUTION_320x240; HB_W = 320; HB_H = 240; }
+    else if (want && !strcmp(want, "512x384")) { res = GR_RESOLUTION_512x384; HB_W = 512; HB_H = 384; }
+
     grGlideInit();
     if (!grSstQueryHardware(&hb_hw)) {
         fprintf(stderr, "hb: no Voodoo hardware detected\n");
         return 0;
     }
     grSstSelect(0);
-    if (!grSstWinOpen(0, GR_RESOLUTION_640x480, GR_REFRESH_60Hz,
+    if (!grSstWinOpen(0, res, GR_REFRESH_60Hz,
                       GR_COLORFORMAT_ABGR, GR_ORIGIN_UPPER_LEFT, 2, 1)) {
         fprintf(stderr, "hb: grSstWinOpen failed\n");
         return 0;
