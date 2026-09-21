@@ -1353,7 +1353,14 @@ class FifoCC(wiring.Component):
         pop_dom = self.pop_domain
         if self.with_pop_buffered_reset:
             pop_dom = "avoodoo_fifocc_pop"
-            m.domains += ClockDomain(pop_dom, local=True, async_reset=True)
+            # Spinal's withBufferedResetFrom = ResetCtrl.asyncAssertSyncDeassert
+            # CreateCd keeps the pop domain's own SYNC resetKind; only the
+            # two-flop reset bridge is async (that bridge lives inside
+            # amaranth's ResetSynchronizer). An async_reset pop domain here
+            # cancels a pending RAM read on the reset edge that Spinal still
+            # performs, which the AxiLite4ClockCrossing 1e6 gate caught at
+            # seed 3 cycle 0 as stale read-register state.
+            m.domains += ClockDomain(pop_dom, local=True)
             m.d.comb += ClockSignal(pop_dom).eq(ClockSignal(self.pop_domain))
             m.submodules.pop_reset = cdc.ResetSynchronizer(
                 ResetSignal(self.push_domain), domain=pop_dom)

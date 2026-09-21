@@ -314,7 +314,9 @@ def buffered_reset_domain(m, name, *, clk, reset_from, stages=None):
     ``reset_from`` is a domain name; its ``ResetSignal`` is the source.
     ``avoodoo.lib.stream.FifoCC`` open-codes the same three lines.
     """
-    cd = ClockDomain(name, async_reset=True, local=True)
+    # SYNC resetKind, as asyncAssertSyncDeassertCreateCd keeps the target
+    # domain's kind; the async assert lives in the synchroniser chain only.
+    cd = ClockDomain(name, local=True)
     m.domains += cd
     m.d.comb += cd.clk.eq(clk)
     reset_synchronizer(m, ResetSignal(reset_from), domain=name, stages=stages)
@@ -372,10 +374,13 @@ SPINAL_VS_AMARANTH_CDC = """
    Amaranth ClockDomain is always active-high and is sync- or async-reset by
    construction. The design's SpinalConfig is SYNC/HIGH
    (CoreGowinGen.scala:12-15), which is the Amaranth default, so `clock_domain`
-   is a one-to-one port. The single place where the Spinal build deviates from
-   its own global config is inside ResetCtrl.asyncAssertSyncDeassert, which
-   copies the domain with `resetKind = ASYNC` -- reproduced by
-   `buffered_reset_domain`'s `async_reset = True`.
+   is a one-to-one port. ResetCtrl.asyncAssertSyncDeassert copies the domain
+   with `resetKind = ASYNC` only for its *sampler* (the BufferCC chain);
+   asyncAssertSyncDeassertCreateCd (CrossClock.scala:294) returns
+   `clockCd.copy(clock, reset = <synchronised>)` with the config untouched,
+   so the domain a FifoCC pop side runs in stays SYNC. Amaranth's
+   ResetSynchronizer keeps its chain in its own local async domain, so
+   `buffered_reset_domain` and FifoCC build a plain sync-reset domain.
 
 4. The reset synchroniser is structurally the same circuit in both, and the
    deassertion latency is the same 2 cycles: Spinal runs BufferCC(input =

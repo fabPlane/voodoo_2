@@ -222,8 +222,14 @@ def test_reset_synchronizer_deasserts_after_two_destination_edges():
     sim.run()
 
 
-def test_buffered_reset_domain_is_async_reset_and_asserts_immediately():
-    """The source reset takes the domain down without a destination edge."""
+def test_buffered_reset_domain_is_sync_reset_with_async_assert_bridge():
+    """The created domain keeps SYNC resetKind; the bridge asserts async.
+
+    CrossClock.scala:294 asyncAssertSyncDeassertCreateCd is
+    ``clockCd.copy(clock, reset = asyncAssertSyncDeassert(...))`` with no
+    config change, so only the sampler (inside the BufferCC) is ASYNC. The
+    AxiLite4ClockCrossing 1e6 gate caught the async variant diverging.
+    """
     m = Module()
     cd_a = ClockDomain("a")
     cd_b = ClockDomain("b")
@@ -233,7 +239,7 @@ def test_buffered_reset_domain_is_async_reset_and_asserts_immediately():
     m.d.comb += cd_a.rst.eq(arst)
     cd_bx = cdc.buffered_reset_domain(m, "bx", clk=ClockSignal("b"),
                                       reset_from="a")
-    assert cd_bx.async_reset is True, "Spinal copies the CD with resetKind = ASYNC"
+    assert cd_bx.async_reset is False, "CreateCd keeps clockCd.config (SYNC here)"
     counter = Signal(8)
     m.d.bx += counter.eq(counter + 1)
 
@@ -242,8 +248,9 @@ def test_buffered_reset_domain_is_async_reset_and_asserts_immediately():
         for _ in range(8):
             await ctx.tick("b")
         assert ctx.get(counter) > 0
-        # Assert the *source* reset between two destination edges: an async
-        # assertion shows up straight away.
+        # Assert the *source* reset between two destination edges: the
+        # synchroniser's async assert drives the domain's rst straight away,
+        # even though the domain itself only reacts on its next clock edge.
         ctx.set(arst, 1)
         await ctx.delay(SLOW / 8)
         assert ctx.get(cd_bx.rst) == 1
