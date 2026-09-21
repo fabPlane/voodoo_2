@@ -287,6 +287,13 @@ makes the Amaranth core "the core".
 
 ### Phase 8 — Gowin Console port
 
+8.0 **Prerequisite found in Phase 5:** the Console builds with
+    `useTexFillCache = false` (`CoreGowinGen.scala:73`), which selects
+    `TmuNoTextureCache` (`TmuTextureCache.scala:865-996`). Port it to
+    `avoodoo/texture/tmu_no_texture_cache.py`, diff it (a Tmu row elaborated with
+    the Console config), and make `tmu.py` select it from `c.use_tex_fill_cache`.
+
+
 8.1 `gowin/address_map.py`, `core_gowin.py` (103), `axi4_to_ddr_native.py`
     (254), `ddr_native_cdc.py` (125), and the `GowinDdrNative` signature.
     Diff tests against `Axi4ToGowinDdrNativeTest` stimulus.
@@ -778,7 +785,7 @@ Spinal core does.
       mux. Not a separate diff row — `GenOne` says "diff it through RegisterBank" and 2.2 does.
 
 ### Phase 2
-- [x] regdef  - [x] register_bank  - [x] address_remapper  - [x] swap_buffer  - [x] lfb  - [x] cpu_frontdoor  - [ ] core_types
+- [x] regdef  - [x] register_bank  - [x] address_remapper  - [x] swap_buffer  - [x] lfb  - [x] cpu_frontdoor  - [x] core_types (grown per module; every layout diffed inside its consumer)
 - [x] 2.1 regdef — 2026-09-20. `amaranth/avoodoo/frontend/regdef.py`: 136 registers (2 of them
       simulation-only), 279 fields, 30 float aliases, 5 command streams, 158 PciFifo decode
       entries (143 FIFO=Yes, 71 Sync=Yes, 15 FIFO=No), all as frozen dataclasses with no
@@ -879,7 +886,12 @@ Spinal core does.
       the `Rwait` entry) and for `fbReadCmdPending` (cmd.fire clears, rsp.fire re-arms).
 
 ### Phase 3
-- [x] triangle_setup  - [ ] rasterizer  - [x] span_walker  - [ ] fastfill (3 files)  - [x] write
+- [x] triangle_setup  - [x] rasterizer  - [x] span_walker  - [x] fastfill (3 files)  - [x] write
+- [x] **rasterizer** (2026-09-21, commit 465c530). SpanRasterizer and the whole Rasterizer
+      diff clean at 1e6 x 3; 25 pysim tests. Its diff found the AFix-in-layout signedness
+      bug (b47c9b2).
+- [x] **fastfill** (2026-09-21, commit a203153). Fastfill, FastfillWordWriter,
+      FastfillWrite each clean at 1e6 x 3; 50 pysim tests.
   - span_walker — **2026-09-20**. `avoodoo/raster/span_walker.py` (+ its `object SpanWalker` layouts; the TriangleSetup/Rasterizer record types it consumes are in `core/core_types.py`). `make diff MOD=SpanWalker` **clean at 1e6 cycles x seeds 1,2,3** (1090 s on the Mac); `tests/diff/test_diff_span_walker.py` (20k x 3, plus a ready-density 0.1 run) and `tests/test_span_walker.py` (8 tests: cycle-accurate Python reference model on `fixed_model`, the ClipDisabled regression literal `(0, 1, 0)`, the clip-left clamp, the in-module formal span invariants, the FormalDut sequencing invariants, a `Reg`-vs-`RegInit` reset_less audit, and a port-name/width cross-check against `SpanWalker_spinal.v`). First diff run caught the `AFixValue` layout-member signedness bug in `lib/fixed.py` (fixed by p1-fixed). Not ported: `SpanWalkerFormalTest`'s two literal `xEnd` constants — the RTL (Spinal and this port alike) emits `visibleEndPix - 1`, which the upstream *simulation* regression agrees with; see the test module docstring.
 - [x] **triangle_setup** (2026-09-20). `amaranth/avoodoo/raster/triangle_setup.py` (498
       Scala lines), plus `avoodoo/vertex.py` (the `package object voodoo` vertex helpers
@@ -932,7 +944,10 @@ Spinal core does.
       `WriteReq` stream) and adds a 400-case stride sweep.
 
 ### Phase 4
-- [ ] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [x] framebuffer_access  - [ ] pixel_pipeline
+- [x] color_combine  - [x] fog  - [x] dither tables  - [x] dither module  - [x] framebuffer_access  - [ ] pixel_pipeline
+- [x] **color_combine** (2026-09-21, commit 70d386f). lib.pipeline StageLink build, the dead
+      AOTHER factor (zero-bit UQ(0,8)) reproduced; 32 pysim tests; clean at 1e6 x 3 and at
+      0.9/0.12 backpressure.
 - [x] **fog** (2026-09-20). `amaranth/avoodoo/pixel/fog.py`, three `m2sPipe`
       stages, `ColorCombine.Output` in / `Fog.Output` out. **The fog table is
       not a `Mem`**: `io.fogTable` is `in Vec(Bits(16 bits), 64)`, 64 flat input
