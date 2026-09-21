@@ -779,6 +779,7 @@ def word_swap_and_swizzle(data_, do_word_swap, do_byte_swizzle):
                    after_word_swap[8:16], after_word_swap[0:8])
     return Mux(do_byte_swizzle, swizzled, after_word_swap)
 
+
 # ---------------------------------------------------------------------------
 # framebuffer/FramebufferPlaneBuffer.scala + FramebufferPlaneReader.scala --
 # the plane read-side bundles (agent p6-planereader, append-only block).
@@ -821,3 +822,134 @@ class FramebufferPrefetchReq(data.StructLayout):
             "end_address": unsigned(c.address_width),
         })
 
+
+# ---------------------------------------------------------------------------
+# core/CoreTypes.scala -- CoreStats / CoreBusyMap / CoreWritePathMap / CoreDebug,
+# plus the two small bundles RegisterBank's ports carry (appended by the
+# register_bank port; `frontend/register_bank.py`).
+#
+# `CoreBusyMap.bitsValue` / `CoreWritePathMap.bitsValue` assign bit i from the
+# i-th declared field, so the packed layout *is* `bitsValue` and the two
+# simulation-only debug registers read `debug.busy.as_value()` directly.
+# ---------------------------------------------------------------------------
+
+__all__ += [
+    "CoreStats",
+    "CoreBusyMap",
+    "CoreWritePathMap",
+    "CoreDebug",
+    "PaletteWrite",
+    "StatusInputs",
+    "FloatShadowWriteLayout",
+]
+
+
+class CoreStats(data.StructLayout):
+    """``case class CoreStats()`` (``core/CoreTypes.scala:61``) -- five 24-bit counters."""
+
+    def __init__(self) -> None:
+        super().__init__({
+            "pixels_in": unsigned(24),
+            "chroma_fail": unsigned(24),
+            "z_func_fail": unsigned(24),
+            "a_func_fail": unsigned(24),
+            "pixels_out": unsigned(24),
+        })
+
+
+class CoreBusyMap(data.StructLayout):
+    """``case class CoreBusyMap()`` (``core/CoreTypes.scala``) -- 32 busy sources, bit i = field i."""
+
+    FIELDS = (
+        "triangle_setup_valid", "rasterizer_running", "tmu_input_valid", "tmu_busy",
+        "fb_access_busy", "color_combine_input_valid", "fog_busy", "fb_access_input_valid",
+        "write_color_input_valid", "write_aux_input_valid", "fastfill_running", "swap_waiting",
+        "lfb_busy", "fastfill_output_valid", "fastfill_output_ready", "fastfill_write_valid",
+        "fastfill_write_ready", "pre_dither_merged_valid", "pre_dither_merged_ready",
+        "pre_dither_piped_valid", "pre_dither_piped_ready", "dither_output_valid",
+        "dither_output_ready", "dither_joined_valid", "dither_joined_ready", "color_fork_valid",
+        "color_fork_ready", "aux_fork_valid", "aux_fork_ready", "write_color_ready",
+        "write_aux_ready", "fastfill_write_aux_write",
+    )
+
+    def __init__(self) -> None:
+        super().__init__({name: unsigned(1) for name in self.FIELDS})
+
+
+class CoreWritePathMap(data.StructLayout):
+    """``case class CoreWritePathMap()`` (``core/CoreTypes.scala``) -- 32 write-path flags."""
+
+    FIELDS = (
+        "fastfill_running", "fastfill_output_valid", "fastfill_output_ready",
+        "fastfill_write_valid", "fastfill_write_ready", "pre_dither_merged_valid",
+        "pre_dither_merged_ready", "dither_joined_valid", "dither_joined_ready",
+        "color_fork_valid", "color_fork_ready", "color_write_input_valid",
+        "color_write_input_ready", "color_write_fb_valid", "color_write_fb_ready",
+        "fb_color_busy", "fb_aux_busy", "aux_fork_valid", "aux_fork_ready",
+        "aux_write_input_valid", "aux_write_input_ready", "aux_write_fb_valid",
+        "aux_write_fb_ready", "fb_fill_hits_non_zero", "fb_fill_misses_non_zero",
+        "fb_fill_burst_count_non_zero", "fb_fill_burst_beats_non_zero",
+        "fb_fill_stall_cycles_non_zero", "pixels_in_non_zero", "pixels_out_non_zero",
+        "z_func_fail_non_zero", "a_func_fail_non_zero",
+    )
+
+    def __init__(self) -> None:
+        super().__init__({name: unsigned(1) for name in self.FIELDS})
+
+
+class CoreDebug(data.StructLayout):
+    """``case class CoreDebug()`` (``core/CoreTypes.scala:387``).
+
+    The ten trailing 32-bit words are declared upstream and never assigned by
+    anything (``docs/amaranth/spinal-naming-and-harness.md`` §1.7); they stay
+    in the layout because ``RegisterBank.io.debug`` carries them as ports.
+    """
+
+    def __init__(self) -> None:
+        super().__init__({
+            "pipeline_busy": unsigned(1),
+            "busy": CoreBusyMap(),
+            "write_path": CoreWritePathMap(),
+            "pipeline_busy_sources": unsigned(32),
+            "fb_access": unsigned(32),
+            "fb_color_cache": unsigned(32),
+            "fb_color_cache_req": unsigned(32),
+            "fb_color_cache_expected": unsigned(32),
+            "fb_color_cache_occupancy": unsigned(32),
+            "fb_aux_cache": unsigned(32),
+            "fb_aux_cache_req": unsigned(32),
+            "fb_aux_cache_expected": unsigned(32),
+            "fb_aux_cache_occupancy": unsigned(32),
+        })
+
+
+class PaletteWrite(data.StructLayout):
+    """``RegisterBank.PaletteWrite()`` (``frontend/RegisterBank.scala:1253``)."""
+
+    def __init__(self) -> None:
+        super().__init__({"address": unsigned(8), "data": unsigned(24)})
+
+
+class StatusInputs(data.StructLayout):
+    """``RegisterBank.io.statusInputs`` (``frontend/RegisterBank.scala:34``)."""
+
+    def __init__(self) -> None:
+        super().__init__({
+            "v_retrace": unsigned(1),
+            "mem_fifo_free": unsigned(16),
+            "pci_interrupt": unsigned(1),
+        })
+
+
+class FloatShadowWriteLayout(data.StructLayout):
+    """``case class FloatShadowWrite(busAddrWidth)`` (``bus/PciFifo.scala:18``).
+
+    The same two fields as ``avoodoo.bus.pci_fifo.FloatShadowWrite``; declared
+    here too so the register bank does not import the FIFO.  Two
+    ``StructLayout``\\ s with equal fields are equal, so ``wiring.connect``
+    accepts either end.
+    """
+
+    def __init__(self, bus_addr_width: int) -> None:
+        self.bus_addr_width = bus_addr_width
+        super().__init__({"address": unsigned(bus_addr_width), "raw": signed(50)})

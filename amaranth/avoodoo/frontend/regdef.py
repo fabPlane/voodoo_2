@@ -95,44 +95,23 @@ class Access(str, enum.Enum):
         return self.value
 
 
-@dataclass(frozen=True)
-class RegisterCategory:
-    """``voodoo.bus.RegisterCategory`` (RegisterCategory.scala:23).
-
-    Two orthogonal flags:
-
-    ``fifo_bypass``
-        ``fifoBypass`` — ``True`` (datasheet "FIFO=No") means the write skips
-        the 64-entry PCI FIFO and goes straight at the register file.
-    ``sync_required``
-        ``syncRequired`` — ``True`` (datasheet "Sync=Yes") means PciFifo holds
-        the drain until the pixel pipeline is idle.
-
-    ``spinal_name`` is the name of the ``RegisterCategory`` factory upstream
-    uses at the declaration site. ``fifoNoSync`` and ``readOnly`` are the same
-    value (RegisterCategory.scala:36 and :55); the name is kept so the
-    generated map reads like the Scala.
-    """
-
-    fifo_bypass: bool
-    sync_required: bool
-    spinal_name: str
-
-    def as_tuple(self) -> tuple[bool, bool]:
-        return (self.fifo_bypass, self.sync_required)
-
-
-#: ``RegisterCategory.fifoNoSync`` — FIFO=Yes, Sync=No (triangle geometry).
-FIFO_NO_SYNC = RegisterCategory(False, False, "fifoNoSync")
-#: ``RegisterCategory.fifoWithSync`` — FIFO=Yes, Sync=Yes (mode changes).
-FIFO_WITH_SYNC = RegisterCategory(False, True, "fifoWithSync")
-#: ``RegisterCategory.bypassFifo`` — FIFO=No (init / video timing).
-BYPASS_FIFO = RegisterCategory(True, False, "bypassFifo")
-#: ``RegisterCategory.readOnly`` — structurally identical to ``fifoNoSync``.
-#: RegisterBank never passes it: the read-only registers are declared with the
-#: plain ``newRegAt`` and so get **no** category entry at all (see
-#: :func:`effective_category`).
-READ_ONLY = RegisterCategory(False, False, "readOnly")
+# ``RegisterCategory`` and its four values live in
+# ``avoodoo/bus/register_category.py`` (the port of ``bus/RegisterCategory.scala``,
+# plain data like this file); they are re-exported here so the table and its
+# consumers keep reading ``regdef.FIFO_NO_SYNC`` etc.
+#
+# ``fifoNoSync`` and ``readOnly`` are the same value (RegisterCategory.scala:36
+# and :55); the ``spinal_name`` keeps the declaration-site spelling so the
+# generated map reads like the Scala.  RegisterBank never passes ``readOnly``:
+# the read-only registers are declared with the plain ``newRegAt`` and so get
+# **no** category entry at all (see :func:`effective_category`).
+from avoodoo.bus.register_category import (  # noqa: E402
+    BYPASS_FIFO,
+    FIFO_NO_SYNC,
+    FIFO_WITH_SYNC,
+    READ_ONLY,
+    RegisterCategory,
+)
 
 
 @dataclass(frozen=True)

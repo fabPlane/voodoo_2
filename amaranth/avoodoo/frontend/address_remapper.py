@@ -41,7 +41,7 @@ from amaranth.lib.wiring import In, Out
 
 from avoodoo.bus.routing import drive_cmd_from
 from avoodoo.frontend.regdef import REMAP_TABLE
-from avoodoo.lib.membus import BurstAlignment, MemBusParameter, MemBusSignature
+from avoodoo.lib.membus import MemBusParameter, MemBusSignature
 from avoodoo.lib.stream import connect_stream
 
 __all__ = ["bmb_params", "external_bmb_params", "AddressRemapper"]
@@ -51,45 +51,16 @@ __all__ = ["bmb_params", "external_bmb_params", "AddressRemapper"]
 # RegisterBank's two bus parameter sets (RegisterBank.scala:1258 / :1270)
 # ---------------------------------------------------------------------------
 #
-# These belong to `frontend/register_bank.py` (plan task 2.2), which does not
-# exist yet; AddressRemapper is the only current user, so they live here for
-# now.  When RegisterBank lands, move them and re-export from here.
+# One definition, in `avoodoo/core/membus_params.py` alongside every other
+# `*BmbParams` of the design; `frontend/register_bank.py` re-exports the same
+# two under the Scala names, and so does this module for its callers
+# (`Core.scala:100` builds the remapper from `RegisterBank.externalBmbParams`
+# / `RegisterBank.bmbParams`).
 
-
-def bmb_params(c) -> MemBusParameter:
-    """``RegisterBank.bmbParams(c)`` -- the internal, already-remapped bus.
-
-    12 address bits: a 4 KiB register window.  ``c`` is accepted and ignored,
-    exactly as the Scala does.
-    """
-    return MemBusParameter.simple(
-        address_width=12,
-        data_width=32,
-        source_width=4,
-        context_width=0,
-        length_width=2,
-        can_read=True,
-        can_write=True,
-        alignment=BurstAlignment.WORD,
-    )
-
-
-def external_bmb_params(c) -> MemBusParameter:
-    """``RegisterBank.externalBmbParams(c)`` -- the PCI-side bus.
-
-    Identical to :func:`bmb_params` but 22 address bits, so bit 21 (the remap
-    selector) survives as far as this component.
-    """
-    return MemBusParameter.simple(
-        address_width=22,
-        data_width=32,
-        source_width=4,
-        context_width=0,
-        length_width=2,
-        can_read=True,
-        can_write=True,
-        alignment=BurstAlignment.WORD,
-    )
+from avoodoo.core.membus_params import (  # noqa: E402
+    register_bank_external_params as external_bmb_params,
+    register_bank_params as bmb_params,
+)
 
 
 #: ``baseAddr >= 0x088 && baseAddr <= 0x0fc`` (AddressRemapper.scala:76).

@@ -96,6 +96,13 @@ def _address_remapper_params() -> dict:
     return {"input_params": external_bmb_params(_C), "output_params": bmb_params(_C)}
 
 
+def _register_bank_overrides() -> dict[str, str]:
+    """``sim_reg_<addr>_f<N>`` -> Amaranth leaf; see the RegisterBank row."""
+    from avoodoo.frontend.register_bank import spinal_port_overrides
+
+    return spinal_port_overrides()
+
+
 REGISTRY: dict[str, DiffEntry] = {
     # --- Phase 1.3 ------------------------------------------------------
     "FpxxDiffWrap": DiffEntry(
@@ -158,6 +165,26 @@ REGISTRY: dict[str, DiffEntry] = {
         # Every Spinal leaf
         # (io_input_cmd_payload_fragment_address, …) pairs against a bit slice
         # of the packed Amaranth `input__cmd__payload`; amports.py does that.
+    ),
+    # --- Phase 2.2 ------------------------------------------------------
+    "RegisterBank": DiffEntry(
+        spinal="RegisterBank",
+        factory="avoodoo.frontend.register_bank:RegisterBank",
+        note="Core.scala:101 — RegisterBank(c), Config.voodoo1(), simulation = False "
+             "(ext/SpinalVoodoo/src/voodoo/frontend/RegisterBank.scala -> "
+             "avoodoo/frontend/register_bank.py; BmbBusInterface.scala -> "
+             "avoodoo/bus/bus_interface.py)",
+        # The io_ bundle, the five `commands_*CmdStream_*` streams and the 30
+        # AFix `triangleGeometry_<area>_<reg>` outputs all pair mechanically.
+        # The remaining 231 Spinal outputs are the `.asOutput()` register
+        # fields, which upstream renames `sim_reg_%03x_f%d` for the Verilator
+        # harness (RegisterBank.scala:1240-1249); the Amaranth side exposes
+        # them as ordinary ports grouped by Scala Area (`render_config__
+        # fbz_mode__enable_clipping`), so `spinal_port_overrides()` derives the
+        # map from regdef -- field index counted the way regif inserts its NA
+        # padding, which tests/test_register_bank.py pins against the
+        # committed --dump-regmeta ground truth.
+        overrides=_register_bank_overrides(),
     ),
     # --- Phase 3 (agent p3-rasterizer owns avoodoo/raster/rasterizer.py) -
     "SpanRasterizer": DiffEntry(

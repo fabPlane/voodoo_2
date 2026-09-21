@@ -522,7 +522,7 @@ Spinal core does.
   `SIM_DIR=` override.
 
 ### Phase 1
-- [x] stream helpers  - [x] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [ ] axi  - [ ] bus_interface  - [ ] pci_fifo
+- [x] stream helpers  - [x] membus + adapters  - [x] fpxx  - [x] cdc/pipeline  - [ ] axi  - [x] bus_interface  - [ ] pci_fifo
 - [x] 1.1 stream helpers — 2026-09-20. `amaranth/avoodoo/lib/stream.py` (+ `lib/fragment.py`,
       `bus/stream_while.py`), transliterated from the SpinalHDL 1.15.0 `spinal/lib/Stream.scala`,
       `Flow.scala`, `Counter.scala` and `Utils.scala` sources. 66 pysim tests in
@@ -750,8 +750,18 @@ Spinal core does.
       not the assignments, so it should not — only the Phase 4 `ColorCombine`
       lockstep diff will prove it).
 
+- [x] 1.6 register_category + bus_interface — 2026-09-21. `amaranth/avoodoo/bus/register_category.py`
+      (the four factories as frozen-dataclass constants; `regdef.py` now re-exports them instead
+      of carrying its own copy) and `bus/bus_interface.py` (`BmbBusInterface.scala`, 268 lines,
+      plus the slice of `spinal.lib.bus.regif` that `RegisterBank` reaches: `newRegAt`,
+      `field`/`fieldAt` for `RO`/`WO`/`RW`, `hitDoWrite`, the byte-strobe `wmask`/`wmaskn` merge,
+      the registered read mux with `rderr`, and the `s2mPipe().m2sPipe()` command-stream buffer
+      that exports `src.ready` per address). Like the Scala it is not a Component: the owner
+      passes its `Module` and bus port, declares registers, then calls `finalize()` for the read
+      mux. Not a separate diff row — `GenOne` says "diff it through RegisterBank" and 2.2 does.
+
 ### Phase 2
-- [x] regdef  - [ ] register_bank  - [x] address_remapper  - [x] swap_buffer  - [x] lfb  - [x] cpu_frontdoor  - [ ] core_types
+- [x] regdef  - [x] register_bank  - [x] address_remapper  - [x] swap_buffer  - [x] lfb  - [x] cpu_frontdoor  - [ ] core_types
 - [x] 2.1 regdef — 2026-09-20. `amaranth/avoodoo/frontend/regdef.py`: 136 registers (2 of them
       simulation-only), 279 fields, 30 float aliases, 5 command streams, 158 PciFifo decode
       entries (143 FIFO=Yes, 71 Sync=Yes, 15 FIFO=No), all as frozen dataclasses with no
@@ -768,6 +778,34 @@ Spinal core does.
       cannot express — gammaLut via `clutData`, the YIQ palette path on NCC I/Q writes with
       data[31] set, the twelve 50-bit float shadow registers, the triangleCMD payload
       assembly — are recorded per register in `Register.effects` for 2.2 to implement.
+- [x] 2.2 register_bank — 2026-09-21. `amaranth/avoodoo/frontend/register_bank.py` (1280 Scala
+      lines): the 136 registers come from the `regdef` table through `BusInterface`, the twelve
+      pieces the table cannot express (`regdef.py` footer) are hand-written against their Scala
+      lines. Through the full §4.2 gate on the Mac: `make diff MOD=RegisterBank` clean at 1e6
+      cycles x seeds 1,2,3 (588 s sim), plus 1e6 x 3 at `--valid-density 0.9 --ready-density
+      0.12`; 657 Spinal ports paired (109 in / 548 out), no pinned inputs, no responder.
+      `tests/diff/test_diff_register_bank.py` runs 20k x 3 + a stalled case in `make test`;
+      `tests/test_register_bank.py` (29 pysim tests) includes a cycle-accurate Python model that
+      replays the register-write prefix of `demo_test04.bin` (930 writes, 31 ftriangleCMD + 12
+      nopCMD) and `demo_logo_spin.bin` with a read-back after every write, under random
+      command-stream back-pressure, and compares the bus responses, the five streams'
+      valid/payload and `commandReady` every cycle, then every stored field and the gammaLut.
+      The 231 `.asOutput()` register fields, which upstream renames `sim_reg_%03x_f%d` for the
+      Verilator harness, are ordinary ports here grouped by Scala Area
+      (`render_config__fbz_mode__enable_clipping`); `spinal_port_overrides()` derives the
+      pairing from `regdef`, counting regif's auto-inserted `NA` padding, and the test pins the
+      indices against the committed `--dump-regmeta` JSON. The AFix fields pair mechanically as
+      `triangleGeometry_<area>_<reg>`. No regdef entry needed correcting. Two things worth knowing:
+      (a) `BmbBusInterface` answers **every** command, writes included (`rsp.valid :=
+      RegNext(cmd.fire)`, BmbBusInterface.scala:135) — a replay test written as "one response
+      per read" counted 2N-1 and was the only thing wrong with the port as handed over.
+      (b) The reset split: `triangleConfigReg` and `triangleTexTablesReg` are plain `Reg` ->
+      `reset_less`, as are the command streams' payload registers and `RegNext(cmd.source)`;
+      everything else (`reg_rdata`, `rsp.valid`, the float shadows, gammaLut, syncPulse, every
+      field) is `init`ed. `TexLayoutTables.compute` is the shared
+      `texture/tex_layout_tables.compute_tables`, registered once (`triangleTexTablesReg`), so a
+      triangle command sees the texture tables as they were two cycles before the write and the
+      render config as it was one cycle before — both as upstream.
 - [x] 2.3 address_remapper + swap_buffer — 2026-09-20. Both 1:1, both through the full
       §4.2 gate on the Mac: `make diff MOD=SwapBuffer` and `MOD=AddressRemapper`, 3 seeds
       x 1e6 cycles, no mismatch; `tests/diff/` runs them at 20k in `make test`.
