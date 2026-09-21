@@ -129,6 +129,16 @@ def _pci_fifo_params() -> dict:
     }
 
 
+def _hdmi_small_timing():
+    """The ``VideoTiming`` of ``HdmiScanoutTest.scala`` "starts FIFO pixels at HDMI
+    frame origin" (8x4 active, 12x7 total), as ``GenOne``'s
+    ``HdmiCdcFramebufferScanoutSmall`` builds it."""
+    from avoodoo.hdmi.scanout import VideoTiming
+
+    return VideoTiming(active_width=8, active_height=4, h_front_porch=1, h_sync=1,
+                       h_back_porch=2, v_front_porch=1, v_sync=1, v_back_porch=1)
+
+
 REGISTRY: dict[str, DiffEntry] = {
     # --- Phase 1.6 ------------------------------------------------------
     "PciFifo": DiffEntry(
@@ -836,6 +846,92 @@ REGISTRY: dict[str, DiffEntry] = {
         note="CoreGowin.scala:46 — Axi4AddressRelocate(texAxiConfig(c), GowinAddressMap.texMemBase "
              "= 4 MiB); combinational, no clk/reset on either side "
              "(fpga/src/voodoo/gowin/CoreGowin.scala -> avoodoo/gowin/axi4_address_relocate.py)",
+    ),
+    # --- Phase 7.1 (hdmi/scanout.py) ----------------------------------------
+    # All seven components of HdmiScanout.scala.  The harness drives one
+    # clock, but HdmiCdcFramebufferScanout takes its HDMI clock and reset as
+    # plain `in Bool` ports (io_hdmiClock / io_hdmiReset), so a responder
+    # (tests/diff/hdmi_scanout_stimulus.py) toggles the pixel clock at a
+    # per-seed ratio and pulses the HDMI reset -- both Verilator models see the
+    # identical edge sequence, so the whole two-domain design is diffed in
+    # lockstep, CDC FIFO and synchronisers included.
+    "VideoScanout": DiffEntry(
+        spinal="VideoScanout",
+        factory="avoodoo.hdmi.scanout:VideoScanout",
+        note="HdmiScanout.scala:133 — VideoScanout() (VideoTiming() = dmt640x480); `enable` "
+             "random every cycle, so the counters mostly restart -- see VideoScanoutRun "
+             "(ext/SpinalVoodoo/src/voodoo/hdmi/HdmiScanout.scala -> avoodoo/hdmi/scanout.py)",
+    ),
+    "VideoScanoutRun": DiffEntry(
+        spinal="VideoScanoutRun",
+        portmap="VideoScanout",
+        factory="avoodoo.hdmi.scanout:VideoScanout",
+        note="VideoScanout with io_enable pinned high: 800 x 525 free-running, "
+             "2.4 frames per 1e6 cycles",
+        pinned={"io_enable": 1},
+    ),
+    "HdmiTestPattern": DiffEntry(
+        spinal="HdmiTestPattern",
+        factory="avoodoo.hdmi.scanout:HdmiTestPattern",
+        note="HdmiScanout.scala:189 — HdmiTestPattern(); combinational, random x/y/active",
+    ),
+    "HdmiFramebufferScanout": DiffEntry(
+        spinal="HdmiFramebufferScanout",
+        factory="avoodoo.hdmi.scanout:HdmiFramebufferScanout",
+        note="HdmiScanout.scala:657 — HdmiFramebufferScanout(Config.voodoo1()), cea720x480p; "
+             "single clock; regs, swap and readRsp from the generator",
+    ),
+    "HdmiFramebufferScanoutScene": DiffEntry(
+        spinal="HdmiFramebufferScanoutScene",
+        portmap="HdmiFramebufferScanout",
+        factory="avoodoo.hdmi.scanout:HdmiFramebufferScanout",
+        note="HdmiFramebufferScanout with io_regs_* held as register-like scenes "
+             "(tests/diff/hdmi_scanout_stimulus.py) so contentActive spans whole frames",
+        responder="tests.diff.hdmi_scanout_stimulus:framebuffer_scene",
+    ),
+    "HdmiCdcFramebufferScanout": DiffEntry(
+        spinal="HdmiCdcFramebufferScanout",
+        factory="avoodoo.hdmi.scanout:HdmiCdcFramebufferScanout",
+        params=dict(pixel_repeat_x=_C.hdmi_scanout_pixel_repeat_x),
+        note="Core.scala:133 — HdmiCdcFramebufferScanout(c, pixelRepeatX = "
+             "c.hdmiScanoutPixelRepeatX), cea720x480p, fifo 4096/2048/1024/3072; responder: "
+             "HDMI clock+reset, register scenes, in-order readRsp slave",
+        responder="tests.diff.hdmi_scanout_stimulus:cdc_scene",
+    ),
+    "HdmiCdcFramebufferScanoutRandom": DiffEntry(
+        spinal="HdmiCdcFramebufferScanoutRandom",
+        portmap="HdmiCdcFramebufferScanout",
+        factory="avoodoo.hdmi.scanout:HdmiCdcFramebufferScanout",
+        params=dict(pixel_repeat_x=_C.hdmi_scanout_pixel_repeat_x),
+        note="HdmiCdcFramebufferScanout with only the HDMI clock/reset claimed; regs and "
+             "readRsp random every cycle: unsolicited responses wrap `outstanding`, so "
+             "readReq never fires and only the FIFO-full / prefetch / HDMI paths run",
+        responder="tests.diff.hdmi_scanout_stimulus:cdc_clock_only",
+    ),
+    "HdmiCdcFramebufferScanoutSmall": DiffEntry(
+        spinal="HdmiCdcFramebufferScanoutSmall",
+        factory="avoodoo.hdmi.scanout:HdmiCdcFramebufferScanout",
+        params=dict(timing=_hdmi_small_timing(), fifo_depth=64, prefill_level=8,
+                    refill_low_level=8, refill_high_level=48),
+        note="HdmiScanoutTest.scala 'starts FIFO pixels at HDMI frame origin' build: 8x4 "
+             "active in a 12x7 raster, fifo 64/8/8/48 -- thousands of frames per 1e6 "
+             "cycles, so frameAligned / newFrame / end-of-frame reload are exercised",
+        responder="tests.diff.hdmi_scanout_stimulus:cdc_scene_small",
+    ),
+    "TmdsEncoder": DiffEntry(
+        spinal="TmdsEncoder",
+        factory="avoodoo.hdmi.scanout:TmdsEncoder",
+        note="HdmiScanout.scala:522 — TmdsEncoder(); random data/control/dataEnable",
+    ),
+    "HdmiTestPatternScanout": DiffEntry(
+        spinal="HdmiTestPatternScanout",
+        factory="avoodoo.hdmi.scanout:HdmiTestPatternScanout",
+        note="HdmiScanout.scala:581 — HdmiTestPatternScanout(); no inputs, free-running",
+    ),
+    "TmdsSerializer": DiffEntry(
+        spinal="TmdsSerializer",
+        factory="avoodoo.hdmi.scanout:TmdsSerializer",
+        note="HdmiScanout.scala:620 — TmdsSerializer(); random load/symbols",
     ),
 }
 

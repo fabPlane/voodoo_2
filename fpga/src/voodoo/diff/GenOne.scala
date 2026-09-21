@@ -23,7 +23,8 @@ import voodoo.hdmi.{
   HdmiTestPatternScanout,
   TmdsEncoder,
   TmdsSerializer,
-  VideoScanout
+  VideoScanout,
+  VideoTiming
 }
 import voodoo.math.{Fpxx2AFix, FpxxConfig}
 import voodoo.pixel.{ColorCombine, Dither, Fog, FramebufferAccess, Write}
@@ -344,6 +345,39 @@ object GenOne {
     ),
     "TmdsEncoder" -> ok("HdmiScanout.scala:522 — TmdsEncoder()")(TmdsEncoder()),
     "TmdsSerializer" -> ok("HdmiScanout.scala:620 — TmdsSerializer()")(TmdsSerializer()),
+    // Aliases for the amaranth scanout rows (tools/diff/registry.py, Phase 7.1): same
+    // components, same parameters; the harness names the Spinal module after the registry key.
+    "VideoScanoutRun" -> ok("alias of VideoScanout (io_enable pinned high on the amaranth side)")(
+      VideoScanout()
+    ),
+    "HdmiFramebufferScanoutScene" -> ok("alias of HdmiFramebufferScanout (register-scene responder)")(
+      HdmiFramebufferScanout(c)
+    ),
+    "HdmiCdcFramebufferScanoutRandom" -> ok("alias of HdmiCdcFramebufferScanout (clock-only responder)")(
+      HdmiCdcFramebufferScanout(c, pixelRepeatX = c.hdmiScanoutPixelRepeatX)
+    ),
+    "HdmiCdcFramebufferScanoutSmall" -> ok(
+      "HdmiScanoutTest.scala 'starts FIFO pixels at HDMI frame origin' — 8x4 active in 12x7, fifo 64/8/8/48"
+    )(
+      HdmiCdcFramebufferScanout(
+        c,
+        timing = VideoTiming(
+          activeWidth = 8,
+          activeHeight = 4,
+          hFrontPorch = 1,
+          hSync = 1,
+          hBackPorch = 2,
+          vFrontPorch = 1,
+          vSync = 1,
+          vBackPorch = 1
+        ),
+        fifoDepth = 64,
+        prefillLevel = 8,
+        refillLowLevel = 8,
+        refillHighLevel = 48,
+        pixelRepeatX = c.hdmiScanoutPixelRepeatX
+      )
+    ),
 
     // ---- pipeline / top -------------------------------------------------------------------------
     "PixelPipeline" -> ok(

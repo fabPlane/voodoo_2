@@ -1336,7 +1336,69 @@ Spinal core does.
         `test_no_direct_miss_waits_for_the_prefetched_span`.
 
 ### Phase 7
-- [ ] scanout  - [ ] core + core_sim + dbg  - [ ] Glide suite identical  - [ ] trace replays identical  - [ ] SpinalSim tests ported
+- [x] scanout  - [ ] core + core_sim + dbg  - [ ] Glide suite identical  - [ ] trace replays identical  - [ ] SpinalSim tests ported
+- [x] **scanout** (2026-09-21). `amaranth/avoodoo/hdmi/scanout.py`, all of
+      `hdmi/HdmiScanout.scala` (working-tree version): `VideoTiming` (+ `DMT_640X480`,
+      `CEA_720X480P`), `Rgb888` helpers (`rgb888_from_rgb565`, `apply_gamma` + integer
+      models), `HdmiScanoutRegs` / `HdmiScanoutStatus` / `ParallelRgbVideo` layouts,
+      `HdmiScanoutPortSignature` (the `master(HdmiScanoutPort(c))` view `Core` needs),
+      `VideoScanout`, `HdmiTestPattern`, `HdmiFramebufferScanout`,
+      `HdmiCdcFramebufferScanout`, `TmdsEncoder`, `HdmiTestPatternScanout`,
+      `TmdsSerializer`. Findings:
+      * **Two clock domains, diffed in lockstep anyway.** `tools/diff/driver.py` drives
+        one clock, but `HdmiCdcFramebufferScanout` takes `io_hdmiClock` / `io_hdmiReset`
+        as plain `in Bool` ports (the Scala builds `hdmiClockDomain` from them; the port
+        does the same with `cdc.clock_domain`, a local `hdmi` domain). So the
+        `HdmiClock` responder (`tests/diff/hdmi_scanout_stimulus.py`) *is* the pixel
+        clock: it toggles the port on the core clock's falling edges at a per-seed
+        ratio (period 2 .. ~6 core cycles) and pulses the HDMI reset (start of run, and
+        mid-run on the `Small`/`Random` rows). Both Verilator models see the same edge
+        sequence, so the `StreamFifoCC` (gray pointers, buffered pop reset), the
+        `PulseCCByToggle` and all ten `BufferCC` sites are compared cycle for cycle.
+        Not modelled: metastability -- the same idealisation `HdmiScanoutTest.scala`
+        makes. No `tools/diff/**` change was needed.
+      * Eleven registry rows, four GenOne aliases (`VideoScanoutRun`,
+        `HdmiFramebufferScanoutScene`, `HdmiCdcFramebufferScanoutRandom`,
+        `HdmiCdcFramebufferScanoutSmall` -- the last is the 8x4-in-12x7 / fifo 64-8-8-48
+        build of the Scala test, added so frames come every 84 pixel clocks). The main
+        CDC row holds the canonical registers (`Core.scala:171-178`: 720x480, enable,
+        identity LUT) for the whole seed: a 858x525 frame is 450k pixel clocks = ~901k
+        core cycles at the fastest ratio, so `frameAligned` only arms near the end and
+        ~83k pixels pop. The `Small` row runs ~90 random register scenes per seed (zero
+        widths, test pattern, random LUTs, random bases/strides), an in-order `readRsp`
+        slave with stalls (so `underflowReg` sets, ~60 stalls/seed), 3-4k frames/seed,
+        200k+ lit pixels/seed. `Random` (generator only + pixel clock) is kept for
+        reproducibility: its unsolicited `readRsp` beats wrap `outstanding` to 8191 on
+        the first push, `projected` then blocks `readReq` for good, and only the
+        FIFO-full / prefetch / HDMI paths run there -- true of the Spinal design too.
+      * **Gate**: `make diff` clean at 1e6 cycles x seeds 1,2,3 on all eleven rows
+        (CDC rows ~250 s each on the Mac, framebuffer rows ~160-240 s, the rest < 40 s)
+        and at 2e5 cycles with `--valid-density 0.9 --ready-density 0.1` (seed 7) on
+        the eight rows that have streams. `report.json` `ok=true` everywhere; activity
+        counters scale with cycles (main CDC row 20k -> 1e6: `read_reqs` 3072 -> 43k,
+        `new_frames` 0 -> 1, `lit_pixels` 0 -> 83k; `Small` 40k -> 1e6: frames 166 ->
+        4160, `read_reqs` 2.6k -> 62k). `tests/diff/test_diff_hdmi_scanout.py` runs
+        eleven short versions and checks the responder stats.
+      * `tests/test_hdmi_scanout.py` (30 tests): the eleven `HdmiScanoutTest.scala`
+        scenarios one to one, in two-clock pysim for the CDC ones (a top-level `pixel`
+        domain feeds `dut.hdmi_clock`; 13 ns against a 10 ns core clock), plus the gamma
+        interpolator against its integer model, a TMDS encoder model over 3000 random
+        words, sticky `underflow` cleared by the HDMI reset, both occupancies and the
+        `newFrame` crossing, and the plan §6 audit: every `Reg` in the Scala has `init`,
+        so the only `reset_less` flop under the CDC top is the library's
+        `StreamFifoCC` pop-side `m2sPipe` `rData`.
+      * Width rules reproduced, not fixed: `scan.io.x < io.regs.displayWidth.resized`
+        truncates the 10-bit register to `hWidth`; `outstanding - 1` wraps;
+        `HdmiScanoutTest.identityGammaEntry` is not the identity (254 -> 253) because
+        the LUT is `i * 8` then 255.
+      * Two observations from the diff, same on both sides: after a core reset with the
+        pixel clock stopped, `fifoPushOccupancy` reads `0 - <old pop pointer>` until two
+        pixel clocks have retired the synchronised pop reset; `underflowReg` is sticky
+        until an HDMI-domain reset.
+      * For Phase 7.2: `Config.hdmiScanoutDmt640x480` (`Core.scala:135`,
+        `CoreGowinGen.scala:79`) has no `avoodoo.config.Config` field yet; the 4096x16
+        `StreamFifoCC` RAM must go through `strip_meminit` under `CoreSim`;
+        `spinal_fifo_ram_attrs(16, 4096)` is `{}` (BSRAM), as the Spinal build.
 
 ### Phase 8
 - [ ] core_gowin + ddr adapters  - [ ] demo/UI modules  - [ ] tang_console_138k + hw/console  - [ ] bitstream on hardware
