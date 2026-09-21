@@ -29,6 +29,10 @@ class DemoMenuTest extends AnyFunSuite {
     dut.clockDomain.waitSampling()
   }
 
+  // Walk the main cursor down to a given index from the top of the list.
+  private def navMain(dut: DemoMenu, index: Int): Unit =
+    for (_ <- 0 until index) pulse(dut, SnesPad.Down)
+
   test("USB D-pad walks logo then Glide tests then OTHER DEMOS") {
     compiled.doSim("demo-menu-pad") { dut =>
       dut.clockDomain.forkStimulus(10)
@@ -45,6 +49,12 @@ class DemoMenuTest extends AnyFunSuite {
       pulse(dut, SnesPad.Down)
       assert(dut.io.cursor.toInt == DemoCatalog.alphabetIndex)
       pulse(dut, SnesPad.Down)
+      assert(dut.io.cursor.toInt == DemoCatalog.hbPinwheelIndex)
+      pulse(dut, SnesPad.Down)
+      assert(dut.io.cursor.toInt == DemoCatalog.hbDepthIndex)
+      pulse(dut, SnesPad.Down)
+      assert(dut.io.cursor.toInt == DemoCatalog.hbAlphaIndex)
+      pulse(dut, SnesPad.Down)
       assert(dut.io.cursor.toInt == DemoCatalog.otherDemosIndex)
       pulse(dut, SnesPad.Down)
       assert(dut.io.cursor.toInt == DemoCatalog.logoIndex)
@@ -59,10 +69,7 @@ class DemoMenuTest extends AnyFunSuite {
       dut.io.ready #= true
       dut.clockDomain.waitSampling()
 
-      pulse(dut, SnesPad.Down)
-      pulse(dut, SnesPad.Down)
-      pulse(dut, SnesPad.Down)
-      pulse(dut, SnesPad.Down)
+      navMain(dut, DemoCatalog.otherDemosIndex)
       pulse(dut, SnesPad.A)
       assert(dut.io.other.toBoolean)
       assert(!dut.io.info.toBoolean)
@@ -86,10 +93,7 @@ class DemoMenuTest extends AnyFunSuite {
       dut.io.ready #= true
       dut.clockDomain.waitSampling()
 
-      pulse(dut, SnesPad.Down)
-      pulse(dut, SnesPad.Down)
-      pulse(dut, SnesPad.Down)
-      pulse(dut, SnesPad.Down)
+      navMain(dut, DemoCatalog.otherDemosIndex)
       pulse(dut, SnesPad.A)
       pulse(dut, SnesPad.A)
       assert(dut.io.info.toBoolean)
@@ -161,14 +165,19 @@ class DemoMenuTest extends AnyFunSuite {
     }
   }
 
-  test("player banks are logo then SDK traces") {
+  test("player banks are logo then SDK traces then homebrew demos") {
     assert(DemoCatalog.playerFiles == Seq(
       "demo_logo_spin.bin",
       "demo_test04.bin",
       "demo_test16.bin",
-      "demo_test_alphabet.bin"
+      "demo_test_alphabet.bin",
+      "demo_hb_pinwheel.bin",
+      "demo_hb_depth.bin",
+      "demo_hb_alpha.bin"
     ))
     assert(DemoCatalog.playerBankByCursor(DemoCatalog.test16Index) == 2)
+    assert(DemoCatalog.playerBankByCursor(DemoCatalog.hbPinwheelIndex) == 4)
+    assert(DemoCatalog.playerBankByCursor(DemoCatalog.hbAlphaIndex) == 6)
     assert(DemoCatalog.playerBankByCursor(DemoCatalog.otherDemosIndex) == 0)
     assert(DemoCatalog.playerLoopAt(0) == DemoCatalog.logoLoopAt)
     assert(DemoCatalog.playerLoopAt.drop(1).forall(_ == 0))
