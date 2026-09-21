@@ -1,6 +1,6 @@
 [submodule "ext/SpinalVoodoo"]
 	path = ext/SpinalVoodoo
-	url = https://github.com/fayalalebrun/SpinalVoodoo.git
+	url = https://github.com/fabPlane/SpinalVoodoo.git
 [submodule "sw/quake-riscv/quake-embedded"]
 	path = sw/quake-riscv/quake-embedded
 	url = https://github.com/sysprog21/quake-embedded.git
