@@ -78,6 +78,23 @@ object GenOne {
     */
   val simConfig: Config = Config.voodoo1().copy(enableHdmiScanout = false)
 
+  /** The Tang Console's config: exactly the `copy(...)` in `CoreGowinGen.scala` (`TangConsole138kGen`,
+    * l. 65-80). The TMU cares about `useTexFillCache = false` (selects `TmuNoTextureCache`,
+    * Tmu.scala:597) and `texFillRequestWindow = 2`; the rest is kept so a row built from this is
+    * what the bitstream has (plan Phase 8.0).
+    */
+  val consoleConfig: Config = Config
+    .voodoo1()
+    .copy(
+      useFbWriteBuffer = false,
+      fbWriteBufferLineWords = 16,
+      useFbReadCache = false,
+      useTexFillCache = false,
+      texFillRequestWindow = 2,
+      hdmiScanoutPixelRepeatX = 4,
+      hdmiScanoutDmt640x480 = true
+    )
+
   /** `CoreSimGen` default memory timing (SimBmbMemory.scala defaults). */
   val simTiming: SimMemoryTiming = SimMemoryTiming()
 
@@ -266,7 +283,17 @@ object GenOne {
     )(
       TmuNoTextureCache(c.copy(useTexFillCache = false))
     ),
+    "TmuNoTextureCacheConsole" -> ok(
+      "TmuNoTextureCache(consoleConfig): the Console's texFillRequestWindow = 2 (plan 8.0)"
+    )(
+      TmuNoTextureCache(consoleConfig)
+    ),
     "Tmu" -> ok("PixelPipeline.scala:294 — Tmu(c)")(Tmu(c)),
+    "TmuConsole" -> ok(
+      "PixelPipeline.scala:294 — Tmu(consoleConfig): the Tmu the Tang Console builds " +
+        "(CoreGowinGen.scala:73 useTexFillCache = false -> TmuNoTextureCache, " +
+        "texFillRequestWindow = 2); plan Phase 8.0"
+    )(Tmu(consoleConfig)),
     "TmuMemOnly" -> ok(
       "alias of Tmu for the diff row that models only the texture-memory slave (io_input random)"
     )(Tmu(c)),

@@ -37,6 +37,15 @@ from avoodoo.lib.membus_to_axi4_mem import tex_axi_config as _tex_axi_config
 
 _BAR_AW = _bar_aw()
 _FIXER_OP = _aligned_parameter(_FB, _mp.AXI_BURST_LOG2)
+# Phase 8.0: `TmuNoTextureCache` requires `!useTexFillCache` (GenOne's row
+# uses `Config.voodoo1().copy(useTexFillCache = false)`), and the Tang Console
+# builds `Config.voodoo1().copy(...)` exactly as `CoreGowinGen.scala`
+# (`TangConsole138kGen`, l. 65-80) spells it -- mirrored by `GenOne.consoleConfig`.
+_C_NO_TEX_CACHE = _replace(_C, use_tex_fill_cache=False)
+_C_CONSOLE = _replace(_C, use_fb_write_buffer=False, fb_write_buffer_line_words=16,
+                      use_fb_read_cache=False, use_tex_fill_cache=False,
+                      tex_fill_request_window=2, hdmi_scanout_pixel_repeat_x=4,
+                      hdmi_scanout_dmt640x480=True)
 
 
 @dataclass(frozen=True)
@@ -431,6 +440,41 @@ REGISTRY: dict[str, DiffEntry] = {
         # invalidation all happen in lockstep.
         responder="tests.diff.tmu_texture_cache_stimulus:cache_traffic",
     ),
+    # --- Phase 8.0: the Console's uncached texture path --------------------
+    "TmuNoTextureCache": DiffEntry(
+        spinal="TmuNoTextureCache",
+        factory="avoodoo.texture.tmu_no_texture_cache:TmuNoTextureCache",
+        params=dict(c=_C_NO_TEX_CACHE),
+        note="Tmu.scala:597 — TmuNoTextureCache(c) when !c.useTexFillCache, "
+             "Config.voodoo1().copy(useTexFillCache = false): one 4-byte read per "
+             "distinct tap word, 16-deep request window, 16-deep word queue "
+             "(ext/SpinalVoodoo/src/voodoo/texture/TmuTextureCache.scala:865 -> "
+             "avoodoo/texture/tmu_no_texture_cache.py)",
+        # io_texRead_rsp is a slave response (the join only takes it against a
+        # queued word request; a random `last` would drop beats at random on
+        # both sides, and a random held beat with nothing queued parks it), so
+        # the responder answers each cmd with exactly its one-word burst.  It
+        # also drives io_sampleRequest with taps that mostly share words (so
+        # `currentMask` folds several taps into one read) and some scattered.
+        responder="tests.diff.tmu_no_texture_cache_stimulus:direct_traffic",
+    ),
+    "TmuNoTextureCacheConsole": DiffEntry(
+        spinal="TmuNoTextureCacheConsole",
+        factory="avoodoo.texture.tmu_no_texture_cache:TmuNoTextureCache",
+        params=dict(c=_C_CONSOLE),
+        note="TmuNoTextureCache with the Tang Console's config (CoreGowinGen.scala:73): "
+             "texFillRequestWindow = 2",
+        responder="tests.diff.tmu_no_texture_cache_stimulus:direct_traffic",
+    ),
+    "TmuConsole": DiffEntry(
+        spinal="TmuConsole",
+        factory="avoodoo.texture.tmu:Tmu",
+        params=dict(c=_C_CONSOLE),
+        note="PixelPipeline.scala:294 — Tmu(c) with the Tang Console's config "
+             "(CoreGowinGen.scala:65-80: useTexFillCache = false -> TmuNoTextureCache, "
+             "texFillRequestWindow = 2): the TMU the bitstream has; same stimulus as Tmu",
+        responder="tests.diff.tmu_stimulus:tmu_traffic",
+    ),
     "Tmu": DiffEntry(
         spinal="Tmu",
         factory="avoodoo.texture.tmu:Tmu",
@@ -444,8 +488,10 @@ REGISTRY: dict[str, DiffEntry] = {
         # answers each cmd with the burst it asked for.  It also drives
         # io_input with texture-shaped pixels (per-seed table set-ups, a random
         # walk in S/T, sane 1/W) so cache *hits* happen -- random 48-bit S/T
-        # never revisit a line -- with one pixel in ten fully random for the
-        # bypass / clamp-to-zero / wrap corners, and pulses io_invalidate rarely.
+        # never revisit a line -- with one pixel in twenty "wild" (arithmetic
+        # inputs random, tables consistent; none fully random, see the stimulus
+        # module) for the bypass / clamp-to-zero / wrap corners, and pulses
+        # io_invalidate rarely.
         responder="tests.diff.tmu_stimulus:tmu_traffic",
     ),
     "TmuMemOnly": DiffEntry(

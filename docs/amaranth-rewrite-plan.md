@@ -1537,7 +1537,77 @@ Spinal core does.
         per pysim cycle) and by the Phase 7.3 Glide/trace gate.
 
 ### Phase 8
-- [ ] core_gowin + ddr adapters  - [ ] demo/UI modules  - [ ] tang_console_138k + hw/console  - [ ] bitstream on hardware
+- [x] 8.0 tmu_no_texture_cache  - [ ] core_gowin + ddr adapters  - [ ] demo/UI modules  - [ ] tang_console_138k + hw/console  - [ ] bitstream on hardware
+
+- [x] **8.0 tmu_no_texture_cache** (2026-09-21). `avoodoo/texture/tmu_no_texture_cache.py`,
+      1:1 with `case class TmuNoTextureCache` (`TmuTextureCache.scala` l. 865-996): the
+      request FIFO (`queue(c.texFillRequestWindow)`), the `expanded` area (`running` /
+      `hold` / `pending`, `pendingFirst` = lowest pending tap, `currentMask` folds every tap
+      of the same word into one read, `nextPending` the rest), the asynchronous
+      `StreamFork2` to `io.texRead.cmd` (READ, `length = 3`, one word) and `toQ.queue(16)`,
+      `takeWhen(last)` on the response, `StreamJoin(rsp, queued)` gated by `!outValid`, the
+      `assembled` register (`firstWord` zeroes the texels, `tapMask` writes `texel16`) and
+      `io.busy`. `TmuTextureCacheDirectWordReq` lives in this file (the cache port never
+      needed it); `texel16` is imported from `tmu_texture_cache.py`. `hold` and `assembled`
+      are `reset_less` (plain `Reg`), `running` / `pending` / `outValid` reset. Both FIFOs get
+      `spinal_fifo_ram_attrs` (distributed RAM, no BSRAM). `tmu.py` now picks the texture
+      path from `c.use_tex_fill_cache` exactly as `Tmu.scala:597` does (the
+      `NotImplementedError` is gone; the lazy import stays); `Config.use_tex_fill_cache` /
+      `tex_fill_request_window` already existed. Unit tests
+      (`tests/test_tmu_no_texture_cache.py`, 34): a request-level model (the distinct-word
+      reads in tap order, the texels), directed one-word / four-word / two-taps-per-word /
+      8-bit and 16-bit cases, random traffic against the model with random memory latency
+      and consumer back-pressure for both the default and the Console (`window = 2`)
+      config, the formal asserts (READ, `last`, `length == 3`, word-aligned) plus `busy` and
+      the hold rule on every cycle, the fixed accept-to-fetch latency (5 cycles: FIFO pop
+      at 2, command the same cycle, response the next, `queued` join, `outValid`), the
+      single outstanding response with commands running ahead up to `queued` (16) + the
+      fork's one beat, the request window (2 and 16), `takeWhen(last)` on a 3-beat response,
+      `invalidate` a no-op, the `reset_less` audit, and `Tmu(consoleConfig)` end to end:
+      the **first** sample of a solid RGB565 texture decodes (no cold-miss quirk, one
+      4-byte read), a cold bilinear sample of white is white with four word reads.
+      * **Gate.** GenOne rows (add-only): `TmuNoTextureCache` (already there:
+        `Config.voodoo1().copy(useTexFillCache = false)`), `TmuNoTextureCacheConsole` and
+        `TmuConsole`, the last two on a new `GenOne.consoleConfig` that is the `copy(...)`
+        of `CoreGowinGen.scala` (`TangConsole138kGen`) verbatim (`useFbWriteBuffer = false`,
+        `fbWriteBufferLineWords = 16`, `useFbReadCache = false`, `useTexFillCache = false`,
+        `texFillRequestWindow = 2`, `hdmiScanoutPixelRepeatX = 4`, `hdmiScanoutDmt640x480 =
+        true`); `tools/diff/registry.py` mirrors it as `_C_CONSOLE`. All three rows pair
+        every port without an override (no `dbgDataValid` here: the direct path has no
+        `setName`). `make diff MOD=TmuNoTextureCache` clean at 1e6 x seeds 1,2,3 (872 s;
+        per seed 259k / 258k / 258k requests in and fetches out, 500k one-word reads,
+        3.2k bilinear requests with all four taps in one word, ~58k with two words, 39k
+        fully random; `busy_at_end = 1`); `MOD=TmuNoTextureCacheConsole` clean at 1e6 x 3
+        (851 s, the same counters within 0.2 %). Back-pressure (`--valid-density 0.9
+        --ready-density 0.12`, 2e5 x 3): both clean, 12.4k / 12.5k / 12.4k fetches per
+        seed (~0.06 per cycle: one outstanding response, half the ready cycles).
+        `MOD=TmuConsole` (the whole `Tmu` with the Console config) clean at 1e6 x seeds
+        1,2,3 (1609 s; per seed 328k / 428k / 330k pixels in and out,
+        `pixels_in - pixels_out <= 32` at the end, 509k / 432k / 439k one-word reads,
+        16k / 21k / 16k wild pixels, `busy_at_end = 1`) and at 0.9/0.12 back-pressure for
+        2e5 x 3 (14.7k / 20.1k / 14.1k pixels out). Counters scale with cycles (the 20k-cycle
+        pytest runs see ~1/50: 5.1k / 5.2k / 5.2k fetches on the standalone rows, 6.8k /
+        8.6k / 6.5k pixels out on `TmuConsole`), so none of the runs is parked.
+        `tests/diff/test_diff_tmu_no_texture_cache.py` (5 tests, ~7 min) runs the three
+        rows at 20k x 3 plus a 10k back-pressured run of each and asserts the stats.
+      * **Stimulus** (`tests/diff/tmu_no_texture_cache_stimulus.py`): the `Tmu` row's
+        `TexMemSlave` (every command answered with exactly its one-word burst) plus
+        `DirectRequests` on `io_sampleRequest` -- bilinear 2x2 footprints with a 1/2-byte
+        texel pitch and a 4..512-byte row pitch so taps share words (the `currentMask` fold
+        is the path a random address never reaches), point samples, 15 % fully random beats
+        (every unused field -- `lodBase`, tables, packed bank/pair/startup -- is random on
+        every beat, which the lockstep diff pins as unused). `io_invalidate`,
+        `io_sampleFetch_ready` and `io_texRead_cmd_ready` stay with the generator. The
+        `tapStartupDecode_N_valid` leaves are claimed by name prefix (the `ports.py`
+        caveat above). `TmuConsole` reuses `tmu_stimulus.tmu_traffic` unchanged.
+      * **Findings.** One response outstanding at a time (`raw.ready = !outValid`): the
+        direct path's throughput is one fetch per `sampleFetch` handshake plus one cycle per
+        word, whatever the memory latency; the 16-deep `queued` FIFO only lets reads run
+        ahead. Only the `last` beat of a response is used; a slave answering a longer burst
+        has its earlier beats dropped silently. Nothing here reads `lodBase`, `lodShift`,
+        `texTables` or the packed bank/pair/startup fields, so on the Console every
+        `sampleRequest` carries ~600 bits the path ignores. The `Tmu` row's registry comment
+        ("one pixel in ten fully random") is fixed with this edit, as the tmu entry asked.
 
 ### Phase 9
 - [ ] formal  - [ ] docs  - [ ] archival decision

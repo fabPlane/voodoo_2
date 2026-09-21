@@ -5,7 +5,8 @@
 bundles, constant ROMs and pure helpers are already ported in
 ``tmu_types.py`` and ``tmu_tables.py``; the two sub-Components it
 instantiates are ``tmu_texel_decoder.py`` (``TmuTexelDecoder``) and
-``tmu_texture_cache.py`` (``TmuTextureCache``, the ``texturePath``).
+``tmu_texture_cache.py`` / ``tmu_no_texture_cache.py`` (``TmuTextureCache``
+or ``TmuNoTextureCache``, the ``texturePath``, chosen by ``c.useTexFillCache``).
 
 Structure map (Scala ``val`` -> here), in pipeline order.  Every arrow is a
 ``translateWith { ... }`` followed by the named register stage; ``stage()``
@@ -148,8 +149,10 @@ are what the hardware does:
 Only ``c.packedTexLayout`` is supported.  ``sampleRequestBase`` indexes
 ``texTables`` unconditionally in the Scala, so the linear (``texBaseAddr``)
 branch of ``texelAddr`` cannot elaborate upstream either; it is not ported.
-Likewise ``c.useTexFillCache`` must be set: ``TmuNoTextureCache`` is not
-ported (plan Phase 5 lists only ``TmuTextureCache``).  ``packedLodEnd`` /
+``c.useTexFillCache`` selects the texture path: ``TmuTextureCache``
+(``tmu_texture_cache.py``, the ``Config.voodoo1()`` default) or
+``TmuNoTextureCache`` (``tmu_no_texture_cache.py``, what the Console builds
+-- plan Phase 8.0).  ``packedLodEnd`` /
 ``lodSizeShift`` (l. 384-394) are computed and never read in the Scala, and
 Spinal prunes them; they are not written here.
 
@@ -277,9 +280,6 @@ class Tmu(wiring.Component):
                 "Tmu: only packedTexLayout is ported (the linear texelAddr branch "
                 "cannot elaborate upstream either -- sampleRequestBase indexes "
                 "texTables unconditionally)")
-        if not self.c.use_tex_fill_cache:
-            raise NotImplementedError(
-                "Tmu: TmuNoTextureCache is not ported; set useTexFillCache")
         self.bmb_params = tmu_bmb_params(self.c)
         self.request_id_width = REQUEST_ID_WIDTH
         self.max_outstanding = MAX_OUTSTANDING
@@ -299,7 +299,11 @@ class Tmu(wiring.Component):
         # The cache is being ported concurrently (plan Phase 5); importing it
         # here rather than at module level keeps `Tmu`'s layouts and helpers
         # importable while that file is in flux, and makes the dependency a
-        # clean port boundary.
+        # clean port boundary.  Plan 8.0: `Tmu.scala:597` picks the texture
+        # path on the config flag -- `TmuTextureCache(c)` when
+        # `c.useTexFillCache`, else `TmuNoTextureCache(c)` (what the Console
+        # builds, CoreGowinGen.scala:73).
+        from avoodoo.texture.tmu_no_texture_cache import TmuNoTextureCache
         from avoodoo.texture.tmu_texture_cache import TmuTextureCache
 
         m = Module()
@@ -822,7 +826,9 @@ class Tmu(wiring.Component):
         # ==================================================================
         # texturePath + texelDecoder
         # ==================================================================
-        m.submodules.texturePath = texture_path = TmuTextureCache(c)
+        #   val texturePath = if (c.useTexFillCache) TmuTextureCache(c) else TmuNoTextureCache(c)
+        m.submodules.texturePath = texture_path = (
+            TmuTextureCache(c) if c.use_tex_fill_cache else TmuNoTextureCache(c))
         #   sampleRequest >/-> texturePath.io.sampleRequest
         connect_stream(m, texture_path.sample_request,
                        m2s_pipe(m, s2m_pipe(m, sample_request, name="sampleRequest_s2mPipe"),
