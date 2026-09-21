@@ -2,10 +2,12 @@
 # Cloud Agent bootstrap for the SpinalVoodoo FPGA ports.
 #
 # Installs the RTL toolchain (Verilator 5.x + scala-cli, which itself fetches
-# JDK 17 per fpga/project.scala), pulls in the upstream Voodoo core submodule
-# that fpga/ builds against, and warms the dependency cache. The FPGA bitstream
+# JDK 17 per fpga/project.scala), the 32-bit toolchain for the Glide2x sim
+# backend + homebrew demos, pulls in the vendored submodules (upstream Voodoo
+# core and TangCore), and warms the dependency cache. The FPGA bitstream
 # backends (Gowin EDA, Vivado) are proprietary and are intentionally not
-# installed here; simulation, RTL generation and lint work without them.
+# installed here; simulation, RTL generation, lint and Glide trace capture all
+# work without them.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,11 +35,27 @@ if ! command -v scala-cli >/dev/null 2>&1; then
 fi
 echo "[install] scala-cli $(scala-cli version --cli-version 2>/dev/null || scala-cli version 2>&1 | head -1)"
 
-# 3. Upstream Voodoo core: fpga/project.scala references ../ext/SpinalVoodoo/src.
-echo "[install] Initializing ext/SpinalVoodoo submodule..."
-git submodule update --init ext/SpinalVoodoo
+# 3. 32-bit toolchain for the Glide2x sim backend and the homebrew Glide demos
+#    (sw/glide-homebrew). libglide2x is built 32-bit and links zlib + X11.
+if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -o /dev/null >/dev/null 2>&1; then
+  echo "[install] Installing 32-bit Glide toolchain (multilib + i386 libs)..."
+  sudo dpkg --add-architecture i386
+  sudo apt-get update -qq
+  sudo apt-get install -y --no-install-recommends \
+    gcc-multilib g++-multilib \
+    zlib1g-dev:i386 libx11-dev:i386 libxext-dev:i386
+fi
+echo "[install] 32-bit gcc: $(gcc -m32 --version | head -1)"
 
-# 4. Warm the scala-cli / coursier dependency cache (SpinalHDL, scalatest, JDK 17)
+# 4. Vendored submodules:
+#    - ext/SpinalVoodoo: fpga/project.scala references ../ext/SpinalVoodoo/src.
+#    - ext/tangcore: the Sipeed Tang Console loader/menu the Voodoo core targets.
+#      Only the superproject is initialized; its per-core nested submodules are
+#      large and only needed to build TangCore bitstreams (Gowin EDA required).
+echo "[install] Initializing ext/SpinalVoodoo and ext/tangcore submodules..."
+git submodule update --init ext/SpinalVoodoo ext/tangcore
+
+# 5. Warm the scala-cli / coursier dependency cache (SpinalHDL, scalatest, JDK 17)
 #    so the first `make compile` / `make test` is fast. Best-effort: never fails
 #    the install. Two steps because the project's test scope is only resolved
 #    once main compiles, so the test-framework jars are fetched directly here.
@@ -52,4 +70,13 @@ printf 'object _Warm\n' | scala-cli compile --scala 2.12.18 \
   --dep com.github.spinalhdl::spinalhdl-tester:1.15.0 - >/dev/null 2>&1 || true
 echo "[install] Dependency warm-up finished (build results ignored)."
 
-echo "[install] Done. Try: cd fpga && make compile / make rtl / make lint / make test"
+# 6. Build the homebrew Glide demos + console ROMs (best-effort validation of
+#    the 32-bit Glide sim pipeline). ROMs are committed, so failure is non-fatal.
+echo "[install] Building homebrew Glide demos (best-effort)..."
+( make -C sw/glide-homebrew >/dev/null 2>&1 && \
+    echo "[install] Homebrew Glide ROMs built in sw/glide-homebrew/roms/." ) || \
+  echo "[install] Homebrew Glide build skipped/failed (committed ROMs remain)."
+
+echo "[install] Done."
+echo "[install]   RTL:   cd fpga && make compile / rtl / lint / test"
+echo "[install]   Glide: make -C sw/glide-homebrew (+ make -C sw/glide-homebrew summary)"
