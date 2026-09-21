@@ -13,6 +13,11 @@
 #   make artix       Vivado bitstream (needs vivado and generated IP; see hw/artix/ip.md)
 
 SCALA_CLI ?= scala-cli
+# Keep Bloop's incremental compiler state with this checkout.  Besides making
+# warm local builds deterministic, this prevents a Mac daemon/cache path from
+# leaking into a tree later synced to Linux (see ../AGENTS.md).
+SCALA_BLOOP_DIR ?= $(abspath .scala-build/bloop-daemon)
+SCALA_SERVER_FLAGS = --bloop-daemon-dir $(SCALA_BLOOP_DIR)
 VERILATOR ?= verilator
 VIVADO    ?= vivado
 ARTIX_RTL  = rtl/artix
@@ -25,7 +30,7 @@ LINT_FLAGS = --lint-only -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CMPCONST -Wno-UNS
 .PHONY: compile rtl rtl-artix rtl-gowin rtl-console lint test gowin gowin-console gowin-console-sdram artix clean
 
 compile:
-	$(SCALA_CLI) compile .
+	$(SCALA_CLI) compile $(SCALA_SERVER_FLAGS) .
 
 rtl: rtl-artix rtl-gowin rtl-console
 
@@ -37,22 +42,22 @@ rtl-console: $(GOWIN_RTL)/$(CONSOLE_TOP).v
 
 $(ARTIX_RTL)/$(ARTIX_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
 	@mkdir -p $(ARTIX_RTL)
-	$(SCALA_CLI) run . --main-class voodoo.artix.AmdAc701Gen
+	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . --main-class voodoo.artix.AmdAc701Gen
 
 $(GOWIN_RTL)/$(GOWIN_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
 	@mkdir -p $(GOWIN_RTL)
-	$(SCALA_CLI) run . --main-class voodoo.gowin.TangMega138kProGen
+	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . --main-class voodoo.gowin.TangMega138kProGen
 
 $(GOWIN_RTL)/$(CONSOLE_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
 	@mkdir -p $(GOWIN_RTL)
-	$(SCALA_CLI) run . --main-class voodoo.gowin.TangConsole138kGen
+	$(SCALA_CLI) run $(SCALA_SERVER_FLAGS) . --main-class voodoo.gowin.TangConsole138kGen
 
 lint: $(ARTIX_RTL)/$(ARTIX_TOP).v $(GOWIN_RTL)/$(GOWIN_TOP).v
 	$(VERILATOR) $(LINT_FLAGS) --top-module $(ARTIX_TOP) $(ARTIX_RTL)/$(ARTIX_TOP).v
 	$(VERILATOR) $(LINT_FLAGS) --top-module $(GOWIN_TOP) $(GOWIN_RTL)/$(GOWIN_TOP).v
 
 test:
-	$(SCALA_CLI) test .
+	$(SCALA_CLI) test $(SCALA_SERVER_FLAGS) .
 
 gowin: rtl-gowin
 	hw/gowin/run_pnr.sh dock
