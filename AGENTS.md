@@ -88,15 +88,15 @@ user the machine is down.
 
 ## Sync Mac → Linux
 
-**Amaranth rewrite (the `amaranth/rewrite` branch, local worktree
-`.claude/worktrees/amaranth-rewrite`) must never rsync into
+**Amaranth rewrite (the `amaranth/rewrite` branch, its own checkout at
+`/Users/hyper/projects/me/vodoo_2-amaranth`, origin the same GitHub repo) must never rsync into
 `/home/hyper/projects/me/vodoo_2`.** That directory is the Gowin PnR tree
 of other sessions; an `rsync --delete` from the rewrite tree overwrote it
 mid-PnR on 2026-09-21. The rewrite syncs to its own directory:
 
 ```
 rsync -aH --delete <the excludes below> \
-  /Users/hyper/projects/me/vodoo_2/.claude/worktrees/amaranth-rewrite/ \
+  /Users/hyper/projects/me/vodoo_2-amaranth/ \
   hyper-ms-lin:/home/hyper/projects/me/vodoo_2-amaranth/
 ```
 
