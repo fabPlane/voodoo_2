@@ -37,11 +37,19 @@ echo "[install] scala-cli $(scala-cli version --cli-version 2>/dev/null || scala
 echo "[install] Initializing ext/SpinalVoodoo submodule..."
 git submodule update --init ext/SpinalVoodoo
 
-# 4. Warm the scala-cli / coursier dependency cache (SpinalHDL, scalatest, JDK 17).
-#    Best-effort: this downloads and caches all build dependencies so the first
-#    `make compile` / `make test` is fast. It is not allowed to fail the install.
+# 4. Warm the scala-cli / coursier dependency cache (SpinalHDL, scalatest, JDK 17)
+#    so the first `make compile` / `make test` is fast. Best-effort: never fails
+#    the install. Two steps because the project's test scope is only resolved
+#    once main compiles, so the test-framework jars are fetched directly here.
 echo "[install] Warming the build dependency cache (best-effort)..."
-( cd fpga && scala-cli test . >/dev/null 2>&1 ) || \
-  echo "[install] Dependency warm-up finished (compile result ignored)."
+( cd fpga && scala-cli compile . >/dev/null 2>&1 ) || true
+printf 'object _Warm\n' | scala-cli compile --scala 2.12.18 \
+  --dep com.github.spinalhdl::spinalhdl-core:1.15.0 \
+  --dep com.github.spinalhdl::spinalhdl-lib:1.15.0 \
+  --dep org.scodec::scodec-core:1.11.10 \
+  --dep org.scodec::scodec-bits:1.1.38 \
+  --dep org.scalatest::scalatest:3.2.18 \
+  --dep com.github.spinalhdl::spinalhdl-tester:1.15.0 - >/dev/null 2>&1 || true
+echo "[install] Dependency warm-up finished (build results ignored)."
 
 echo "[install] Done. Try: cd fpga && make compile / make rtl / make lint / make test"
