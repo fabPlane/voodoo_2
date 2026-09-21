@@ -1,7 +1,7 @@
 """Short lockstep runs for ``FramebufferPlaneReader`` and
 ``FramebufferPlaneDirectReader`` (plan Phase 6).
 
-Five registry rows, two modules, all ``Config.voodoo1()`` (26-bit addresses,
+Six registry rows, two modules, all ``Config.voodoo1()`` (26-bit addresses,
 801-lane ``laneFifo``, ``needBurstSplitter = false`` so ``io.mem`` *is*
 ``internalMem``):
 
@@ -11,6 +11,12 @@ Five registry rows, two modules, all ``Config.voodoo1()`` (26-bit addresses,
     ``io_prefetchReq``/``io_readReq`` traffic (reads follow their span's
     prefetch, with dropped lanes, repeats and a rare random address), so
     cache hits, forward skips, direct misses and long bursts all happen.
+``FramebufferPlaneReaderNoDirectMiss``
+    ``FramebufferPlaneReader(c, allowDirectMiss = false)``, the scanout reader
+    of ``FramebufferMemSubsystem.scala:98``, under the same slave and spans
+    but strictly in-order reads (``reader_traffic_800_in_order``): a read
+    behind the consume pointer would wait forever here, so repeats and random
+    addresses are off.  Checks that no ``source = 1`` command is ever issued.
 ``FramebufferPlaneReaderMemOnly``
     the same memory slave with prefetch/read left to the random generator:
     inverted spans, random read addresses.  It parks within a few thousand
@@ -63,6 +69,21 @@ def test_diff_plane_reader(tmp_path):
         assert s["SpanTraffic._Prefetches.long_spans"] > 0
         assert s["DutCounters.multiBeatBurstCount"] > 0
         assert s["DutCounters.singleBeatBurstCount"] > 0
+
+
+def test_diff_plane_reader_no_direct_miss(tmp_path):
+    """``allowDirectMiss = false`` (the scanout reader) under in-order traffic.
+
+    No ``source = 1`` command may ever be issued, and the run must stay live
+    (a read behind the pointer would stall this reader for good).
+    """
+    run_short_diff("FramebufferPlaneReaderNoDirectMiss", tmp_path)
+    for seed in (1, 2, 3):
+        s = _stats(tmp_path, seed)
+        assert s["MemSlave.miss_cmds"] == 0, f"seed {seed}: direct miss issued ({s})"
+        assert s["DutCounters.reqCount"] > 20_000 // 10, f"seed {seed}: reader parked ({s})"
+        assert s["SpanTraffic._Reads.kind_repeat"] == s["SpanTraffic._Reads.kind_random"] == 0
+        assert s["SpanTraffic._Prefetches.long_spans"] > 0
 
 
 def test_diff_plane_reader_backpressured(tmp_path):

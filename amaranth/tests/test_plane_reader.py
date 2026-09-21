@@ -601,6 +601,53 @@ def test_direct_miss_does_not_consume_cached_lane():
     run(dut, main)
 
 
+def test_no_direct_miss_waits_for_the_prefetched_span():
+    """``allowDirectMiss = false`` (the scanout reader, FramebufferMemSubsystem.scala:98).
+
+    A read presented before its span is prefetched is *not* turned into a
+    ``source = 1`` one-word read; it stalls until the span's lanes arrive and
+    is then served from ``laneFifo``.  The only memory command is the span
+    burst, ``source = 0``, and the miss counters stay at zero.
+    """
+    dut = FramebufferPlaneReader(mk_config(), allow_direct_miss=False)
+    assert dut.allow_direct_miss is False
+    assert FramebufferPlaneReader(mk_config()).allow_direct_miss is True
+
+    async def main(ctx):
+        _init(ctx, dut)
+        await ctx.tick()
+        ctx.set(dut.mem.cmd.ready, 1)
+        ctx.set(dut.read_req.payload.address, 0x002)
+        ctx.set(dut.read_req.valid, 1)
+        for _ in range(8):
+            await ctx.tick()
+            assert not ctx.get(dut.read_req.ready)
+            assert not ctx.get(dut.mem.cmd.valid), "no direct miss command may be issued"
+        # The span arrives; its burst is the first and only command.
+        await _prefetch(ctx, dut, 0x000, 0x006)
+        frag = dut.mem.cmd.payload.fragment
+        address, length, source = await ctx.tick().sample(
+            frag.address, frag.length, frag.source).until(dut.mem.cmd.valid)
+        assert (address, length, source) == (0x000, 7, 0)
+        ctx.set(dut.mem.cmd.ready, 0)
+        # The waiting read is ahead of the span start (0x002 > 0x000): lane
+        # 0x000 is skipped, 0x002 served from the cache.
+        await _send_rsp_beat(ctx, dut, 0x56781234, last=False)
+        await _send_rsp_beat(ctx, dut, 0xDEF09ABC, last=True)
+        await ctx.tick().until(dut.read_req.ready)
+        ctx.set(dut.read_req.valid, 0)
+        (data,) = await ctx.tick().sample(dut.read_rsp.payload.data).until(dut.read_rsp.valid)
+        assert data == 0x5678
+        await ctx.tick()
+        assert await _read(ctx, dut, 0x004) == 0x9ABC
+        await ctx.tick().repeat(3)
+        assert ctx.get(dut.fill_burst_count) == 1
+        assert ctx.get(dut.req_count) == 2
+        assert ctx.get(dut.mem.cmd.valid) == 0
+
+    run(dut, main)
+
+
 # ==========================================================================
 # randomised model run
 # ==========================================================================

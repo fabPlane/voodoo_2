@@ -304,6 +304,9 @@ object GenOne {
     )(FramebufferPlaneDirectReader(c)),
     // Aliases for the amaranth reader rows that attach a memory-slave / span-traffic
     // responder (tests/diff/plane_reader_stimulus.py); same components, same parameters.
+    "FramebufferPlaneReaderNoDirectMiss" -> ok(
+      "FramebufferMemSubsystem.scala:98 — FramebufferPlaneReader(c, allowDirectMiss = false)"
+    )(FramebufferPlaneReader(c, allowDirectMiss = false)),
     "FramebufferPlaneReaderMemOnly" -> ok("alias of FramebufferPlaneReader")(
       FramebufferPlaneReader(c)
     ),

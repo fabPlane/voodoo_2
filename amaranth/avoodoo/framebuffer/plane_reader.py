@@ -2,7 +2,9 @@
 
 1:1 port of ``ext/SpinalVoodoo/src/voodoo/framebuffer/FramebufferPlaneReader.scala``
 (461 lines, SpinalHDL 1.15.0), instantiated by
-``FramebufferMemSubsystem.scala:78`` as ``FramebufferPlaneReader(c)``.
+``FramebufferMemSubsystem.scala:78`` as ``FramebufferPlaneReader(c)`` and at
+``:98`` as ``FramebufferPlaneReader(c, allowDirectMiss = false)`` (the scanout
+reader; see :attr:`FramebufferPlaneReader.allow_direct_miss`).
 
 How it works, in the Scala's own terms:
 
@@ -150,9 +152,16 @@ class FramebufferPlaneReader(wiring.Component):
     counters, ``maxOccupancy`` and the four ``cacheDebug*`` outputs.
     """
 
-    def __init__(self, c: Config | None = None) -> None:
+    def __init__(self, c: Config | None = None, *, allow_direct_miss: bool = True) -> None:
         c = Config.voodoo1() if c is None else c
         self.c = c
+        #: ``allowDirectMiss`` (Scala line 9).  ``FramebufferMemSubsystem`` builds
+        #: the scanout reader with ``false``: a scanout request is always
+        #: preceded by its line prefetch, so the consumer waits for the queued
+        #: span instead of issuing an early direct miss in the one-cycle
+        #: prefetch/consume startup window (which would hold the ordered
+        #: response path ahead of the now-ready cached lane).
+        self.allow_direct_miss = allow_direct_miss
         self.addr_width = c.address_width
         self.max_span_pixels = c.max_fb_dims[0]
         self.span_lane_count_width = log2_up(self.max_span_pixels + 1)
@@ -336,10 +345,13 @@ class FramebufferPlaneReader(wiring.Component):
         prefetch_cmd_valid = Signal(name="prefetchCmdValid")
         direct_miss_cmd_selected = Signal(name="directMissCmdSelected")
         prefetch_cmd_selected = Signal(name="prefetchCmdSelected")
+        if self.allow_direct_miss:
+            m.d.comb += direct_miss_needed.eq(
+                ~consume_expected_valid
+                | (consume_expected_valid & ~consume_addr_matches & ~consume_addr_ahead))
+        else:
+            m.d.comb += direct_miss_needed.eq(0)      # `False` (Scala line 225)
         m.d.comb += [
-            direct_miss_needed.eq(~consume_expected_valid
-                                  | (consume_expected_valid & ~consume_addr_matches
-                                     & ~consume_addr_ahead)),
             direct_miss_cmd_valid.eq(read_req.valid & direct_miss_needed
                                      & direct_miss_lane_queue.push.ready),
             prefetch_cmd_valid.eq(span_issue_queue.pop.valid & issued_span_queue.push.ready),

@@ -233,11 +233,14 @@ class _Prefetches(StreamResponder):
 
 
 class _Reads(StreamResponder):
-    def __init__(self, *, rng, spec, addr_width, valid_density):
+    def __init__(self, *, rng, spec, addr_width, valid_density,
+                 repeat_p: float = 0.1, random_p: float = 0.002):
         super().__init__(stream=_READ, payload=_payload_ports(spec, _READ),
                          rng=rng, valid_density=valid_density)
         self._mask = (1 << addr_width) - 1
         self._width = addr_width
+        self._repeat_p = repeat_p
+        self._random_p = random_p
         self._kinds = {"inorder": 0, "repeat": 0, "random": 0}
         self._staged: deque = deque()
 
@@ -279,7 +282,7 @@ class _Reads(StreamResponder):
             if addr == end or rng.random() < 0.8:
                 seen.append(addr)
                 self._kinds["inorder"] += 1
-            if seen and addr != end and rng.random() < 0.1:
+            if seen and addr != end and rng.random() < self._repeat_p:
                 # A repeat of an earlier lane of the *same* span is "behind"
                 # the consume pointer: a cheap direct miss. Never after the
                 # last lane: the pointer is then on the next span, whose
@@ -288,7 +291,7 @@ class _Reads(StreamResponder):
                 # one queued) and every read of it becomes a miss.
                 seen.append(rng.choice(seen))
                 self._kinds["repeat"] += 1
-            if rng.random() < 0.002:
+            if rng.random() < self._random_p:
                 # A global random address: half the time it is ahead of every
                 # queued span, which skips them all and turns the rest of the
                 # lookahead window into direct misses -- so keep it rare.
@@ -306,10 +309,15 @@ class SpanTraffic(Composite):
 
     def __init__(self, *, rng: random.Random, spec: dict, max_lanes: int,
                  prefetch_density: float = 0.5, read_density: float = 0.7,
-                 lookahead: int = 48):
+                 lookahead: int = 48, in_order: bool = False):
         aw = _width(spec, f"{_READ}_payload_address")
+        # ``in_order``: no repeats and no random addresses -- a read *behind*
+        # the consume pointer is a direct miss, and the ``allowDirectMiss =
+        # false`` scanout reader waits forever for one.  Dropped lanes stay:
+        # they are ahead of the pointer and are skipped.
         reads = _Reads(rng=random.Random(rng.random()), spec=spec, addr_width=aw,
-                       valid_density=read_density)
+                       valid_density=read_density,
+                       **(dict(repeat_p=0.0, random_p=0.0) if in_order else {}))
         prefetches = _Prefetches(rng=random.Random(rng.random()), spec=spec,
                                  addr_width=aw, max_lanes=max_lanes,
                                  valid_density=prefetch_density, reads=reads,
@@ -326,13 +334,13 @@ def mem_slave(*, seed: int, rng: random.Random, spec: dict) -> Responder:
     return Composite(MemSlave(rng=rng, spec=spec), DutCounters())
 
 
-def reader_traffic(max_lanes: int):
+def reader_traffic(max_lanes: int, *, in_order: bool = False):
     """``DiffEntry.responder`` factory maker: memory side + span-shaped traffic."""
 
     def factory(*, seed: int, rng: random.Random, spec: dict) -> Responder:
         return Composite(MemSlave(rng=random.Random(rng.random()), spec=spec),
                          SpanTraffic(rng=random.Random(rng.random()), spec=spec,
-                                     max_lanes=max_lanes),
+                                     max_lanes=max_lanes, in_order=in_order),
                          DutCounters())
 
     return factory
@@ -341,3 +349,7 @@ def reader_traffic(max_lanes: int):
 #: ``Config.voodoo1()`` allows ``maxFbDims._1 = 800`` lanes per span; 600 keeps
 #: one long span plus the lookahead inside the 801-lane ``laneFifo``.
 reader_traffic_800 = reader_traffic(600)
+
+#: The scanout reader (``allowDirectMiss = false``): same spans, reads strictly
+#: in order (with drops), because a read behind the pointer would never return.
+reader_traffic_800_in_order = reader_traffic(600, in_order=True)

@@ -660,6 +660,17 @@ REGISTRY: dict[str, DiffEntry] = {
         # slices of `prefetch_req__payload`, io_cacheDebugReadAddr ->
         # `cache_debug_read_addr`, the Bmb leaves as for BmbAligner.
     ),
+    "FramebufferPlaneReaderNoDirectMiss": DiffEntry(
+        spinal="FramebufferPlaneReaderNoDirectMiss",
+        portmap="FramebufferPlaneReader",
+        factory="avoodoo.framebuffer.plane_reader:FramebufferPlaneReader",
+        params=dict(allow_direct_miss=False),
+        note="FramebufferMemSubsystem.scala:98 — FramebufferPlaneReader(c, allowDirectMiss "
+             "= false), the scanout reader: a read behind the consume pointer waits "
+             "instead of issuing a direct miss -- forever, so the traffic is the "
+             "scanout's: strictly in order (drops only, no repeats/random addresses)",
+        responder="tests.diff.plane_reader_stimulus:reader_traffic_800_in_order",
+    ),
     "FramebufferPlaneReaderMemOnly": DiffEntry(
         spinal="FramebufferPlaneReaderMemOnly",
         portmap="FramebufferPlaneReader",

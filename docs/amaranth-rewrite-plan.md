@@ -1192,6 +1192,19 @@ Spinal core does.
       * Ported as-is: `reqSameLineCount := reqSameLineCount` (never advances),
         `maxOccupancy`'s `resize(8)` truncating the 10-bit occupancy before the compare,
         and the fill retiring on `wordCount` rather than `rsp.last`.
+      * **`allow_direct_miss`** (2026-09-21, for p6-fbmemsub). The reference Scala's local
+        patch adds `FramebufferPlaneReader(c, allowDirectMiss: Boolean = true)`; the mem
+        subsystem builds `fbScanoutReader` with `false`, which ties `directMissNeeded` to
+        `False` (a scanout read is always preceded by its line prefetch; an early direct
+        miss in the one-cycle prefetch/consume startup window would hold the ordered
+        response path). Ported as the keyword-only `allow_direct_miss=True`. Sixth row
+        `FramebufferPlaneReaderNoDirectMiss` (GenOne entry, not an alias) diffs it under
+        `reader_traffic_800_in_order` -- the same spans with repeats and random addresses
+        off, because a read *behind* the pointer now waits forever (the first run with the
+        normal traffic parked at ~10 reads per seed; both sides agreed). Clean at 1e6 x
+        seeds 1,2,3 and under back-pressure; ~11.7k reads / 20k cycles, zero `source = 1`
+        commands, asserted by the pytest. Unit test
+        `test_no_direct_miss_waits_for_the_prefetched_span`.
 
 ### Phase 7
 - [ ] scanout  - [ ] core + core_sim + dbg  - [ ] Glide suite identical  - [ ] trace replays identical  - [ ] SpinalSim tests ported
