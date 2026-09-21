@@ -93,6 +93,21 @@ This is the first diagnostic to run after reconnecting the FT2232.  It tells us
 directly whether the open-flow input clock, global-clock buffer, counter carry
 chain, DFFs, and JTAG readback all work together.
 
+## Verify inferred block RAM
+
+`jtag_bram_probe-open.fs` destructively writes and reads 1,024 32-bit words in
+two inferred physical BSRAM blocks. Its host tool decodes the state, completion
+flag, mismatch flag, and first failing address:
+
+```sh
+hardware/tang-console-138k/program_debug_sram.sh \
+  fpga/hw/gowin-open/build/jtag_bram_probe-open.fs
+python3 hardware/tang-console-138k/jtag_bram_probe.py
+```
+
+The hardware-proven passing value is `0xb5a5b3ff`: state `DONE`, completion
+set, failure clear, and final address `0x3ff`.
+
 ## Open-source flow status
 
 The host protocol and the fully open FPGA image are hardware-proven. The open
@@ -112,3 +127,6 @@ The open clock probe also passed: eight 100 ms samples advanced by roughly
 5,000,000 counts each, directly confirming the 50 MHz input clock, counter,
 and JTAG clock-domain readback. Keep JTAG tests exclusive; a second process
 using the FT2232 can cause misleading transport failures and scan values.
+
+The open BSRAM probe also entered user mode and returned `0xb5a5b3ff` on four
+successive reads, proving its complete 1,024-word write/read/compare pass.

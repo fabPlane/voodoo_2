@@ -29,6 +29,8 @@ complete-core name.
   the GW5AST ER1 JTAG instruction, with the low two bits mirrored on the LEDs.
 - `jtag_clock_probe`: exposes a Gray-coded free-running 50 MHz counter through
   ER1 so clocked logic can be checked numerically instead of by eye.
+- `jtag_bram_probe`: writes and verifies 1,024 32-bit words in two inferred
+  BSRAM blocks and reports the final state and first failing address over ER1.
 - `hdmi_colorbars` (work in progress): complete open RTL for 640x480 timing,
   eight color bars, TMDS encoding, and GW5A serializers/differential outputs.
   RESET restarts the counters; holding USER blanks active video.
@@ -134,14 +136,17 @@ results, and host-side protocol.
 The template-backed database and domain-aware fuse application remain required:
 ordinary logic tiles carry non-zero blank-state patterns, and configured tiles
 both set and clear parts of that baseline. This milestone validates direct
-GPIO and basic clocked logic. BSRAM, PLL/HDMI, and DDR3 remain separate bring-up
-steps.
+GPIO and basic clocked logic. The JTAG-readable BSRAM probe also passed all
+1,024 words on hardware with status `0xb5a5b3ff`, validating two inferred
+physical BSRAM blocks without relying on the LEDs. PLL/HDMI and DDR3 remain
+separate bring-up steps.
 
 ## Porting order
 
 1. Establish logic, GPIO, UART, and inferred BSRAM with the smoke tests above.
-2. Finish GW5AST-138C PLL placement/packing upstream, then place the existing
-   open TMDS color-bar generator. CLKDIV/OSER10/ELVDS already synthesize.
+   Logic, GPIO, the 50 MHz clock, and inferred BSRAM are now validated.
+2. Add the missing GW5AST-138C CLKDIV resource and route the existing open TMDS
+   color-bar generator. PLLA already places; CLKDIV/OSER10/ELVDS synthesize.
 3. Add a small soft CPU demo backed entirely by BSRAM.
 4. Bring up DDR3 in isolation: initialization, training, walking-bit tests,
    then sustained reads/writes. This requires an open GW5A DDR PHY as well as
