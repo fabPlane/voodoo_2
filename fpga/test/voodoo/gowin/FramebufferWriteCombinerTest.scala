@@ -38,6 +38,9 @@ case class FramebufferBurstPathHarness(c: Config) extends Component {
 
   val bridge = BmbToAxi4Mem(Core.fbMemBmbParams(c), CoreGowin.axiBurstLog2)
   bridge.io.input <> arbiter.io.output
+  bridge.io.output.w.valid.simPublic()
+  bridge.io.output.w.ready.simPublic()
+  bridge.io.output.w.strb.simPublic()
   val adapter = Axi4ToGowinDdrNative(
     CoreGowin.fbAxiConfig(c),
     CoreGowin.texAxiConfig(c),
@@ -124,6 +127,49 @@ class FramebufferWriteCombinerTest extends AnyFunSuite {
       dut.clockDomain.waitSamplingWhere(dut.io.ddr.cmdEn.toBoolean)
       assert(dut.io.ddr.wrData.toBigInt != 0, "native write data was lost")
       assert(dut.io.ddr.wrDataMask.toLong != 0xffffL, "all native write lanes were inhibited")
+    }
+  }
+
+  test("one direct framebuffer write produces one native DDR write") {
+    val c = config.copy(useFbWriteBuffer = false)
+    SimConfig.withVerilator.compile(FramebufferBurstPathHarness(c)).doSim { dut =>
+      dut.clockDomain.forkStimulus(10)
+      dut.io.color.valid #= false
+      dut.io.aux.valid #= false
+      dut.io.flush #= false
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdData #= 0
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.clockDomain.waitSampling(5)
+
+      var axiBeats = 0
+      var enabledAxiBeats = 0
+      var nativeWrites = 0
+      fork {
+        while (true) {
+          if (dut.bridge.io.output.w.valid.toBoolean && dut.bridge.io.output.w.ready.toBoolean) {
+            axiBeats += 1
+            if (dut.bridge.io.output.w.strb.toLong != 0) enabledAxiBeats += 1
+          }
+          if (dut.io.ddr.cmdEn.toBoolean && dut.io.ddr.wrDataEn.toBoolean) nativeWrites += 1
+          dut.clockDomain.waitSampling()
+        }
+      }
+
+      dut.io.color.address #= 0x40
+      dut.io.color.data #= 0x1234abcdL
+      dut.io.color.mask #= 0xf
+      dut.io.color.valid #= true
+      dut.clockDomain.waitSamplingWhere(dut.io.color.ready.toBoolean)
+      dut.io.color.valid #= false
+      dut.clockDomain.waitSampling(300)
+
+      assert(axiBeats == 64)
+      assert(enabledAxiBeats == 1)
+      assert(nativeWrites == 1)
     }
   }
 

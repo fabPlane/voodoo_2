@@ -20,15 +20,17 @@ object CoreGowin {
   val barAddressWidth = CoreArtix.barAddressWidth
   val axiBurstLog2 = CoreArtix.axiBurstLog2
 
-  def fbAxiConfig(c: Config) = CoreArtix.fbAxiConfig(c)
-  def texAxiConfig(c: Config) = CoreArtix.texAxiConfig(c)
+  def fbAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
+    BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
+  def texAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
+    BmbToAxi4Mem.axiConfig(Core.texMemBmbParams(c), burstLog2)
 }
 
-case class CoreGowin(c: Config) extends Component {
+case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) extends Component {
   val io = new Bundle {
     val bar = slave(AxiLite4(AxiLite4ToBmbBridge.axiConfig(CoreGowin.barAddressWidth)))
-    val memFb = master(Axi4(CoreGowin.fbAxiConfig(c)))
-    val memTex = master(Axi4(CoreGowin.texAxiConfig(c)))
+    val memFb = master(Axi4(CoreGowin.fbAxiConfig(c, axiBurstLog2)))
+    val memTex = master(Axi4(CoreGowin.texAxiConfig(c, axiBurstLog2)))
     val hdmi = master(HdmiScanoutPort(c))
     val hostWedged = out Bool ()
     val hostRequestTimeout = out Bool ()
@@ -74,10 +76,10 @@ case class CoreGowin(c: Config) extends Component {
     // turn between sustained write bursts.
     lowerFirstPriority = false
   )
-  val fbAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), CoreGowin.axiBurstLog2)
-  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreGowin.axiBurstLog2)
+  val fbAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
+  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2)
   val texReloc = Axi4AddressRelocate(
-    CoreGowin.texAxiConfig(c),
+    CoreGowin.texAxiConfig(c, axiBurstLog2),
     GowinAddressMap.texMemBase
   )
 

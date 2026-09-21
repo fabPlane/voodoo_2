@@ -3,23 +3,34 @@ package voodoo.gowin
 import spinal.core._
 import spinal.lib._
 
-/** Four live 40-character rows at the top of HDMI. Same status as CoreDebugLog,
-  * readable when USB CDC never enumerates.
+/** Large, camera-readable live diagnostics. Same status as CoreDebugLog,
+  * readable when USB CDC never enumerates. Short rows and generous margins
+  * keep the text away from monitor overscan and oblique webcam framing.
   */
 object DebugHud {
-  val cols = 40
-  val rows = 4
-  val scale = 2
-  val height = rows * 8 * scale
+  val cols = 17
+  val rows = 10
+  val scale = 4
+  val xOrigin = 48
+  val yOrigin = 16
+  val rowPitch = 44
+  val width = cols * 8 * scale
+  val height = yOrigin + (rows - 1) * rowPitch + 8 * scale
 
-  val line0 = "CAL=0 W=0 UF=0 F=0000 OV=0 PL=0".padTo(cols, ' ')
-  val line1 = "MODE=0 RST=0 CUR=0 HID=0000".padTo(cols, ' ')
-  val line2 = "PC=00000000 PF=0000 RQ=0000 RS=0000".padTo(cols, ' ')
-  val line3 = "RI=0000 RP=0000 RV=0000 RR=0000 S=00".padTo(cols, ' ')
-  require(line0.length == cols)
-  require(line1.length == cols)
-  require(line2.length == cols)
-  require(line3.length == cols)
+  val lines = Seq(
+    "CAL=0 W=0 UF=0",
+    "OV=0 PL=0 MODE=0",
+    "RST=0 CUR=0",
+    "F=0000 S=00",
+    "HID=0000",
+    "PC=00000000",
+    "PF=0000 RQ=0000",
+    "RS=0000 RI=0000",
+    "RP=0000 RV=0000",
+    "RR=0000",
+  ).map(_.padTo(cols, ' '))
+  require(lines.length == rows)
+  require(lines.forall(_.length == cols))
 
   def digitAfter(line: String, label: String): Int = {
     val i = line.indexOf(label)
@@ -27,25 +38,25 @@ object DebugHud {
     i + label.length
   }
 
-  val calBit = digitAfter(line0, "CAL=")
-  val wedBit = digitAfter(line0, "W=")
-  val underflowBit = digitAfter(line0, "UF=")
-  val fifoHex = digitAfter(line0, "F=")
-  val ovBit = digitAfter(line0, "OV=")
-  val plBit = digitAfter(line0, "PL=")
-  val modeBit = digitAfter(line1, "MODE=")
-  val resetBit = digitAfter(line1, "RST=")
-  val curNibble = digitAfter(line1, "CUR=")
-  val hidHex = digitAfter(line1, "HID=")
-  val pcHex = digitAfter(line2, "PC=")
-  val prefetchHex = digitAfter(line2, "PF=")
-  val readReqHex = digitAfter(line2, "RQ=")
-  val readRspHex = digitAfter(line2, "RS=")
-  val readIssueHex = digitAfter(line3, "RI=")
-  val physicalReadHex = digitAfter(line3, "RP=")
-  val physicalReadRspHex = digitAfter(line3, "RV=")
-  val cdcReadRspHex = digitAfter(line3, "RR=")
-  val statusHex = digitAfter(line3, "S=")
+  val calBit = digitAfter(lines(0), "CAL=")
+  val wedBit = digitAfter(lines(0), "W=")
+  val underflowBit = digitAfter(lines(0), "UF=")
+  val ovBit = digitAfter(lines(1), "OV=")
+  val plBit = digitAfter(lines(1), "PL=")
+  val modeBit = digitAfter(lines(1), "MODE=")
+  val resetBit = digitAfter(lines(2), "RST=")
+  val curNibble = digitAfter(lines(2), "CUR=")
+  val fifoHex = digitAfter(lines(3), "F=")
+  val statusHex = digitAfter(lines(3), "S=")
+  val hidHex = digitAfter(lines(4), "HID=")
+  val pcHex = digitAfter(lines(5), "PC=")
+  val prefetchHex = digitAfter(lines(6), "PF=")
+  val readReqHex = digitAfter(lines(6), "RQ=")
+  val readRspHex = digitAfter(lines(7), "RS=")
+  val readIssueHex = digitAfter(lines(7), "RI=")
+  val physicalReadHex = digitAfter(lines(8), "RP=")
+  val physicalReadRspHex = digitAfter(lines(8), "RV=")
+  val cdcReadRspHex = digitAfter(lines(9), "RR=")
 }
 
 case class DebugHud() extends Component {
@@ -94,72 +105,104 @@ case class DebugHud() extends Component {
     if (i == DebugHud.calBit) bitChar(io.calib)
     else if (i == DebugHud.wedBit) bitChar(io.wedge)
     else if (i == DebugHud.underflowBit) bitChar(io.underflow)
-    else if (i >= DebugHud.fifoHex && i < DebugHud.fifoHex + 4) {
-      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.fifoLevel, i - DebugHud.fifoHex, 4))
-    }
-    else if (i == DebugHud.ovBit) bitChar(io.overlay)
-    else if (i == DebugHud.plBit) bitChar(io.playing)
-    else B(DebugHud.line0(i).toInt, 8 bits)
+    else B(DebugHud.lines(0)(i).toInt, 8 bits)
   }
   val chars1 = Vec.tabulate(DebugHud.cols) { i =>
-    if (i == DebugHud.modeBit) bitChar(io.modeKey)
-    else if (i == DebugHud.resetBit) bitChar(io.resetKey)
-    else if (i == DebugHud.curNibble) CoreDebugLog.hexDigit(io.cursor)
-    else if (i >= DebugHud.hidHex && i < DebugHud.hidHex + 4) {
-      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.hid.asUInt, i - DebugHud.hidHex, 4))
-    } else B(DebugHud.line1(i).toInt, 8 bits)
+    if (i == DebugHud.ovBit) bitChar(io.overlay)
+    else if (i == DebugHud.plBit) bitChar(io.playing)
+    else if (i == DebugHud.modeBit) bitChar(io.modeKey)
+    else B(DebugHud.lines(1)(i).toInt, 8 bits)
   }
   val chars2 = Vec.tabulate(DebugHud.cols) { i =>
+    if (i == DebugHud.resetBit) bitChar(io.resetKey)
+    else if (i == DebugHud.curNibble) CoreDebugLog.hexDigit(io.cursor)
+    else B(DebugHud.lines(2)(i).toInt, 8 bits)
+  }
+  val chars3 = Vec.tabulate(DebugHud.cols) { i =>
+    if (i >= DebugHud.fifoHex && i < DebugHud.fifoHex + 4) {
+      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.fifoLevel, i - DebugHud.fifoHex, 4))
+    } else if (i >= DebugHud.statusHex && i < DebugHud.statusHex + 2) {
+      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.ddrStatus.asUInt, i - DebugHud.statusHex, 2))
+    } else B(DebugHud.lines(3)(i).toInt, 8 bits)
+  }
+  val chars4 = Vec.tabulate(DebugHud.cols) { i =>
+    if (i >= DebugHud.hidHex && i < DebugHud.hidHex + 4) {
+      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.hid.asUInt, i - DebugHud.hidHex, 4))
+    } else B(DebugHud.lines(4)(i).toInt, 8 bits)
+  }
+  val chars5 = Vec.tabulate(DebugHud.cols) { i =>
     if (i >= DebugHud.pcHex && i < DebugHud.pcHex + 8) {
       CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.pc, i - DebugHud.pcHex, 8))
-    } else if (i >= DebugHud.prefetchHex && i < DebugHud.prefetchHex + 4) {
+    } else B(DebugHud.lines(5)(i).toInt, 8 bits)
+  }
+  val chars6 = Vec.tabulate(DebugHud.cols) { i =>
+    if (i >= DebugHud.prefetchHex && i < DebugHud.prefetchHex + 4) {
       CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.scanoutPrefetchCount, i - DebugHud.prefetchHex, 4))
     } else if (i >= DebugHud.readReqHex && i < DebugHud.readReqHex + 4) {
       CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.scanoutReadReqCount, i - DebugHud.readReqHex, 4))
-    } else if (i >= DebugHud.readRspHex && i < DebugHud.readRspHex + 4) {
-      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.scanoutReadRspCount, i - DebugHud.readRspHex, 4))
-    } else {
-      B(DebugHud.line2(i).toInt, 8 bits)
-    }
+    } else B(DebugHud.lines(6)(i).toInt, 8 bits)
   }
-  val chars3 = Vec.tabulate(DebugHud.cols) { i =>
-    if (i >= DebugHud.readIssueHex && i < DebugHud.readIssueHex + 4) {
+  val chars7 = Vec.tabulate(DebugHud.cols) { i =>
+    if (i >= DebugHud.readRspHex && i < DebugHud.readRspHex + 4) {
+      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.scanoutReadRspCount, i - DebugHud.readRspHex, 4))
+    } else if (i >= DebugHud.readIssueHex && i < DebugHud.readIssueHex + 4) {
       CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.readIssueCount, i - DebugHud.readIssueHex, 4))
-    } else if (i >= DebugHud.physicalReadHex && i < DebugHud.physicalReadHex + 4) {
+    } else B(DebugHud.lines(7)(i).toInt, 8 bits)
+  }
+  val chars8 = Vec.tabulate(DebugHud.cols) { i =>
+    if (i >= DebugHud.physicalReadHex && i < DebugHud.physicalReadHex + 4) {
       CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.physicalReadCount, i - DebugHud.physicalReadHex, 4))
     } else if (i >= DebugHud.physicalReadRspHex && i < DebugHud.physicalReadRspHex + 4) {
       CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.physicalReadRspCount, i - DebugHud.physicalReadRspHex, 4))
-    } else if (i >= DebugHud.cdcReadRspHex && i < DebugHud.cdcReadRspHex + 4) {
+    } else B(DebugHud.lines(8)(i).toInt, 8 bits)
+  }
+  val chars9 = Vec.tabulate(DebugHud.cols) { i =>
+    if (i >= DebugHud.cdcReadRspHex && i < DebugHud.cdcReadRspHex + 4) {
       CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.cdcReadRspCount, i - DebugHud.cdcReadRspHex, 4))
-    } else if (i >= DebugHud.statusHex && i < DebugHud.statusHex + 2) {
-      CoreDebugLog.hexDigit(CoreDebugLog.hexNibble(io.ddrStatus.asUInt, i - DebugHud.statusHex, 2))
-    } else {
-      B(DebugHud.line3(i).toInt, 8 bits)
-    }
+    } else B(DebugHud.lines(9)(i).toInt, 8 bits)
   }
 
   val fontMem = Mem(Bits(8 bits), DemoFont.bytes.length)
   fontMem.init(DemoFont.bytes.map(v => B(v, 8 bits)))
 
-  val col = (io.x >> cellShift).resize(6 bits)
-  val row = (io.y >> cellShift).resize(2 bits)
-  val inX = col < DebugHud.cols
-  val inY = io.y < DebugHud.height
-  val inRegion = io.de && inX && inY
+  val xInBounds = io.x >= DebugHud.xOrigin && io.x < (DebugHud.xOrigin + DebugHud.width)
+  val xRelative = (io.x - DebugHud.xOrigin).resize(10 bits)
+  val col = (xRelative >> cellShift).resize(5 bits)
+  val safeCol = Mux(col < DebugHud.cols, col, U(0, 5 bits))
+  val row = UInt(log2Up(DebugHud.rows) bits)
+  val fy0 = UInt(3 bits)
+  val yInGlyph = Bool()
+  row := 0
+  fy0 := 0
+  yInGlyph := False
+  for (r <- 0 until DebugHud.rows) {
+    val top = DebugHud.yOrigin + r * DebugHud.rowPitch
+    when(io.y >= top && io.y < (top + cell)) {
+      row := r
+      fy0 := ((io.y - top) >> scaleShift).resize(3 bits)
+      yInGlyph := True
+    }
+  }
+  val inRegion = io.de && xInBounds && yInGlyph
   val ch = Bits(8 bits)
-  ch := chars0(col.resized)
+  ch := chars0(safeCol.resized)
   switch(row) {
-    is(1) { ch := chars1(col.resized) }
-    is(2) { ch := chars2(col.resized) }
-    is(3) { ch := chars3(col.resized) }
+    is(1) { ch := chars1(safeCol.resized) }
+    is(2) { ch := chars2(safeCol.resized) }
+    is(3) { ch := chars3(safeCol.resized) }
+    is(4) { ch := chars4(safeCol.resized) }
+    is(5) { ch := chars5(safeCol.resized) }
+    is(6) { ch := chars6(safeCol.resized) }
+    is(7) { ch := chars7(safeCol.resized) }
+    is(8) { ch := chars8(safeCol.resized) }
+    is(9) { ch := chars9(safeCol.resized) }
   }
   val glyph = Mux(
     ch.asUInt >= DemoFont.first && ch.asUInt < (DemoFont.first + DemoFont.count),
     (ch.asUInt - DemoFont.first).resize(8),
     U(0, 8 bits)
   )
-  val fx0 = (io.x >> scaleShift)(2 downto 0)
-  val fy0 = (io.y >> scaleShift)(2 downto 0)
+  val fx0 = (xRelative >> scaleShift)(2 downto 0)
   val fx1 = RegNext(fx0) init (0)
   val fy1 = RegNext(fy0) init (0)
   val region1 = RegNext(inRegion) init (False)

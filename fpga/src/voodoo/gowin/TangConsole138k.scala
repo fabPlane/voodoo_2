@@ -73,7 +73,11 @@ case class TangConsole138k(c: Config) extends Component {
     val debugTx = master(Flow(Bits(8 bits)))
   }
 
-  val core = CoreGowin(c)
+  // The Console DDR native port is 128 bits (16 bytes). Align BMB/AXI
+  // transactions to that width instead of inheriting Artix's 256-byte MIG
+  // alignment, which pads every short framebuffer access to 64 AXI beats.
+  val consoleAxiBurstLog2 = log2Up(GowinAddressMap.consoleDdrNativeDataWidth / 8)
+  val core = CoreGowin(c, consoleAxiBurstLog2)
   val coreCd = ClockDomain.current
   val ddrCd = ClockDomain(
     clock = io.ddrClk,
@@ -81,8 +85,8 @@ case class TangConsole138k(c: Config) extends Component {
     config = ClockDomain.current.config
   )
   val ddr = Axi4ToGowinDdrNative(
-    CoreGowin.fbAxiConfig(c),
-    CoreGowin.texAxiConfig(c),
+    CoreGowin.fbAxiConfig(c, consoleAxiBurstLog2),
+    CoreGowin.texAxiConfig(c, consoleAxiBurstLog2),
     nativeDataWidth = GowinAddressMap.consoleDdrNativeDataWidth,
     nativeAddrWidth = GowinAddressMap.consoleDdrNativeAddrWidth
   )

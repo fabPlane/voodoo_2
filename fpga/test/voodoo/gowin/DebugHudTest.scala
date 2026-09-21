@@ -5,24 +5,24 @@ import spinal.core._
 import spinal.core.sim._
 
 class DebugHudTest extends AnyFunSuite {
-  test("templates are 40 columns") {
-    assert(DebugHud.line0.length == 40, DebugHud.line0)
-    assert(DebugHud.line1.length == 40, DebugHud.line1)
-    assert(DebugHud.line2.length == 40, DebugHud.line2)
-    assert(DebugHud.line3.length == 40, DebugHud.line3)
-    assert(DebugHud.line0(DebugHud.calBit) == '0')
-    assert(DebugHud.line0(DebugHud.ovBit) == '0')
-    assert(DebugHud.line0(DebugHud.plBit) == '0')
-    assert(DebugHud.line0(DebugHud.underflowBit) == '0')
-    assert(DebugHud.line2(DebugHud.pcHex) == '0')
-    assert(DebugHud.line2(DebugHud.prefetchHex) == '0')
-    assert(DebugHud.line2(DebugHud.readReqHex) == '0')
-    assert(DebugHud.line2(DebugHud.readRspHex) == '0')
-    assert(DebugHud.line3(DebugHud.readIssueHex) == '0')
-    assert(DebugHud.line3(DebugHud.physicalReadHex) == '0')
-    assert(DebugHud.line3(DebugHud.physicalReadRspHex) == '0')
-    assert(DebugHud.line3(DebugHud.cdcReadRspHex) == '0')
-    assert(DebugHud.line3(DebugHud.statusHex) == '0')
+  test("camera-readable templates fit inside the safe margins") {
+    assert(DebugHud.lines.length == DebugHud.rows)
+    assert(DebugHud.lines.forall(_.length == DebugHud.cols), DebugHud.lines.mkString("|"))
+    assert(DebugHud.xOrigin + DebugHud.width <= 640 - DebugHud.xOrigin)
+    assert(DebugHud.height <= 480)
+    assert(DebugHud.lines(0)(DebugHud.calBit) == '0')
+    assert(DebugHud.lines(0)(DebugHud.underflowBit) == '0')
+    assert(DebugHud.lines(1)(DebugHud.ovBit) == '0')
+    assert(DebugHud.lines(1)(DebugHud.plBit) == '0')
+    assert(DebugHud.lines(3)(DebugHud.statusHex) == '0')
+    assert(DebugHud.lines(5)(DebugHud.pcHex) == '0')
+    assert(DebugHud.lines(6)(DebugHud.prefetchHex) == '0')
+    assert(DebugHud.lines(6)(DebugHud.readReqHex) == '0')
+    assert(DebugHud.lines(7)(DebugHud.readRspHex) == '0')
+    assert(DebugHud.lines(7)(DebugHud.readIssueHex) == '0')
+    assert(DebugHud.lines(8)(DebugHud.physicalReadHex) == '0')
+    assert(DebugHud.lines(8)(DebugHud.physicalReadRspHex) == '0')
+    assert(DebugHud.lines(9)(DebugHud.cdcReadRspHex) == '0')
   }
 
   test("CAL=1 paints a glyph at the status bit") {
@@ -54,9 +54,9 @@ class DebugHudTest extends AnyFunSuite {
       dut.io.uartRxCount #= 0
       dut.io.uartHidCount #= 0
 
-      // '1' top row 0x18 has bits 4:3. Scale-2 cell starts at x=64 for col 4.
-      dut.io.x #= DebugHud.calBit * 16 + 6
-      dut.io.y #= 0
+      // '1' top row 0x18 has bits 4:3; choose font x=3 inside its 4x cell.
+      dut.io.x #= DebugHud.xOrigin + DebugHud.calBit * 8 * DebugHud.scale + 13
+      dut.io.y #= DebugHud.yOrigin
       dut.clockDomain.waitSampling(6)
       assert(dut.io.hit.toBoolean, "HUD region")
       assert(dut.io.r.toInt == 0xff && dut.io.g.toInt == 0xe0, s"glyph rgb ${dut.io.r.toInt}")
@@ -91,8 +91,8 @@ class DebugHudTest extends AnyFunSuite {
       dut.io.uartLastCmd #= 0
       dut.io.uartRxCount #= 0
       dut.io.uartHidCount #= 0
-      dut.io.x #= DebugHud.underflowBit * 16
-      dut.io.y #= 0
+      dut.io.x #= DebugHud.xOrigin + DebugHud.underflowBit * 8 * DebugHud.scale
+      dut.io.y #= DebugHud.yOrigin
       dut.clockDomain.waitSampling(6)
       assert(dut.io.hit.toBoolean)
       assert(dut.io.r.toInt == 0x28 && dut.io.g.toInt == 0x10, s"bg ${dut.io.r.toInt}")

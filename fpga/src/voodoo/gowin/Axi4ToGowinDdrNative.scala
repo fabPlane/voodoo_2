@@ -170,18 +170,15 @@ case class Axi4ToGowinDdrNative(
       val wValid = Mux(useTex, io.tex.w.valid, io.fb.w.valid)
       val wData = Mux(useTex, io.tex.w.data, io.fb.w.data)
       val wStrb = Mux(useTex, io.tex.w.strb, io.fb.w.strb)
-      // Spinal's BMB aligner/length-fixer chain emits WSTRB=0 for the
-      // direct framebuffer path's one-word transactions.  There are no
-      // intentional zero-strobe writes in either Voodoo memory aperture;
-      // recover the complete 32-bit word while preserving every non-zero
-      // (including partial) byte-enable pattern.
-      val effectiveWStrb = Mux(wStrb.orR, wStrb, B(0xf, 4 bits))
       val wLast = Mux(useTex, io.tex.w.last, io.fb.w.last)
       when(useTex) { io.tex.w.ready := True }
         .otherwise { io.fb.w.ready := True }
       when(wValid) {
         words(groupIdx) := wData
-        strbs(groupIdx) := effectiveWStrb
+        // BmbAligner pads a short access to its aligned AXI burst with
+        // WSTRB=0 beats. Preserve those strobes: the data bus is repeated
+        // during padding and must not be written to memory.
+        strbs(groupIdx) := wStrb
         beatsLeft := beatsLeft - 1
         when(groupIdx === lastIdx || wLast || beatsLeft === 1) {
           groupIdx := 0
@@ -192,12 +189,15 @@ case class Axi4ToGowinDdrNative(
       }
     }
     is(State.wrIssue) {
-      val fire = io.ddr.cmdReady && io.ddr.wrDataRdy
+      // Do not spend a native DDR command on a four-beat AXI group made
+      // entirely of alignment padding.
+      val groupHasData = Cat(strbs).orR
+      val fire = groupHasData && io.ddr.cmdReady && io.ddr.wrDataRdy
       io.ddr.cmd := GowinDdrNative.cmdWrite
       io.ddr.cmdEn := fire
       io.ddr.wrDataEn := fire
       io.ddr.wrDataEnd := True
-      when(fire) {
+      when(!groupHasData || fire) {
         addr := addr + beatBytes
         when(beatsLeft === 0) {
           state := State.wrResp
