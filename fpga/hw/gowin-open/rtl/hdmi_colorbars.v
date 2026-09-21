@@ -2,7 +2,8 @@
 //
 // This is intentionally framebuffer-free: counters generate RGB pixels and
 // open RTL performs TMDS encoding. Only documented GW5A hardware primitives
-// (PLL, CLKDIV, OSER10, and ELVDS_OBUF) are instantiated.
+// (PLLA, OSER10, and TLVDS_OBUF) are instantiated.  The PLL's independent
+// output dividers generate both the 125 MHz serial and 25 MHz pixel clocks.
 
 module top (
     input  wire       clk50,
@@ -20,17 +21,9 @@ module top (
 
     open_pll_125 u_pll (
         .clkin  (clk50),
-        .clkout (serial_clk),
+        .serial_clk (serial_clk),
+        .pixel_clk  (pixel_clk),
         .lock   (pll_lock)
-    );
-
-    CLKDIV #(
-        .DIV_MODE("5")
-    ) u_pixel_div (
-        .HCLKIN (serial_clk),
-        .RESETN (pll_lock),
-        .CALIB  (1'b0),
-        .CLKOUT (pixel_clk)
     );
 
     reg [9:0] h_count = 10'd0;
@@ -160,10 +153,10 @@ module open_dvi_tx (
     defparam u_ser_red.GSREN = "false";
     defparam u_ser_red.LSREN = "true";
 
-    ELVDS_OBUF u_clk (.I(pixel_clk),    .O(tmds_clk_p),     .OB(tmds_clk_n));
-    ELVDS_OBUF u_d0  (.I(serialized[0]), .O(tmds_data_p[0]), .OB(tmds_data_n[0]));
-    ELVDS_OBUF u_d1  (.I(serialized[1]), .O(tmds_data_p[1]), .OB(tmds_data_n[1]));
-    ELVDS_OBUF u_d2  (.I(serialized[2]), .O(tmds_data_p[2]), .OB(tmds_data_n[2]));
+    TLVDS_OBUF u_clk (.I(pixel_clk),    .O(tmds_clk_p),     .OB(tmds_clk_n));
+    TLVDS_OBUF u_d0  (.I(serialized[0]), .O(tmds_data_p[0]), .OB(tmds_data_n[0]));
+    TLVDS_OBUF u_d1  (.I(serialized[1]), .O(tmds_data_p[1]), .OB(tmds_data_n[1]));
+    TLVDS_OBUF u_d2  (.I(serialized[2]), .O(tmds_data_p[2]), .OB(tmds_data_n[2]));
 endmodule
 
 module tmds_encoder (
@@ -243,7 +236,8 @@ endmodule
 
 module open_pll_125 (
     input  wire clkin,
-    output wire clkout,
+    output wire serial_clk,
+    output wire pixel_clk,
     output wire lock
 );
     wire clkfbout;
@@ -253,8 +247,8 @@ module open_pll_125 (
         .RESET_I(1'b0), .RESET_O(1'b0),
         .PSSEL(3'b000), .PSDIR(1'b0), .PSPULSE(1'b0),
         .SSCPOL(1'b0), .SSCON(1'b0), .SSCMDSEL(7'b0000000),
-        .SSCMDSEL_FRAC(3'b000), .LOCK(lock), .CLKOUT0(clkout),
-        .CLKOUT1(), .CLKOUT2(), .CLKOUT3(), .CLKOUT4(), .CLKOUT5(),
+        .SSCMDSEL_FRAC(3'b000), .LOCK(lock), .CLKOUT0(serial_clk),
+        .CLKOUT1(pixel_clk), .CLKOUT2(), .CLKOUT3(), .CLKOUT4(), .CLKOUT5(),
         .CLKOUT6(), .CLKFBOUT(clkfbout)
     );
 
@@ -265,8 +259,9 @@ module open_pll_125 (
     defparam u_pll.MDIV_FRAC_SEL = 0;
     defparam u_pll.ODIV0_SEL = 8;
     defparam u_pll.ODIV0_FRAC_SEL = 0;
+    defparam u_pll.ODIV1_SEL = 40;
     defparam u_pll.CLKOUT0_EN = "TRUE";
-    defparam u_pll.CLKOUT1_EN = "FALSE";
+    defparam u_pll.CLKOUT1_EN = "TRUE";
     defparam u_pll.CLKOUT2_EN = "FALSE";
     defparam u_pll.CLKOUT3_EN = "FALSE";
     defparam u_pll.CLKOUT4_EN = "FALSE";
