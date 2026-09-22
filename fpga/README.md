@@ -84,7 +84,8 @@ USB pad: D-pad moves, A/Start runs, B/Select back. USER cycles, RESET runs.
 `glide/PLAY.V2G` onto the FAT32 card with `sw/glide-sd/copy_to_sd.sh`, then
 JTAG-load it with `sw/glide-sd/jtag_load.py`). **QUAKE RISC-V SW** is the
 software WinQuake backend (`sw/quake-riscv`); the menu is an info page until
-the A25 / larger soft RV32 is wired onto the 256 MiB DDR window.
+the A25 / larger soft RV32 is wired onto the 256 MiB DDR window. Methods:
+[`docs/glide-on-chip-methods.md`](../docs/glide-on-chip-methods.md).
 
 LEDs (active low): heartbeat, info page open.
 

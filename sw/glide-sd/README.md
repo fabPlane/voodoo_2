@@ -1,5 +1,7 @@
 # Glide playback on SD / JTAG
 
+Overview of this path, JTAG, and software Quake: [`docs/glide-on-chip-methods.md`](../../docs/glide-on-chip-methods.md).
+
 Pack Glide `addr:data` traces into a `V2GL` image, copy that image onto the
 Tang Console FAT32 card, and (bonus) poke the same bytes into DDR over JTAG.
 The console menu item **SD CARD PLAY** walks the image through `DdrTracePlayer`.

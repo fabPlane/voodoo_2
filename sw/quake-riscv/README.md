@@ -1,5 +1,7 @@
 # RISC-V Quake (software + Glide)
 
+How this sits next to SD / JTAG Glide replay: [`docs/glide-on-chip-methods.md`](../../docs/glide-on-chip-methods.md).
+
 One WinQuake-class engine, two video backends. That is the Glide port: add
 SST-1 to the RISC-V build rather than maintaining a second game.
 
