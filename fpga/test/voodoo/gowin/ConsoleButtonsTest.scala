@@ -38,6 +38,18 @@ class ConsoleButtonsTest extends AnyFunSuite {
     }
   }
 
+  test("a late MODE assertion does not masquerade as a startup hold") {
+    compiled.doSim("console-buttons-late-startup") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      dut.io.modeN #= true
+      dut.io.resetN #= true
+      dut.clockDomain.waitSampling(6)
+      dut.io.modeN #= false
+      dut.clockDomain.waitSampling(12)
+      assert(!dut.io.debugMode.toBoolean)
+    }
+  }
+
   test("a MODE press after the startup window remains a local menu pulse") {
     compiled.doSim("console-buttons-normal") { dut =>
       dut.clockDomain.forkStimulus(10)

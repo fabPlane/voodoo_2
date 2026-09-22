@@ -5,15 +5,15 @@ import spinal.lib._
 
 /** Synchronizes the two case buttons and owns the diagnostic-mode gesture.
   *
-  * Holding MODE during the short power-on window permanently selects diagnostic
-  * mode for this FPGA configuration.  Neither button is then forwarded to the
-  * menu, so a held/stuck switch cannot accidentally leave the running core.
+  * Holding MODE continuously through the power-on window permanently selects
+  * diagnostic mode for this FPGA configuration. Neither button is then
+  * forwarded to the menu.
   */
 case class ConsoleButtons(
-    armCycles: Int = 1 << 22,
+    armCycles: Int = 1 << 30,
     selectHoldCycles: Int = 1 << 24
 ) extends Component {
-  require(armCycles >= 2)
+  require(armCycles >= 4)
   require(selectHoldCycles >= 2)
 
   val io = new Bundle {
@@ -36,15 +36,19 @@ case class ConsoleButtons(
   val debug = RegInit(False)
   val armed = RegInit(True)
   val armCount = Reg(UInt(log2Up(armCycles) bits)) init (0)
+  val modeStayedPressed = RegInit(True)
   val holdCount = Reg(UInt(log2Up(selectHoldCycles) bits)) init (0)
   val holdSelect = RegInit(False)
   when(armed) {
+    // BufferCC initializes low, so allow it three clocks to reflect a button
+    // already held when the FPGA entered user mode. Thereafter diagnostics
+    // require MODE to remain asserted for the entire window.
+    when(armCount >= U(3, armCount.getWidth bits) && !mode) {
+      modeStayedPressed := False
+    }
     when(armCount === U(armCycles - 1, armCount.getWidth bits)) {
       armed := False
-      // Must hold MODE for the whole window. A one-cycle bounce at
-      // TangCore load used to latch diagnostics forever and, with
-      // board_top holding iosys in reset, the USB pad looked dead.
-      when(mode) {
+      when(mode && modeStayedPressed) {
         debug := True
       }
     } otherwise {

@@ -106,6 +106,9 @@ sync_to_remote() {
   if [[ "$TARGET" == console ]]; then
     rsync -a --delete --exclude impl --exclude '.DS_Store' \
       "$FPGA_ROOT/hw/gowin/console/" "$dest/hw/gowin/console/"
+    ssh "${SSH_OPTS[@]}" "$host" "mkdir -p '$REMOTE_ROOT/fpga/hw/gowin/console-sdram'"
+    rsync -a "$FPGA_ROOT/hw/gowin/console-sdram/jtag_debug_pages.v" \
+      "$dest/hw/gowin/console-sdram/"
   elif [[ "$TARGET" == console-sdram ]]; then
     rsync -a --delete --exclude impl --exclude '.DS_Store' \
       "$FPGA_ROOT/hw/gowin/console-sdram/" "$dest/hw/gowin/console-sdram/"

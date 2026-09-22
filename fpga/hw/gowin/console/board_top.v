@@ -6,6 +6,10 @@
 // output remains available through the hardware-debugger UART.
 
 module board_top (
+    input  wire        tck_pad_i,
+    input  wire        tms_pad_i,
+    input  wire        tdi_pad_i,
+    output wire        tdo_pad_o,
     input  wire        clk50,
     input  wire        uart_rx,
     output wire        uart_tx,
@@ -169,6 +173,9 @@ module board_top (
     wire       hdmi_hs, hdmi_vs, hdmi_de;
     wire       led_calib, led_done, led_wedge, led_heartbeat;
     wire       debug_mode;
+    wire [31:0] jtag_debug [0:15];
+    wire [31:0] jtag_framebuffer [0:15];
+    wire [31:0] jtag_writes [0:15];
 
     // The bit-banged USB CDC device was the largest avoidable routing load in
     // this already-congested image. Leave S1 electrically disconnected.
@@ -239,9 +246,86 @@ module board_top (
         .ledDone             (led_done),
         .ledWedge            (led_wedge),
         .ledHeartbeat        (led_heartbeat),
+        .jtagDebug_0         (jtag_debug[0]),
+        .jtagDebug_1         (jtag_debug[1]),
+        .jtagDebug_2         (jtag_debug[2]),
+        .jtagDebug_3         (jtag_debug[3]),
+        .jtagDebug_4         (jtag_debug[4]),
+        .jtagDebug_5         (jtag_debug[5]),
+        .jtagDebug_6         (jtag_debug[6]),
+        .jtagDebug_7         (jtag_debug[7]),
+        .jtagDebug_8         (jtag_debug[8]),
+        .jtagDebug_9         (jtag_debug[9]),
+        .jtagDebug_10        (jtag_debug[10]),
+        .jtagDebug_11        (jtag_debug[11]),
+        .jtagDebug_12        (jtag_debug[12]),
+        .jtagDebug_13        (jtag_debug[13]),
+        .jtagDebug_14        (jtag_debug[14]),
+        .jtagDebug_15        (jtag_debug[15]),
+        .jtagFramebuffer_0   (jtag_framebuffer[0]),
+        .jtagFramebuffer_1   (jtag_framebuffer[1]),
+        .jtagFramebuffer_2   (jtag_framebuffer[2]),
+        .jtagFramebuffer_3   (jtag_framebuffer[3]),
+        .jtagFramebuffer_4   (jtag_framebuffer[4]),
+        .jtagFramebuffer_5   (jtag_framebuffer[5]),
+        .jtagFramebuffer_6   (jtag_framebuffer[6]),
+        .jtagFramebuffer_7   (jtag_framebuffer[7]),
+        .jtagFramebuffer_8   (jtag_framebuffer[8]),
+        .jtagFramebuffer_9   (jtag_framebuffer[9]),
+        .jtagFramebuffer_10  (jtag_framebuffer[10]),
+        .jtagFramebuffer_11  (jtag_framebuffer[11]),
+        .jtagFramebuffer_12  (jtag_framebuffer[12]),
+        .jtagFramebuffer_13  (jtag_framebuffer[13]),
+        .jtagFramebuffer_14  (jtag_framebuffer[14]),
+        .jtagFramebuffer_15  (jtag_framebuffer[15]),
+        .jtagWrites_0        (jtag_writes[0]),
+        .jtagWrites_1        (jtag_writes[1]),
+        .jtagWrites_2        (jtag_writes[2]),
+        .jtagWrites_3        (jtag_writes[3]),
+        .jtagWrites_4        (jtag_writes[4]),
+        .jtagWrites_5        (jtag_writes[5]),
+        .jtagWrites_6        (jtag_writes[6]),
+        .jtagWrites_7        (jtag_writes[7]),
+        .jtagWrites_8        (jtag_writes[8]),
+        .jtagWrites_9        (jtag_writes[9]),
+        .jtagWrites_10       (jtag_writes[10]),
+        .jtagWrites_11       (jtag_writes[11]),
+        .jtagWrites_12       (jtag_writes[12]),
+        .jtagWrites_13       (jtag_writes[13]),
+        .jtagWrites_14       (jtag_writes[14]),
+        .jtagWrites_15       (jtag_writes[15]),
         .usbOnline           (1'b0),
         .debugTx_valid       (),
         .debugTx_payload     ()
+    );
+
+    jtag_debug_pages u_jtag_debug (
+        .tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i),
+        .tdi_pad_i(tdi_pad_i), .tdo_pad_o(tdo_pad_o),
+        .page0(jtag_debug[0]), .page1(jtag_debug[1]),
+        .page2(jtag_debug[2]), .page3(jtag_debug[3]),
+        .page4(jtag_debug[4]), .page5(jtag_debug[5]),
+        .page6(jtag_debug[6]), .page7(jtag_debug[7]),
+        .page8(jtag_debug[8]), .page9(jtag_debug[9]),
+        .page10(jtag_debug[10]), .page11(jtag_debug[11]),
+        .page12(jtag_debug[12]), .page13(jtag_debug[13]),
+        .page14(jtag_debug[14]), .page15(jtag_debug[15]),
+        .fb0(jtag_framebuffer[0]), .fb1(jtag_framebuffer[1]),
+        .fb2(jtag_framebuffer[2]), .fb3(jtag_framebuffer[3]),
+        .fb4(jtag_framebuffer[4]), .fb5(jtag_framebuffer[5]),
+        .fb6(jtag_framebuffer[6]), .fb7(jtag_framebuffer[7]),
+        .fb8(jtag_framebuffer[8]), .fb9(jtag_framebuffer[9]),
+        .fb10(jtag_framebuffer[10]), .fb11(jtag_framebuffer[11]),
+        .fb12(jtag_framebuffer[12]), .fb13(jtag_framebuffer[13]),
+        .fb14(jtag_framebuffer[14]), .fb15(jtag_framebuffer[15]),
+        .wr0(jtag_writes[0]), .wr1(jtag_writes[1]),
+        .wr2(jtag_writes[2]), .wr3(jtag_writes[3]),
+        .wr4(jtag_writes[4]), .wr5(jtag_writes[5]),
+        .wr6(jtag_writes[6]), .wr7(jtag_writes[7]),
+        .wr8(jtag_writes[8]), .wr9(jtag_writes[9]),
+        .wr10(jtag_writes[10]), .wr11(jtag_writes[11]),
+        .wr12(jtag_writes[12]), .wr13(jtag_writes[13]),
+        .wr14(jtag_writes[14]), .wr15(jtag_writes[15])
     );
 
     DVI_TX_Top u_dvi (

@@ -84,9 +84,10 @@ required bit-packing; renaming a textual `.fs` file is not sufficient.
 
 ### Isolated diagnostic mode
 
-Hold the case **MODE** button while the Voodoo core is loaded. The FPGA samples
-it for roughly 84 ms after reset and latches `DBG=1` until the next reload. In
-this mode:
+Hold the case **MODE** button continuously while the Voodoo core loads and for
+roughly 21.5 seconds after it enters user mode. The long gesture outlasts the
+board controller's MODE assertion during configuration handoff and latches
+`DBG=1` until the next reload. In this mode:
 
 - MODE and RESET are displayed but cannot generate menu actions.
 - The TangCore parser remains alive as a passive traffic monitor, but both of

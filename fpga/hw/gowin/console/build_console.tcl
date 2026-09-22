@@ -5,6 +5,8 @@ set_device GW5AST-LV138PG484AC1/I0 -device_version C
 
 add_file -type verilog [file normalize ../../../rtl/gowin/TangConsole138k.v]
 add_file -type verilog [file normalize board_top.v]
+add_file -type verilog [file normalize ../console-sdram/jtag_debug_pages.v]
+add_file -type verilog [file normalize $::env(GOWINHOME)/IDE/data/ipcores/gw_jtag.v]
 add_file -type verilog [file normalize dvi_tx_top.v]
 add_file -type verilog [file normalize uart_fixed.v]
 add_file -type verilog [file normalize diagnostic_uart.v]
