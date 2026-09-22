@@ -47,8 +47,16 @@ OBJS += $(BUILD)/cpuid.o $(BUILD)/win32_io.o
 
 VPATH := $(SRC):$(SST1)/init:$(SST1)/init/initvg:$(SW)/newpci/pcilib:$(SW)/fxmisc:$(SIM)/harness:$(TRACE)
 
-.PHONY: all clean
+TESTS_DIR := $(SST1)/glide/tests
+SDK_TESTS := $(patsubst $(TESTS_DIR)/%.c,$(BUILD)/tests/%.exe,$(wildcard $(TESTS_DIR)/test*.c))
+
+TEST_CFLAGS := -std=gnu89 -fcommon -w -O2 -ffast-math
+TEST_CFLAGS += -I$(TESTS_DIR) -I$(SRC) -I$(SST1)/incsrc -I$(SST1)/init -I$(SW)/fxmisc
+TEST_CFLAGS += -DSST1 -DSIM_BACKEND -DWIN32
+
+.PHONY: all tests clean
 all: $(BUILD)/glide2x.dll $(BUILD)/glide2-clear.exe
+tests: $(SDK_TESTS)
 
 $(BUILD)/include/fxinline.h $(BUILD)/include/fxgasm.h:
 	mkdir -p $(BUILD)/include
@@ -75,6 +83,22 @@ $(BUILD)/glide2x.dll: $(OBJS)
 
 $(BUILD)/glide2-clear.exe: clear.c $(BUILD)/glide2x.dll
 	$(CC) $(CFLAGS) -static-libgcc -o $@ clear.c -L$(BUILD) -lglide2x -Wl,--enable-stdcall-fixup
+
+$(BUILD)/tests/glide2x.dll: $(BUILD)/glide2x.dll
+	mkdir -p $(BUILD)/tests
+	cp -f $< $@
+
+$(BUILD)/tests/tlib.o: $(TESTS_DIR)/tlib.c $(BUILD)/include/fxinline.h
+	mkdir -p $(BUILD)/tests
+	$(CC) $(TEST_CFLAGS) -c $< -o $@
+
+$(BUILD)/tests/%.o: $(TESTS_DIR)/%.c $(BUILD)/include/fxinline.h
+	mkdir -p $(BUILD)/tests
+	$(CC) $(TEST_CFLAGS) -c $< -o $@
+
+$(BUILD)/tests/%.exe: $(BUILD)/tests/%.o $(BUILD)/tests/tlib.o $(BUILD)/tests/glide2x.dll
+	$(CC) -static-libgcc -o $@ $(BUILD)/tests/$*.o $(BUILD)/tests/tlib.o \
+		-L$(BUILD) -lglide2x -luser32 -lgdi32 -Wl,--enable-stdcall-fixup
 
 clean:
 	rm -rf $(BUILD)
