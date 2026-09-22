@@ -46,6 +46,23 @@ SECS=2 ./build.sh       # seconds to free-run the start map (default 2)
 
 The result lands in `shots/glquake.trace_ref.png`.
 
+### Gameplay video
+
+`trace_test --dump-frames DIR` writes a PNG on every `swapbuffer` (carried in
+`patches/spinalvoodoo-glquake.patch`). `capture-demo.sh` plays shareware
+`demo1` through this path and encodes the frames.
+
+A full minute of that video is not practical: with `-no8bit`, Quake re-uploads
+textures as RGBA on a Voodoo1-class TMU, and the trace grows about half a
+gigabyte per second (ISSUES.md F3). The default 12 s capture is long enough to
+get past the loading plaque into the e1m3 flythrough. The matching full minute
+is the software renderer:
+
+```bash
+./capture-demo.sh            # Voodoo reference-model clip  -> shots/glquake_demo1_voodoo.mp4
+./capture-software.sh        # 60 s tyrquake software clip  -> shots/quake_demo_software.mp4
+```
+
 ## How the build is put together
 
 - **Mesa 3.4.2** is the last Mesa whose `fx` driver targets **Glide2** (our
@@ -83,11 +100,14 @@ as patches applied to the vendored submodules (idempotently, by `build.sh`):
    crashed. The patch masks the colour base like the aux path and clamps the
    per-pixel span to the framebuffer row (advancing the interpolators exactly as
    the `clipLeft`/`clipRight` path does).
-3. **`trace_test` back-buffer fallback** (`spinalvoodoo-glquake.patch`,
-   `trace_test.cpp`). A static single-frame capture may be stopped with the
-   freshly-drawn frame still in the **back** buffer, leaving the recorded
-   "presented" buffer black. If the presented buffer is essentially all black
-   but the other buffer clearly has content, `trace_test` now displays that one.
+3. **`trace_test` back-buffer fallback and per-swap dump**
+   (`spinalvoodoo-glquake.patch`, `trace_test.cpp`). A static single-frame
+   capture may be stopped with the freshly-drawn frame still in the **back**
+   buffer, leaving the recorded "presented" buffer black. If the presented
+   buffer is essentially all black but the other buffer clearly has content,
+   `trace_test` now displays that one. `--dump-frames DIR` applies the same
+   choice on every swap and writes a PNG, which is how `capture-demo.sh`
+   builds a gameplay clip.
 
 These are general improvements (memory reporting, rasterizer bounds-safety,
 frame selection), not Quake-specific hacks; they belong upstream in
