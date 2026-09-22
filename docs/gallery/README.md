@@ -80,6 +80,17 @@ Voodoo model — the clean answer to the passthrough problem below:
 DOSBox, no PCI probing, no binary patch), traced, and replayed through the
 Voodoo reference model. See `sw/glide-demos/nostalgic/`.*
 
+A **real, textured Quake frame** rendered end-to-end through the Voodoo model
+via the period-correct Linux Glide stack (GLQuake → Mesa 3.4.2 `fx` → Glide2 →
+our `libglide2x` → reference model). See `sw/quake-glide/`.
+
+![GLQuake through the Voodoo model](game_glquake_voodoo.png)
+
+*Quake shareware `start` map: GLQuake's fxMesa backend renders OpenGL as Glide2
+into our `libglide2x`; the captured command stream is replayed through the
+Voodoo reference model. The whole 2001-era Mesa/GLQuake build runs inside the
+`glide32` container, so the host stays clean. Note the 16-bit Voodoo dithering.*
+
 | Image | What it is |
 |---|---|
 | ![tomb](game_tomb_raider_demo.png) | Tomb Raider 3dfx **demo** running in the from-source 32-bit DOSBox-X. It renders in software (the demo's statically-linked real-PCI Glide falls back), so it does not forward to the sim — shown as "the game runs". |
@@ -103,6 +114,7 @@ without touching the host toolchain.
 
 - Homebrew ROMs + renders: `make -C sw/glide-homebrew` then `make -C sw/glide-homebrew render`.
 - Open-source Glide game (torus): `make -C sw/glide-demos/nostalgic && make -C sw/glide-demos/nostalgic render`.
+- GLQuake through the Voodoo model: `sw/quake-glide/build.sh`.
 - Console RTL: the whole-console Verilator harness on the console branch (`amaranth/emu/console`, `make run-demos`).
 - DOS Glide: `sw/glide-demos/dos-fpga/` (DOSBox-X + Open Watcom + 3dfx SDK).
 - Games/Docker: see `docker/README.md` and `sw/quake-riscv/` on the console branches.
