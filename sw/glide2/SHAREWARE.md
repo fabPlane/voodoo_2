@@ -101,22 +101,34 @@ it, so the log shows whether the demo starts. No trace is expected.
 
 ## Results
 
-`./run-shareware.sh` on this tree:
+Software mode first (desktop X11 capture), then Glide.
 
-| App | Glide client | Exit | Trace | Replay |
-| --- | --- | --- | --- | --- |
-| Quake II Test | yes, `3dfxgl.dll` loads `glide2x.dll` | 143 | 52,596,736 bytes, cut to 3 swaps (48,247,480 bytes, 2,010,309 entries) | 3 frames |
-| GLQuake | yes, MiniGL renamed to `opengl32.dll` | 143 | 49,664,000 bytes, cut to 3 swaps (26,905,912 bytes, 1,121,077 entries) | 3 frames |
-| MDK demo | no import of `glide2x` | 143 | none | no frames |
+### Software / DirectX
 
-Swaps 1 and 2 are black clears from Glide init. Swap 3 is the first frame the client presents, replayed through the 86Box reference model at 640×480. Quake II's frame is the `ref_gl` startup console: `ref_gl.dll` version GL 0.01, mode 3 at 640×480 fullscreen, `GL_VENDOR` and `GL_RENDERER` both 3Dfx Interactive. GLQuake's frame is its startup console: video mode 640×480, exe dated Nov 3 1997, `GL_VENDOR` 3Dfx Interactive, plus the 3dfx paletted-texture extensions.
+| App | How | Result |
+| --- | --- | --- |
+| Quake II Test | Wine, `+set vid_ref soft +set vid_fullscreen 0 +map demo1` | Windowed 320×240. Loads `ref_soft.dll`, draws demo1 with HUD (health 100, blaster). |
+| Quake 1.06 shareware | DOSBox, `QUAKE.EXE -nosound -nocdaudio +map start` | Start map with shotgun HUD (25 shells, 100 health, 25 armor). |
+| MDK demo | DOSBox, `MDKDEMO.EXE` (Win95 DirectX path stays black under Wine) | Shiny Entertainment splash, then HMI Sound Setup. No Glide. |
 
-The next swap did not arrive inside a 768MB prefix. After the console, MiniGL spends that much trace on texture downloads before presenting again, so the run stops on the console frame.
+### Glide (trace → reference replay)
 
-MDK's readme requires DirectX 3 and the demo exe does not reference Glide. Under Wine it opened a 640×480 window titled `MDK`, touched ALSA, and never created `trace.bin`. `watch-swaps` stopped it when the time limit hit. An X11 grab of that window was black; DirectDraw did not land in the desktop framebuffer.
+| App | Exit | Trace cut | Replay |
+| --- | --- | --- | --- |
+| Quake II Test (`3dfxgl.dll`) | 143 | 6 swaps (~1.4GB raw, kept opening frames) | Frames 4–5 are in-level: blaster viewmodel, Strogg corridor, HUD. Strong green tint from the MiniGL/sim path. |
+| GLQuake (MiniGL as `opengl32.dll`) | 143 | 12–16 swaps | Stays on the 3Dfx Voodoo console (`GL_VENDOR: 3Dfx Interactive Inc.`). Map/demo commands under Wine have not left the console yet. |
+| MDK | — | none | Not a Glide client. |
 
-Logs from the run:
+### Ten-second clips
 
-- `runs/quake2/run.log`, `runs/quake2/watch.log`, `runs/quake2/frames/frame_00002.png`
-- `runs/glquake/run.log`, `runs/glquake/watch.log`, `runs/glquake/frames/frame_00002.png`
-- `runs/mdk/run.log`, `runs/mdk/watch.log`
+`./sw/glide2/record-clips.sh` builds these under `/opt/cursor/artifacts` (encode to `/tmp` then copy):
+
+| Clip | Contents |
+| --- | --- |
+| `quake2_soft_10s.mp4` | Quake II software, demo1 gameplay |
+| `quake_soft_10s.mp4` | DOS Quake shareware, start map |
+| `mdk_demo_10s.mp4` | MDK DOS demo splash / sound setup |
+| `quake2_glide_gameplay_10s.mp4` | Quake II Glide, first in-level frames |
+| `glquake_glide_console_10s.mp4` | GLQuake Glide MiniGL console |
+
+Logs: `runs/quake2-soft/`, `runs/quake-soft/`, `runs/quake2-glide/`, `runs/glquake-glide2/`, `runs/mdk-splash/`.
