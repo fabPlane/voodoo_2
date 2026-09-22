@@ -1,27 +1,7 @@
 package voodoo.gowin
 
 import org.scalatest.funsuite.AnyFunSuite
-import spinal.core._
 import spinal.core.sim._
-import spinal.lib._
-
-class DdrTracePlayerDut extends Component {
-  val player = DdrTracePlayer(addressWidth = 24)
-  val io = player.io
-  val ram = Mem(Bits(64 bits), 64)
-  val pending = Reg(Bool()) init (False)
-  val latched = Reg(Bits(64 bits)) init (0)
-  player.io.memCmd.ready := !pending
-  when(player.io.memCmd.fire) {
-    pending := True
-    latched := ram.readAsync(player.io.memCmd.payload(8 downto 3))
-  }
-  player.io.memRsp.valid := pending
-  player.io.memRsp.payload := latched
-  when(player.io.memRsp.fire) {
-    pending := False
-  }
-}
 
 class DdrTracePlayerTest extends AnyFunSuite {
   private val bank0 = IndexedSeq(
@@ -46,24 +26,50 @@ class DdrTracePlayerTest extends AnyFunSuite {
     assert(GowinAddressMap.cpuPakBase == 0x90000000L)
   }
 
-  private lazy val compiled = SimConfig.withVerilator.compile(new DdrTracePlayerDut)
+  private lazy val compiled =
+    SimConfig.withVerilator.compile(DdrTracePlayer(addressWidth = 24))
 
-  private def loadRam(dut: DdrTracePlayerDut, bytes: Array[Byte]): Unit = {
-    bytes.grouped(8).zipWithIndex.foreach { case (chunk, i) =>
+  private def wordsFrom(bytes: Array[Byte]): Array[BigInt] = {
+    bytes.grouped(8).map { chunk =>
       var v = BigInt(0)
       chunk.zipWithIndex.foreach { case (b, k) =>
         v |= BigInt(b & 0xff) << (8 * k)
       }
-      dut.ram.setBigInt(i, v)
+      v
+    }.toArray
+  }
+
+  private def serveMem(dut: DdrTracePlayer, mem: Array[BigInt]): Unit = {
+    fork {
+      dut.io.memCmd.ready #= true
+      dut.io.memRsp.valid #= false
+      dut.io.memRsp.payload #= 0
+      while (true) {
+        dut.clockDomain.waitSampling()
+        if (dut.io.memCmd.valid.toBoolean) {
+          val idx = (dut.io.memCmd.payload.toLong / 8L).toInt
+          val word = if (idx >= 0 && idx < mem.length) mem(idx) else BigInt(0)
+          dut.io.memCmd.ready #= false
+          dut.clockDomain.waitSampling()
+          dut.io.memRsp.valid #= true
+          dut.io.memRsp.payload #= word
+          dut.clockDomain.waitSamplingWhere(dut.io.memRsp.ready.toBoolean)
+          dut.io.memRsp.valid #= false
+          dut.io.memCmd.ready #= true
+        }
+      }
     }
   }
 
-  private def idleAxi(dut: DdrTracePlayerDut): Unit = {
+  private def idleAxi(dut: DdrTracePlayer): Unit = {
     dut.io.enable #= false
     dut.io.start #= false
     dut.io.loop #= false
     dut.io.select #= 0
     dut.io.base #= 0
+    dut.io.memCmd.ready #= true
+    dut.io.memRsp.valid #= false
+    dut.io.memRsp.payload #= 0
     dut.io.axi.aw.ready #= true
     dut.io.axi.w.ready #= true
     dut.io.axi.b.valid #= false
@@ -74,7 +80,7 @@ class DdrTracePlayerTest extends AnyFunSuite {
     dut.io.axi.r.data #= 0
   }
 
-  private def play(dut: DdrTracePlayerDut, select: Int, expected: Seq[(Long, Long)]): Unit = {
+  private def play(dut: DdrTracePlayer, select: Int, expected: Seq[(Long, Long)]): Unit = {
     dut.io.select #= select
     dut.io.enable #= true
     dut.io.start #= true
@@ -99,23 +105,23 @@ class DdrTracePlayerTest extends AnyFunSuite {
   }
 
   test("replays V2GL slot 0 then raises done") {
-    val bytes = GlidePlayImage.pack(Seq((bank0, 0)))
+    val mem = wordsFrom(GlidePlayImage.pack(Seq((bank0, 0))))
     compiled.doSim("ddr-player-slot0") { dut =>
       dut.clockDomain.forkStimulus(10)
-      loadRam(dut, bytes)
       idleAxi(dut)
-      dut.clockDomain.waitSampling(8)
+      serveMem(dut, mem)
+      dut.clockDomain.waitSampling(4)
       play(dut, 0, bank0)
     }
   }
 
   test("select plays a later slot") {
-    val bytes = GlidePlayImage.pack(Seq((bank0, 0), (bank1, 0)))
+    val mem = wordsFrom(GlidePlayImage.pack(Seq((bank0, 0), (bank1, 0))))
     compiled.doSim("ddr-player-slot1") { dut =>
       dut.clockDomain.forkStimulus(10)
-      loadRam(dut, bytes)
       idleAxi(dut)
-      dut.clockDomain.waitSampling(8)
+      serveMem(dut, mem)
+      dut.clockDomain.waitSampling(4)
       play(dut, 1, bank1)
     }
   }
@@ -123,8 +129,8 @@ class DdrTracePlayerTest extends AnyFunSuite {
   test("bad magic raises fault") {
     compiled.doSim("ddr-player-fault") { dut =>
       dut.clockDomain.forkStimulus(10)
-      dut.ram.setBigInt(0, BigInt(0xdeadbeefL))
       idleAxi(dut)
+      serveMem(dut, Array(BigInt(0xdeadbeefL)))
       dut.io.enable #= true
       dut.clockDomain.waitSampling(4)
       dut.io.start #= true

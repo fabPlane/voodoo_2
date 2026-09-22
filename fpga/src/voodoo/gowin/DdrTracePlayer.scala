@@ -47,8 +47,9 @@ case class DdrTracePlayer(
   val awSent = RegInit(False)
   val wSent = RegInit(False)
 
-  val addr = word(addressWidth + 31 downto 32).asUInt
-  val data = word(31 downto 0)
+  // V2GL records are little-endian addr:u32, data:u32 (same as DemoTraceRom).
+  val addr = word(addressWidth - 1 downto 0).asUInt
+  val data = word(63 downto 32)
   val issuing = io.enable && state === State.issue
 
   io.memCmd.valid := False
