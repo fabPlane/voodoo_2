@@ -78,8 +78,11 @@ $(BUILD)/win32_io.o: win32_io.c
 	@mkdir -p $(BUILD)
 	$(CC) -O2 -c $< -o $@
 
-$(BUILD)/glide2x.dll: $(OBJS)
-	$(CC) -o $@ $(DLL_LDFLAGS) $(OBJS) $(DLL_LIBS)
+$(BUILD)/exports.def: $(OBJS) gen-exports.sh
+	bash gen-exports.sh $(OBJS) > $@
+
+$(BUILD)/glide2x.dll: $(OBJS) $(BUILD)/exports.def
+	$(CC) -o $@ $(DLL_LDFLAGS) $(OBJS) $(BUILD)/exports.def $(DLL_LIBS)
 
 $(BUILD)/glide2-clear.exe: clear.c $(BUILD)/glide2x.dll
 	$(CC) $(CFLAGS) -static-libgcc -o $@ clear.c -L$(BUILD) -lglide2x -Wl,--enable-stdcall-fixup
