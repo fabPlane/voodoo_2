@@ -75,6 +75,10 @@ stage_patches() {
   #    a texture with the layout it was downloaded in.
   apply_patch "$EBOX" "$HERE/patches/86box-texture-layout.patch" \
     "src/video/vid_voodoo_texture.c" "Keep TMU1 downloads in their own RAM"
+  # 3b. SST-1 has no tLOD mirror bits. Glide leaves bits 28-29 set, and the
+  #     reference model was treating them as Voodoo2 TMIRROR.
+  apply_patch "$EBOX" "$HERE/patches/86box-voodoo1-mirror.patch" \
+    "src/video/vid_voodoo_render.c" "Voodoo1 ignores stray tLOD mirror bits"
   # 4. CoreSim HDMI tie-off so the sim top elaborates (shared with homebrew).
   if [ -f "$REPO/sw/glide-homebrew/render/coresim-hdmi.patch" ] && \
      ! grep -q 'io.hdmi.clock' "$EXT/src/voodoo/CoreSim.scala"; then

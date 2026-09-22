@@ -273,6 +273,25 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
   already in this trace; a recapture after the Glide/Mesa state is corrected
   should not need it.
 
+### E6. **[UPSTREAM]** Ammo crate label is mirrored around 1–2 s
+- **Symptom:** the shotgun shell box (`b_shell0`, texture `shot0sid`) shows
+  wood, then the red label, then the black shell windows. On a real box the
+  label is at the top of the side and the window rows are not on that face.
+- **Root cause:** SST-1's `tLOD` has no mirror controls. Bits 28 and 29 are
+  Voodoo2 `TMIRROR_S` / `TMIRROR_T`. Glide's even/odd table entry 0 used to be
+  all-ones, and `grTexSource` keeps bits it does not replace, so draw-time
+  `tLOD` is `0xff83f80c` with both mirror bits set. The reference model
+  bitwise-nots T when bit 12 of the signed coordinate is set. The shell side
+  is `T=-192..0` (24 texels of a 32-wide texture, top of the box at -192).
+  That mirror walks the rows backwards and pulls rows 1–7 (the windows) onto
+  the bottom of the face. S stays in `0..192`, so the columns are not mirrored.
+- **Workaround:** `patches/86box-voodoo1-mirror.patch` honours those bits only
+  when the chip is Voodoo2 or later. Replaying this trace, the shell side is
+  the label over the wood grain.
+- **Proper fix (upstream):** the same type check in 86Box's
+  `voodoo_get_texture`. Clearing the even/odd mask (E5) stops new captures
+  from setting the bits; this trace already has them.
+
 ---
 
 ## F. Capture / rendering workflow
