@@ -11,7 +11,7 @@ index 639001a..e6c6b8b 100644
  void flush_texture_cache(voodoo_t *voodoo, uint32_t dirty_addr, int tmu);
  
 diff --git a/src/video/vid_voodoo_texture.c b/src/video/vid_voodoo_texture.c
-index 7651866..a094fd9 100644
+index 7651866..814df1b 100644
 --- a/src/video/vid_voodoo_texture.c
 +++ b/src/video/vid_voodoo_texture.c
 @@ -74,12 +74,25 @@ voodoo_recalc_tex12(voodoo_t *voodoo, int tmu)
@@ -63,7 +63,7 @@ index 7651866..a094fd9 100644
              switch (tex_lod) {
                  case 0:
                      base = voodoo->params.texBaseAddr[tmu];
-@@ -237,6 +253,92 @@ voodoo_recalc_tex3(voodoo_t *voodoo, int tmu)
+@@ -237,6 +253,97 @@ voodoo_recalc_tex3(voodoo_t *voodoo, int tmu)
  
  #define makergba(r, g, b, a) ((b) | ((g) << 8) | ((r) << 16) | ((a) << 24))
  
@@ -121,10 +121,12 @@ index 7651866..a094fd9 100644
 +}
 +
 +/*
-+ * Glide's draw-time tLOD/textureMode for some 2D images does not match
-+ * the download that actually stored the texels (wide RGB565 status bar
-+ * sampled later as a square 4444 level). Remember the download's aspect
-+ * and format and apply them while this triangle is decoded.
++ * Glide's draw-time tLOD/textureMode for some images does not match the
++ * download that stored the texels. A wide RGB565 status bar is sampled as
++ * a square 4444 level, and a texture whose largest mip is LOD 2 is later
++ * drawn with LOD min 0, so the close-up pixels read an empty level.
++ * Remember the download's lod range, aspect and format and apply them
++ * while this triangle is decoded.
 + * Returns 1 if params were changed; caller restores after the snapshot.
 + */
 +int
@@ -141,7 +143,10 @@ index 7651866..a094fd9 100644
 +    dl_lod   = tex_download_lod[i];
 +    draw_fmt = voodoo->params.tformat[0];
 +    dl_fmt   = tex_download_fmt[i];
-+    if (((draw_lod ^ dl_lod) & 0x00700000) == 0 && draw_fmt == dl_fmt)
++    /* Bits 11:0 are lod min/max, bits 22:20 are aspect. A draw that
++     * agrees on format and aspect can still name a finer lod than the
++     * one that was downloaded. */
++    if (((draw_lod ^ dl_lod) & 0x00700fffu) == 0 && draw_fmt == dl_fmt)
 +        return 0;
 +
 +    voodoo->params.tLOD[0] &= ~0x00700fffu;
@@ -156,7 +161,7 @@ index 7651866..a094fd9 100644
  void
  voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
  {
-@@ -294,6 +396,20 @@ voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
+@@ -294,6 +401,20 @@ voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
  
      c = voodoo->texture_last_removed;
  
@@ -177,7 +182,7 @@ index 7651866..a094fd9 100644
      if ((voodoo->params.tLOD[tmu] & LOD_SPLIT) && (voodoo->params.tLOD[tmu] & LOD_ODD) && (voodoo->params.tLOD[tmu] & LOD_TMULTIBASEADDR))
          voodoo->texture_cache[tmu][c].base = params->texBaseAddr1[tmu];
      else
-@@ -546,6 +662,11 @@ voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
+@@ -546,6 +667,11 @@ voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
  
      params->tex_entry[tmu] = c;
      voodoo->texture_cache[tmu][c].refcount++;
@@ -189,7 +194,7 @@ index 7651866..a094fd9 100644
  }
  
  void
-@@ -604,8 +725,22 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
+@@ -604,8 +730,22 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
  
      tmu = (addr & 0x200000) ? 1 : 0;
  
@@ -213,7 +218,7 @@ index 7651866..a094fd9 100644
  
      if (voodoo->type < VOODOO_BANSHEE) {
          if (!(voodoo->params.tformat[tmu] & 8) && voodoo->type >= VOODOO_BANSHEE) {
-@@ -620,12 +755,33 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
+@@ -620,12 +760,33 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
          else {
              if ((voodoo->params.textureMode[tmu] & (1 << 31)) || voodoo->type >= VOODOO_BANSHEE)
                  s = addr & 0xfc;
@@ -248,7 +253,7 @@ index 7651866..a094fd9 100644
  #if 0
          if (addr >= 0x200000)
              return;
-@@ -644,6 +800,13 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
+@@ -644,6 +805,13 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
  #endif
          flush_texture_cache(voodoo, addr & voodoo->texture_mask, tmu);
      }
