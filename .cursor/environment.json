@@ -1,0 +1,5 @@
+{
+  "name": "SpinalVoodoo FPGA ports",
+  "user": "ubuntu",
+  "install": "bash ./.cursor/install.sh"
+}

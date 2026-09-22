@@ -1,0 +1,18 @@
+diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
+index 3d0bd75..fe6307b 100644
+--- a/src/voodoo/CoreSim.scala
++++ b/src/voodoo/CoreSim.scala
+@@ -51,6 +51,13 @@ case class CoreSim(c: Config, memTiming: SimMemoryTiming = SimMemoryTiming()) ex
+ 
+   core.io.fbBaseAddr := 0
+   core.io.flushFbCaches := io.flushFbCaches
++
++  // The HDMI scanout port is unused for framebuffer/LFB rendering, but its
++  // clock/reset inputs must be driven or elaboration fails the noLatch check.
++  // Tie the clock to the sim domain and hold the scanout in reset so it adds no
++  // memory-arbiter contention; screenshots are read back from the LFB.
++  core.io.hdmi.clock := ClockDomain.current.readClockWire
++  core.io.hdmi.reset := True
+ }
+ 
+ object CoreSim {
