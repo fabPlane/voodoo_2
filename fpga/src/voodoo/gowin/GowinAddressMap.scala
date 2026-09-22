@@ -15,10 +15,11 @@ object GowinAddressMap {
 
   val ddrNativeAddrWidth = 29
   val ddrNativeDataWidth = 256
-  // Console 138K only uses the first x16 DDR3 chip (LiteX / nand2mario).
-  // Gowin 1:4 native UI is 128-bit / 28-bit address.
-  val consoleDdrNativeAddrWidth = 28
-  val consoleDdrNativeDataWidth = 128
+  // The revision-C Console module carries the same two x16 DDR3 chips as the
+  // Tang Mega 138K module. Gowin's proven 1:4 controller exposes them as one
+  // 256-bit / 29-bit native port.
+  val consoleDdrNativeAddrWidth = 29
+  val consoleDdrNativeDataWidth = 256
 
   /** Soft RV32 / Andes A25 view. BAR is identity-mapped so `sst_set_base(0)`
     * matches host_probe / vid_glide. BarRv32 reset firmware stays in 32 KiB

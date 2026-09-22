@@ -104,8 +104,8 @@ EOF
 }
 
 # 50 * 24 / 12 = 100 MHz, 50 * 24 / 20 = 60 MHz USB FS PHY,
-# 50 * 24 / 4 = 300 MHz (DDR3-600, close to the 297 MHz IP)
-gen_pll Gowin_PLL_Sys 24 12 4 true true true 20 true
+# 50 * 24 / 3 = 400 MHz for Sipeed's proven revision-C x32 DDR3 core.
+gen_pll Gowin_PLL_Sys 24 12 3 true true true 20 true
 # 50 * 20 / 8 = 125 MHz (5x 25 MHz 640x480)
 gen_pll Gowin_PLL_Hdmi 20 8 8 false true false
 

@@ -20,9 +20,9 @@ PAGE_NAMES = (
 def read_pages(base: int = 0) -> list[int]:
     # The first scan selects a page; the second returns it.  Repeating each
     # selector keeps the protocol independent of the previously selected page.
-    # GW_JTAG's 34-bit DR framing consumes the low transport bit; compensate
-    # here so the fabric receives the intended six-bit page number.
-    selectors = [(base + page) << 1 for page in range(16) for _ in range(2)]
+    # scan_words owns GW_JTAG's 34-bit transport shift; selectors here are the
+    # six-bit values consumed by jtag_debug_pages itself.
+    selectors = [base + page for page in range(16) for _ in range(2)]
     values = scan_words(selectors)
     return values[1::2]
 

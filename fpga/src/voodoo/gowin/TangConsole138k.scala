@@ -73,7 +73,7 @@ case class TangConsole138k(c: Config) extends Component {
     val debugTx = master(Flow(Bits(8 bits)))
   }
 
-  // The Console DDR native port is 128 bits (16 bytes). Align BMB/AXI
+  // The Console DDR native port is 256 bits (32 bytes). Align BMB/AXI
   // transactions to that width instead of inheriting Artix's 256-byte MIG
   // alignment, which pads every short framebuffer access to 64 AXI beats.
   val consoleAxiBurstLog2 = log2Up(GowinAddressMap.consoleDdrNativeDataWidth / 8)
@@ -192,8 +192,8 @@ case class TangConsole138k(c: Config) extends Component {
   val ddrWriteIssues = Reg(UInt(16 bits)) init (0)
   val ddrNonzeroWriteCount = Reg(UInt(32 bits)) init (0)
   val ddrLastWriteAddr = Reg(UInt(32 bits)) init (0)
-  val ddrLastWriteData = Reg(Bits(128 bits)) init (0)
-  val ddrLastWriteMask = Reg(Bits(16 bits)) init (0)
+  val ddrLastWriteData = Reg(Bits(GowinAddressMap.consoleDdrNativeDataWidth bits)) init (0)
+  val ddrLastWriteMask = Reg(Bits(GowinAddressMap.consoleDdrNativeDataWidth / 8 bits)) init (0)
   val wedgeDdrTransactions = Reg(UInt(16 bits)) init (0)
   val wedgePhysicalTransactions = Reg(UInt(16 bits)) init (0)
   val wedgeDdrStatus = Reg(Bits(8 bits)) init (0)
@@ -369,7 +369,7 @@ case class TangConsole138k(c: Config) extends Component {
   io.jtagWrites(8) := ddrLastWriteData(63 downto 32)
   io.jtagWrites(9) := ddrLastWriteData(95 downto 64)
   io.jtagWrites(10) := ddrLastWriteData(127 downto 96)
-  io.jtagWrites(11) := B(0, 16 bits) ## ddrLastWriteMask
+  io.jtagWrites(11) := ddrLastWriteMask
   io.jtagWrites(12) := ddrNonzeroWriteCount.asBits
   io.jtagWrites(13) := core.io.pipelineBusySources
   io.jtagWrites(14) := wedgePc.asBits

@@ -23,7 +23,7 @@ module board_top (
     output wire        tmds_clk_n,
     output wire [2:0]  tmds_data_p,
     output wire [2:0]  tmds_data_n,
-    output wire [13:0] O_ddr_addr,
+    output wire [14:0] O_ddr_addr,
     output wire [2:0]  O_ddr_ba,
     output wire        O_ddr_cs_n,
     output wire        O_ddr_ras_n,
@@ -34,10 +34,10 @@ module board_top (
     output wire        O_ddr_cke,
     output wire        O_ddr_odt,
     output wire        O_ddr_reset_n,
-    output wire [1:0]  O_ddr_dqm,
-    inout  wire [15:0] IO_ddr_dq,
-    inout  wire [1:0]  IO_ddr_dqs,
-    inout  wire [1:0]  IO_ddr_dqs_n
+    output wire [3:0]  O_ddr_dqm,
+    inout  wire [31:0] IO_ddr_dq,
+    inout  wire [3:0]  IO_ddr_dqs,
+    inout  wire [3:0]  IO_ddr_dqs_n
 );
 
     wire pll_sys_lock;
@@ -96,35 +96,20 @@ module board_top (
     wire        cmd_ready;
     wire [2:0]  cmd;
     wire        cmd_en;
-    wire [27:0] addr;
+    wire [28:0] addr;
     wire        wr_data_rdy;
-    wire [127:0] wr_data;
+    wire [255:0] wr_data;
     wire        wr_data_en;
     wire        wr_data_end;
-    wire [15:0] wr_data_mask;
-    wire [127:0] rd_data;
+    wire [31:0] wr_data_mask;
+    wire [255:0] rd_data;
     wire        rd_data_valid;
     wire        rd_data_end;
     wire        sr_ack, ref_ack;
     wire        ref_req;
 
-    // nand2mario DDR3 IP is user-refresh. Issue tREFI ~7.8 us on the UI clock.
-    reg [9:0] ref_div;
-    reg       ref_req_r;
-    always @(posedge ddr_clk_out) begin
-        if (ddr_rst) begin
-            ref_div <= 10'd0;
-            ref_req_r <= 1'b0;
-        end else if (ref_ack) begin
-            ref_req_r <= 1'b0;
-        end else if (ref_div == 10'd580) begin
-            ref_div <= 10'd0;
-            ref_req_r <= 1'b1;
-        end else begin
-            ref_div <= ref_div + 1'b1;
-        end
-    end
-    assign ref_req = ref_req_r;
+    // Sipeed's revision-C controller performs refresh internally.
+    assign ref_req = 1'b0;
 
     DDR3_Memory_Interface_Top u_ddr3 (
         .clk                 (clk50),
