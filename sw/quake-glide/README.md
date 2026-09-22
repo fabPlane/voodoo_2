@@ -52,24 +52,21 @@ The result lands in `shots/glquake.trace_ref.png`.
 `patches/spinalvoodoo-glquake.patch`). `capture-demo.sh` plays shareware
 `demo1` through this path and encodes the frames.
 
-A full minute of that video is not practical: with `-no8bit`, Quake re-uploads
-textures as RGBA on a Voodoo1-class TMU, and the trace grows about half a
-gigabyte per second (ISSUES.md F3). The default 12 s capture is long enough to
-get past the loading plaque into the e1m3 flythrough. The matching full minute
-is the software renderer:
+With `-no8bit`, Quake re-uploads textures as RGBA on a Voodoo1-class TMU, and
+the trace grows about half a gigabyte per second (ISSUES.md F3). Both clips
+default to about 10 seconds of shareware `demo1`, which is long enough to get
+past the loading plaque into the e1m3 flythrough and keeps the trace and the
+frame dump small.
 
 ```bash
 ./capture-demo.sh            # Voodoo reference-model clip  -> shots/glquake_demo1_voodoo.mp4
-./capture-software.sh        # 60 s tyrquake software clip  -> shots/quake_demo_software.mp4
+./capture-software.sh        # tyrquake software clip       -> shots/quake_demo_software.mp4
 ```
 
 The Voodoo clip is the 320×240 view cropped out of the 640×480 framebuffer.
 The software clip is tyrquake's native 320×200, scaled up with nearest-neighbor.
-Both play shareware `demo1` (the software minute continues into `demo2` /
-`demo3`). On this machine a 12 s GLQuake capture is about 2.5 GB and replays
-to roughly 12 s of video at the swap rate (~70 fps), long enough to leave the
-loading plaque, pick up the shells and the grenade launcher, and be in the
-e1m3 corridor.
+A 10 s GLQuake capture is on the order of 2 GB and replays to about 10 s of
+video at the swap rate (~70 fps).
 
 ## How the build is put together
 
