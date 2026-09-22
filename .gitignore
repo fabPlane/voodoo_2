@@ -23,6 +23,7 @@ sw/quake-riscv/build/
 sw/quake-riscv/build-rv32/
 sw/quake-riscv/.toolchains/
 sw/quake-riscv/sw_last.ppm
+sw/glide-sd/out/
 sw/quake-riscv/sw_last.png
 
 # Local copy of the Tang Retro Console SD card (ROMs + TangCore bitstreams)

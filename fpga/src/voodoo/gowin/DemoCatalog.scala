@@ -114,6 +114,44 @@ object DemoCatalog {
       )
     ),
     Entry(
+      "SD CARD  PLAY",
+      None,
+      playable = true,
+      usePlayer = false,
+      folder = false,
+      0,
+      "V2GL FROM SD OR JTAG",
+      Seq(
+        " SD CARD PLAY",
+        "",
+        " PACKED GLIDE ON THE CARD.",
+        " COPY GLIDE/PLAY.V2G THEN",
+        " JTAG LOAD TO DDR 0x11000000",
+        " (SW/GLIDE-SD).",
+        "",
+        " A = RUN   B = BACK"
+      )
+    ),
+    Entry(
+      "QUAKE  RISC-V  SW",
+      None,
+      playable = false,
+      usePlayer = false,
+      folder = false,
+      0,
+      "SOFTWARE QUAKE ON DDR",
+      Seq(
+        " QUAKE RISC-V SOFTWARE",
+        "",
+        " WINQUAKE 320X200 BACKEND.",
+        " SOFT CPU + 256MIB DDR.",
+        " PAK AT 0X90000000.",
+        " SEE SW/QUAKE-RISCV.",
+        "",
+        " B = BACK"
+      )
+    ),
+    Entry(
       "OTHER  DEMOS",
       None,
       playable = false,
@@ -159,7 +197,9 @@ object DemoCatalog {
   val test04Index: Int = 1
   val test16Index: Int = 2
   val alphabetIndex: Int = 3
-  val otherDemosIndex: Int = 4
+  val sdCardIndex: Int = 4
+  val quakeSwIndex: Int = 5
+  val otherDemosIndex: Int = 6
   val tombIndex: Int = 0
 
   val mainCount: Int = main.length

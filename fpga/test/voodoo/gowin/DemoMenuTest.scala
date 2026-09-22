@@ -45,6 +45,10 @@ class DemoMenuTest extends AnyFunSuite {
       pulse(dut, SnesPad.Down)
       assert(dut.io.cursor.toInt == DemoCatalog.alphabetIndex)
       pulse(dut, SnesPad.Down)
+      assert(dut.io.cursor.toInt == DemoCatalog.sdCardIndex)
+      pulse(dut, SnesPad.Down)
+      assert(dut.io.cursor.toInt == DemoCatalog.quakeSwIndex)
+      pulse(dut, SnesPad.Down)
       assert(dut.io.cursor.toInt == DemoCatalog.otherDemosIndex)
       pulse(dut, SnesPad.Down)
       assert(dut.io.cursor.toInt == DemoCatalog.logoIndex)
@@ -59,6 +63,8 @@ class DemoMenuTest extends AnyFunSuite {
       dut.io.ready #= true
       dut.clockDomain.waitSampling()
 
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
       pulse(dut, SnesPad.Down)
       pulse(dut, SnesPad.Down)
       pulse(dut, SnesPad.Down)
@@ -86,6 +92,8 @@ class DemoMenuTest extends AnyFunSuite {
       dut.io.ready #= true
       dut.clockDomain.waitSampling()
 
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
       pulse(dut, SnesPad.Down)
       pulse(dut, SnesPad.Down)
       pulse(dut, SnesPad.Down)
@@ -124,6 +132,46 @@ class DemoMenuTest extends AnyFunSuite {
     }
   }
 
+  test("SD CARD PLAY starts the external V2GL player") {
+    compiled.doSim("demo-menu-sd") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.clockDomain.waitSampling(20)
+      dut.io.ready #= true
+      dut.clockDomain.waitSampling()
+
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.A)
+      assert(dut.io.playing.toBoolean)
+      assert(!dut.io.info.toBoolean)
+      assert(!dut.io.overlay.toBoolean)
+      assert(dut.io.cursor.toInt == DemoCatalog.sdCardIndex)
+    }
+  }
+
+  test("QUAKE RISC-V SW opens its info page") {
+    compiled.doSim("demo-menu-quake-sw") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.clockDomain.waitSampling(20)
+      dut.io.ready #= true
+      dut.clockDomain.waitSampling()
+
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.Down)
+      pulse(dut, SnesPad.A)
+      assert(dut.io.info.toBoolean)
+      assert(!dut.io.playing.toBoolean)
+      assert(dut.io.cursor.toInt == DemoCatalog.quakeSwIndex)
+    }
+  }
+
   test("Glide test04 starts the SST player") {
     compiled.doSim("demo-menu-test04") { dut =>
       dut.clockDomain.forkStimulus(10)
@@ -154,6 +202,10 @@ class DemoMenuTest extends AnyFunSuite {
     ))
     assert(DemoCatalog.playerBankByCursor(DemoCatalog.test16Index) == 2)
     assert(DemoCatalog.playerBankByCursor(DemoCatalog.otherDemosIndex) == 0)
+    assert(DemoCatalog.playerBankByCursor(DemoCatalog.sdCardIndex) == 0)
+    assert(DemoCatalog.main(DemoCatalog.sdCardIndex).playable)
+    assert(!DemoCatalog.main(DemoCatalog.sdCardIndex).usePlayer)
+    assert(!DemoCatalog.main(DemoCatalog.quakeSwIndex).playable)
     assert(DemoCatalog.playerLoopAt(0) == DemoCatalog.logoLoopAt)
     assert(DemoCatalog.playerLoopAt.drop(1).forall(_ == 0))
   }

@@ -80,6 +80,12 @@ make gowin-console   # needs gw_sh and hw/gowin/ip as in ip.md (no PCIe IP)
 
 USB pad: D-pad moves, A/Start runs, B/Select back. USER cycles, RESET runs.
 
+**SD CARD PLAY** walks a `V2GL` image from DDR `0x11000000` (copy
+`glide/PLAY.V2G` onto the FAT32 card with `sw/glide-sd/copy_to_sd.sh`, then
+JTAG-load it with `sw/glide-sd/jtag_load.py`). **QUAKE RISC-V SW** is the
+software WinQuake backend (`sw/quake-riscv`); the menu is an info page until
+the A25 / larger soft RV32 is wired onto the 256 MiB DDR window.
+
 LEDs (active low): heartbeat, info page open.
 
 HDMI debug: the menu has two amber status rows at the top (`CAL= WED= USB=`

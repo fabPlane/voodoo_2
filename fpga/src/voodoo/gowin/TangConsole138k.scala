@@ -2,14 +2,17 @@ package voodoo.gowin
 
 import spinal.core._
 import spinal.lib._
+import spinal.lib.bus.amba4.axilite._
 import voodoo.Config
+import voodoo.artix.AxiLite4ToBmbBridge
 import voodoo.hdmi.{VideoScanout, VideoTiming}
 
 /** Sipeed Tang Retro Console 138K fabric.
   *
   * No PCIe. After DDR3 calibration a USB-pad menu offers packed Glide2x SDK
-  * traces (logo spin, test04, test16, alphabet) plus an OTHER DEMOS submenu
-  * of publisher DOS Glide titles (info pages; too big for on-chip ROM).
+  * traces (logo spin, test04, test16, alphabet), SD CARD PLAY (V2GL in DDR),
+  * QUAKE RISC-V SW (info), plus an OTHER DEMOS submenu of publisher DOS
+  * Glide titles (info pages; too big for on-chip ROM).
   * DemoAxiLitePlayer is the AXI-Lite master onto CoreGowin. HDMI is 640x480
   * with a text overlay while the menu is open, plus a live two-line debug HUD.
   *
@@ -62,6 +65,10 @@ case class TangConsole138k(c: Config) extends Component {
     /** Full-speed CDC gadget on Soft-USB Type-C (S1). */
     val usbOnline = in Bool ()
     val debugTx = master(Flow(Bits(8 bits)))
+
+    /** 64-bit read port for the V2GL window (SD copy or JTAG poke). */
+    val glideMemCmd = master(Stream(UInt(32 bits)))
+    val glideMemRsp = slave(Stream(Bits(64 bits)))
   }
 
   val core = CoreGowin(c)
@@ -72,6 +79,7 @@ case class TangConsole138k(c: Config) extends Component {
     nativeAddrWidth = GowinAddressMap.consoleDdrNativeAddrWidth
   )
   val player = DemoAxiLitePlayer(DemoTraceRom.banks(), DemoCatalog.playerLoopAt)
+  val sdPlayer = DdrTracePlayer()
   val ctrlCd = ClockDomain(
     clock = io.ctrlClk,
     reset = io.ctrlReset,
@@ -118,16 +126,32 @@ case class TangConsole138k(c: Config) extends Component {
     val loopNow =
       !menu.io.other &&
         menu.io.cursor === U(DemoCatalog.logoIndex, menu.io.cursor.getWidth bits)
+    val sdNow =
+      !menu.io.other &&
+        menu.io.cursor === U(DemoCatalog.sdCardIndex, menu.io.cursor.getWidth bits)
   }
 
   io.debugMode := ctrl.buttons.io.debugMode
 
   val usePlayer = BufferCC(ctrl.menu.io.playing, init = False)
-  player.io.enable := usePlayer
+  val useSd = BufferCC(ctrl.sdNow, init = False)
+  val startPulse = PulseCCByToggle(ctrl.menu.io.start, ctrlCd, ClockDomain.current)
+  player.io.enable := usePlayer && !useSd
   player.io.loop := BufferCC(ctrl.loopNow, init = False)
   player.io.select := BufferCC(ctrl.playerSel, U(0, player.io.select.getWidth bits))
-  player.io.start := PulseCCByToggle(ctrl.menu.io.start, ctrlCd, ClockDomain.current)
-  core.io.bar << player.io.axi
+  player.io.start := startPulse && !useSd
+
+  sdPlayer.io.enable := usePlayer && useSd
+  sdPlayer.io.loop := False
+  sdPlayer.io.select := 0
+  sdPlayer.io.start := startPulse && useSd
+  sdPlayer.io.base := U(GowinAddressMap.glidePlayPhys, 32 bits)
+  io.glideMemCmd << sdPlayer.io.memCmd
+  sdPlayer.io.memRsp << io.glideMemRsp
+
+  val barMux = AxiLite4(AxiLite4ToBmbBridge.axiConfig(CoreGowin.barAddressWidth))
+  AxiLiteMasterMux(useSd && usePlayer, player.io.axi, sdPlayer.io.axi, barMux)
+  core.io.bar << barMux
 
   ddr.io.fb << core.io.memFb
   ddr.io.tex << core.io.memTex
@@ -172,7 +196,8 @@ case class TangConsole138k(c: Config) extends Component {
     hud.io.de := scan.io.active
     hud.io.calib := BufferCC(io.ddr.initCalibComplete, init = False)
     hud.io.wedge := BufferCC(core.io.hostWedged, init = False)
-    hud.io.usbOnline := BufferCC(io.usbOnline, init = False)
+    hud.io.underflow := False
+    hud.io.fifoLevel := 0
     hud.io.overlay := overlay
     hud.io.playing := BufferCC(ctrl.menu.io.playing, init = False)
     hud.io.debugMode := BufferCC(ctrl.buttons.io.debugMode, init = False)
@@ -181,9 +206,14 @@ case class TangConsole138k(c: Config) extends Component {
     hud.io.cursor := BufferCC(ctrl.cursor4, U(0, 4 bits))
     hud.io.hid := BufferCC(ctrl.hid16, B(0, 16 bits))
     hud.io.pc := BufferCC(player.io.index.resize(32 bits), U(0, 32 bits))
-    hud.io.barAddr := BufferCC(lastBarAddr, U(0, 32 bits))
-    hud.io.barData := BufferCC(lastBarData, B(0, 32 bits))
-    hud.io.barCount := BufferCC(barWrites, U(0, 16 bits))
+    hud.io.scanoutPrefetchCount := 0
+    hud.io.scanoutReadReqCount := 0
+    hud.io.scanoutReadRspCount := 0
+    hud.io.readIssueCount := 0
+    hud.io.physicalReadCount := 0
+    hud.io.physicalReadRspCount := 0
+    hud.io.cdcReadRspCount := 0
+    hud.io.ddrStatus := 0
     hud.io.uartLink := BufferCC(io.uartLink, init = False)
     hud.io.uartLastCmd := BufferCC(io.uartLastCmd, B(0, 8 bits))
     hud.io.uartRxCount := BufferCC(io.uartRxCount, U(0, 16 bits))

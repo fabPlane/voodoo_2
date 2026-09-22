@@ -36,6 +36,8 @@ Linux with a 32-bit libglide2x). Archives: `sw/glide-demos/`.
 | GLIDE TEST04 | `demo_test04.bin` | gouraud triangle |
 | GLIDE TEST16 | `demo_test16.bin` | shameless plug / splash |
 | GLIDE ALPHABET | `demo_test_alphabet.bin` | textured glyphs |
+| SD CARD PLAY | `glide/PLAY.V2G` | DDR `0x11000000`; `sw/glide-sd` |
+| QUAKE RISC-V SW | `sw/quake-riscv` | software 320×200; info until A25 |
 | OTHER DEMOS | `sw/glide-demos/` | submenu; info pages, no on-chip traces |
 
 USB pad (SNES layout from BL616 command 0x09): D-pad moves, A/Start runs,

@@ -4,6 +4,7 @@
 #   make rtl         generate Artix board + Gowin Verilog
 #   make rtl-artix   generate rtl/artix/AmdAc701.v
 #   make rtl-gowin   generate rtl/gowin/TangMega138kPro.v
+#   make rtl-console generate rtl/gowin/TangConsole138k.v
 #   make lint        Verilator lint of generated Verilog
 #   make test        SpinalSim tests (needs verilator on PATH)
 #   make gowin       Gowin EDA bitstream (needs gw_sh and generated IP; see hw/gowin/ip.md)
@@ -19,12 +20,14 @@ ARTIX_TOP  = AmdAc701
 GOWIN_TOP  = TangMega138kPro
 LINT_FLAGS = --lint-only -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CMPCONST -Wno-UNSIGNED -Wno-UNOPTFLAT
 
-.PHONY: compile rtl rtl-artix rtl-gowin lint test gowin artix clean
+CONSOLE_TOP = TangConsole138k
+
+.PHONY: compile rtl rtl-artix rtl-gowin rtl-console lint test gowin artix clean
 
 compile:
 	$(SCALA_CLI) compile .
 
-rtl: rtl-artix rtl-gowin
+rtl: rtl-artix rtl-gowin rtl-console
 
 rtl-artix: $(ARTIX_RTL)/$(ARTIX_TOP).v
 
@@ -37,6 +40,12 @@ $(ARTIX_RTL)/$(ARTIX_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) 
 $(GOWIN_RTL)/$(GOWIN_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
 	@mkdir -p $(GOWIN_RTL)
 	$(SCALA_CLI) run . --main-class voodoo.gowin.TangMega138kProGen
+
+rtl-console: $(GOWIN_RTL)/$(CONSOLE_TOP).v
+
+$(GOWIN_RTL)/$(CONSOLE_TOP).v: project.scala $(wildcard src/voodoo/artix/*.scala) $(wildcard src/voodoo/gowin/*.scala) $(shell find ../ext/SpinalVoodoo/src -name '*.scala')
+	@mkdir -p $(GOWIN_RTL)
+	$(SCALA_CLI) run . --main-class voodoo.gowin.TangConsole138kGen
 
 lint: $(ARTIX_RTL)/$(ARTIX_TOP).v $(GOWIN_RTL)/$(GOWIN_TOP).v
 	$(VERILATOR) $(LINT_FLAGS) --top-module $(ARTIX_TOP) $(ARTIX_RTL)/$(ARTIX_TOP).v
