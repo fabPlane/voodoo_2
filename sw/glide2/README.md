@@ -60,11 +60,11 @@ The Linux GLQuake path goes through Mesa 3.4.2's `fx` driver. A Windows
 `glide2x.dll` is a second Glide2 client. The SDK tests are the check that
 triangles, depth, alpha, and fog survive that client before a game does.
 
-Shareware, after the SDK tests:
+The DLL also exports the underscored MSVC stdcall names a 3dfx MiniGL
+imports (`_grGlideInit@0` and the rest). `gen-exports.sh` emits those
+aliases. MinGW's own `grFoo` / `grFoo@N` exports stay, so the SDK tests and
+`glide2-clear.exe` still link.
 
-- Windows GLQuake plus the 3dfx MiniGL `opengl32.dll`, using the shareware pak.
-- Hexen II demo, same MiniGL.
-- Quake II demo, pinned to a MiniGL that imports `glide2x.dll` rather than the later Glide3 ICD.
-
-Native-Glide demos after those: Jedi Knight, Incoming, MDK. Retail games and
-Glide3-only demos stay out.
+Shareware is the next client after the SDK tests. `./fetch-shareware.sh`
+downloads three archive.org apps and `./run-shareware.sh` launches them.
+What each one is, and how the run is set up, is in `SHAREWARE.md`.
