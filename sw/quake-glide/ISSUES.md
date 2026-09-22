@@ -184,6 +184,18 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 - **Proper fix (upstream):** same heuristic in `trace_test`, or teach the trace
   format to record the final front-buffer offset explicitly.
 
+### E3. Per-swap frame dump (gameplay video)
+- **Symptom:** `trace_test` only writes the final framebuffer, so a moving
+  scene cannot be turned into a video.
+- **Root cause:** the tool was built for single-frame compare against the FPGA
+  sim, not for playback.
+- **Workaround:** `patches/spinalvoodoo-glquake.patch` adds `--dump-frames DIR`
+  and `--dump-stride N`. On each `swapbufferCMD` it writes
+  `frame_%05d.png` from the buffer that was just drawn, and if that buffer is
+  ≥99% black it shows the other ping-pong buffer instead (the same parity
+  problem as E2, but per swap). `capture-demo.sh` encodes those PNGs.
+- **Proper fix (upstream):** the same flags in `trace_test`.
+
 ---
 
 ## F. Capture / rendering workflow
@@ -211,9 +223,15 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 - **Root cause:** every visible texture is re-uploaded as RGBA; a full Quake
   level has a lot of texture data.
 - **Workaround:** keep runs short (default 2 s); the start-map view is static so
-  a couple of seconds settles it.
+  a couple of seconds settles it. A gameplay clip (`capture-demo.sh`, default
+  12 s of `demo1`) is long enough to reach the e1m3 flythrough and still
+  replay in minutes. A full minute extrapolates to tens of gigabytes and hours
+  of replay, so the one-minute comparison is the software renderer
+  (`capture-software.sh`).
 - **Proper fix:** dedupe/cache texture uploads in capture, or use the paletted
-  path (see F1) to shrink traces.
+  path (see F1) to shrink traces. A Voodoo1 TMU is 2–4 MB, so an RGBA cache of
+  a whole level still does not fit; dedupe has to drop textures the hardware
+  would have evicted.
 
 ### F4. Resolution vs framebuffer (letterboxing)
 - **Symptom:** the 320×240 scene sits in the lower-left of the 640×480 Voodoo

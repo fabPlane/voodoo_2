@@ -14,8 +14,11 @@
 #
 # Usage:
 #   ./build.sh            # full pipeline: patch, build libs, Mesa, GLQuake, run, render
+#   ./build.sh build      # patch + build libs, Mesa and GLQuake; do not run
+#   ./build.sh run        # capture a trace (QUAKE_CMDS, default "map start")
 #   ./build.sh render     # just re-render the last captured trace
-#   SECS=2 ./build.sh     # seconds to free-run the start map (default 2)
+#   SECS=2 ./build.sh     # seconds to free-run (default 2)
+#   QUAKE_CMDS='playdemo demo1' SECS=12 ./build.sh run
 #
 # Prereqs: Docker with the glide32 image (see docker/glide32.Dockerfile), the
 # ext/SpinalVoodoo submodule, and the multilib host toolchain from install.sh.
@@ -46,9 +49,21 @@ apply_patch() { # <repo-dir> <patch> <sentinel-file> <sentinel-string>
 
 stage_patches() {
   # 1. libglide2x: report a sane 2MB Voodoo1 memory size (fxMesa sizes its
-  #    texture heap from grTexMaxAddress) + trace_test back-buffer fallback.
-  apply_patch "$EXT" "$HERE/patches/spinalvoodoo-glquake.patch" \
-    "emu/glide/glide2x/sst1/init/init.c" "simulator backend cannot probe"
+  #    texture heap from grTexMaxAddress) + trace_test back-buffer fallback and
+  #    per-swap PNG dump (--dump-frames). The sentinel is the dump-frames flag
+  #    so an older revision of this patch (memory clamp only) gets replaced.
+  local tt="emu/test/trace_test.cpp"
+  if grep -q "dump_frames_dir" "$EXT/$tt" 2>/dev/null; then
+    echo "[quake-glide] patch already applied: spinalvoodoo-glquake.patch"
+  else
+    if grep -q "simulator backend cannot probe" \
+         "$EXT/emu/glide/glide2x/sst1/init/init.c" 2>/dev/null; then
+      echo "[quake-glide] refreshing spinalvoodoo-glquake.patch (dump-frames)"
+      git -C "$EXT" checkout -- emu/glide/glide2x/sst1/init/init.c "$tt"
+    fi
+    echo "[quake-glide] applying spinalvoodoo-glquake.patch"
+    git -C "$EXT" apply "$HERE/patches/spinalvoodoo-glquake.patch"
+  fi
   # 2. 86Box reference rasterizer robustness (mask colour fb base like the aux
   #    path + clamp the span) so unclipped off-screen GL triangles can't crash.
   apply_patch "$EBOX" "$HERE/patches/86box-render-robustness.patch" \
@@ -162,7 +177,9 @@ run_glquake() {
     # fxMesa renders straight to Glide (no X). -nosound: no /dev/dsp in the
     # container. -no8bit: full RGBA textures (no paletted-texture extension).
     timeout --signal=TERM $SECS /work/glquake -basedir /work/q -nosound -nocdaudio -no8bit \
-        -width 320 -height 240 +'map start' >/tmp/gq.log 2>&1 || true
+        -width 320 -height 240 +'${QUAKE_CMDS:-map start}' >/tmp/gq.log 2>&1 || true
+    echo '--- quake log tail ---'
+    tail -20 /tmp/gq.log || true
     ls -la /work/glquake.trace
   "
 }
@@ -175,6 +192,15 @@ render() {
 }
 
 case "${1:-all}" in
+  build)
+    stage_patches
+    build_host
+    stage_glide_sdk
+    fetch_sources
+    build_mesa
+    build_glquake
+    ;;
+  run) run_glquake ;;
   render) render ;;
   *)
     stage_patches
