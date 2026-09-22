@@ -1,8 +1,28 @@
 diff --git a/src/video/vid_voodoo_render.c b/src/video/vid_voodoo_render.c
-index 9c1204b..a78fbe3 100644
+index 9c1204b..2ed3f07 100644
 --- a/src/video/vid_voodoo_render.c
 +++ b/src/video/vid_voodoo_render.c
-@@ -906,19 +906,78 @@ voodoo_half_triangle(voodoo_t *voodoo, voodoo_params_t *params, voodoo_state_t *
+@@ -833,6 +833,19 @@ voodoo_half_triangle(voodoo_t *voodoo, voodoo_params_t *params, voodoo_state_t *
+                 goto next_line;
+         }
+ 
++        /*
++         * Triangles with hardware clipping off can include scanlines above
++         * the screen (real_y < 0) or below it. The address is masked, so a
++         * negative Y walks backwards from the colour or depth buffer into the
++         * other one. Depth sits directly after the back colour buffer, and
++         * those wrapped depth writes replace the displayed frame with the Z
++         * value. Skip the write; the next_line epilogue still steps the
++         * interpolators. v_disp == 0 means the screen height is unknown, and
++         * treating that as "skip every line" would drop the frame.
++         */
++        if (real_y < 0 || (voodoo->v_disp > 0 && real_y >= voodoo->v_disp))
++            goto next_line;
++
+         start_x = x;
+ 
+         if (state->xdir > 0)
+@@ -906,19 +919,78 @@ voodoo_half_triangle(voodoo_t *voodoo, voodoo_params_t *params, voodoo_state_t *
              }
          }
  

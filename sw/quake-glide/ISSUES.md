@@ -196,6 +196,36 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
   problem as E2, but per swap). `capture-demo.sh` encodes those PNGs.
 - **Proper fix (upstream):** the same flags in `trace_test`.
 
+### E4. **[UPSTREAM]** Colours collapse to a few posterized bands a few seconds in
+- **Symptom:** shortly after the 3D scene starts, every other presented frame
+  turns into a smooth pink/yellow/green image (about four colours). The other
+  frames stay textured. The bad pixels reconstruct as a 16-bit Z ramp
+  (about `0x81xx`–`0x83xx`), not as texels.
+- **Root cause:** two gaps that only bite together.
+  1. The trace starts after Glide's `SST_videoDimensions` write, so the
+     reference model leaves `v_disp` at 0. With the fbzMode Y-origin bit set,
+     the rasteriser flips Y as `(v_disp - 1) - y`, i.e. `-1 - y`. Every
+     on-screen pixel becomes a negative row.
+  2. The framebuffer address is masked, and the depth buffer sits immediately
+     after the back colour buffer. A negative Y from the depth base walks
+     backwards into that colour buffer. GLQuake's `gl_ztrick` (default 1)
+     alternates `GL_LEQUAL` and `GL_GEQUAL` and does not clear Z. GEQUAL lets
+     those wrapped depth stores pass, so the colour just drawn is replaced by
+     Z. LEQUAL rejects them, which is why only every other frame goes
+     false-colour.
+- **Workaround:** `patches/spinalvoodoo-glquake.patch` derives `h_disp` /
+  `v_disp` from the colour-buffer size when `videoDimensions` was never
+  captured (640×480 for this trace). `patches/86box-render-robustness.patch`
+  also skips scanlines with `real_y < 0` or `real_y >= v_disp`, so a triangle
+  that still extends off the screen cannot wrap into the neighbouring buffer.
+  Replaying the existing demo1 trace: even frames that were ~4 unique reds at
+  mean about (191, 145, 168) return to ~30 unique reds at mean about
+  (108, 89, 62), matching the neighbouring good frames. Frame 40 (before
+  ztrick) is unchanged.
+- **Proper fix (upstream):** capture `videoDimensions` (or a register snapshot)
+  at trace start, and clip Y in `voodoo_half_triangle` the same way. Turning
+  `gl_ztrick` off only hides the symptom.
+
 ---
 
 ## F. Capture / rendering workflow
@@ -268,7 +298,7 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 A reasonable order for a follow-up branch that turns the workarounds into real
 fixes:
 
-1. **Upstream the three patches** (D1, E1, E2) into SpinalVoodoo / 86Box so
+1. **Upstream the patches** (D1, E1, E2, E4) into SpinalVoodoo / 86Box so
    `trace_test` and `libglide2x` are robust without `sw/quake-glide/patches/`.
 2. **Texture-upload dedupe in capture** (F3) so full-scene traces are tractable,
    then render a 640×480 (F4) GLQuake frame and, ideally, a short timedemo clip.
