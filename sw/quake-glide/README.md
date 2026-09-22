@@ -118,8 +118,9 @@ as patches applied to the vendored submodules (idempotently, by `build.sh`):
    `spinalvoodoo-glquake.patch`). See ISSUES.md E5. Draw-time `tLOD` had
    multibase set with every extra base at 0, page flushes replayed bytes Glide
    never wrote, and TMU1 downloads shared TMU0's RAM. Some images (the status
-   bar) were then sampled with a different aspect and format than the download
-   that stored them.
+   bar) were then sampled with a different LOD range, aspect, or format than
+   the download that stored them. A close-up of a texture whose finest stored
+   mip is LOD 2 was drawn with LOD min 0, which is the brief garbage texture.
 
 Items 1–3 are general (memory reporting, rasterizer bounds, frame selection).
 Item 4 is the replay of this trace: the even/odd mask belongs in Glide, and

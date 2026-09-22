@@ -246,21 +246,27 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
      (`addr` bit 21) while the board is one TMU. Folding that aperture onto
      TMU0 writes over textures that share the byte offset, including the
      early status bar.
-  3. The draw registers for some 2D images do not match the download that
-     stored the texels. From swap 51 the full status bar is byte base
-     `0x1495b0`: 4096 dwords of RGB565, 256×32 (8:1). The triangle samples it
-     as square ARGB4444 LOD 1, which reads a different address and decodes
-     the bytes as the wrong format. The number glyphs are the same kind of
-     mismatch (downloaded 4444, drawn as RGB565).
+  3. The draw registers for some images do not match the download that stored
+     the texels. From swap 51 the full status bar is byte base `0x1495b0`:
+     4096 dwords of RGB565, 256×32 (8:1). The triangle samples it as square
+     ARGB4444 LOD 1. The number glyphs are downloaded 4444 and drawn as
+     RGB565. Separately, base `0x17ab0` is downloaded as RGB565 with LOD min
+     2 (the texels live at PCI lod 2 and below, 8192 dwords at the 128-wide
+     level). For a few dozen frames at a time that wall is drawn with LOD min
+     0, so a close-up reads the empty finer levels and the surface turns into
+     a column of garbage. It is brief because the next run of frames draws
+     the same base with a format that already disagreed, which took the
+     download's LOD range.
 - **Workaround:** `patches/spinalvoodoo-glquake.patch` makes even/odd index 0
   contribute no bits (future captures) and allocates a second texture RAM in
   the reference model. `patches/86box-texture-layout.patch` honours multibase
   only when an extra base was written, drops 8-bit hole dwords and out-of-range
   row tails, keeps TMU1 downloads in their own RAM, and decodes a triangle with
-  the download's aspect and format when those disagree with the draw state.
-  The live registers are restored after the triangle so the override does not
-  leak. Replaying this trace: the bright greens are gone, and the status-bar
-  rows are the brown sbar (about 90% of HUD pixels).
+  the download's LOD range, aspect and format when those disagree with the
+  draw state. The live registers are restored after the triangle so the
+  override does not leak. Replaying this trace: the bright greens are gone,
+  the status-bar rows are the brown sbar, and the close-up wall uses the LOD
+  that was actually downloaded.
 - **Proper fix (upstream):** the even/odd table in Glide, and a trace that
   records which TMU a download targeted without folding it onto TMU0. The
   draw-versus-download layout override is a replay compensation for registers
