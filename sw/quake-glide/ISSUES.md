@@ -184,6 +184,114 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 - **Proper fix (upstream):** same heuristic in `trace_test`, or teach the trace
   format to record the final front-buffer offset explicitly.
 
+### E3. Per-swap frame dump (gameplay video)
+- **Symptom:** `trace_test` only writes the final framebuffer, so a moving
+  scene cannot be turned into a video.
+- **Root cause:** the tool was built for single-frame compare against the FPGA
+  sim, not for playback.
+- **Workaround:** `patches/spinalvoodoo-glquake.patch` adds `--dump-frames DIR`
+  and `--dump-stride N`. On each `swapbufferCMD` it writes
+  `frame_%05d.png` from the buffer that was just drawn, and if that buffer is
+  ≥99% black it shows the other ping-pong buffer instead (the same parity
+  problem as E2, but per swap). `capture-demo.sh` encodes those PNGs.
+- **Proper fix (upstream):** the same flags in `trace_test`.
+
+### E4. **[UPSTREAM]** Colours collapse to a few posterized bands a few seconds in
+- **Symptom:** shortly after the 3D scene starts, every other presented frame
+  turns into a smooth pink/yellow/green image (about four colours). The other
+  frames stay textured. The bad pixels reconstruct as a 16-bit Z ramp
+  (about `0x81xx`–`0x83xx`), not as texels.
+- **Root cause:** two gaps that only bite together.
+  1. The trace starts after Glide's `SST_videoDimensions` write, so the
+     reference model leaves `v_disp` at 0. With the fbzMode Y-origin bit set,
+     the rasteriser flips Y as `(v_disp - 1) - y`, i.e. `-1 - y`. Every
+     on-screen pixel becomes a negative row.
+  2. The framebuffer address is masked, and the depth buffer sits immediately
+     after the back colour buffer. A negative Y from the depth base walks
+     backwards into that colour buffer. GLQuake's `gl_ztrick` (default 1)
+     alternates `GL_LEQUAL` and `GL_GEQUAL` and does not clear Z. GEQUAL lets
+     those wrapped depth stores pass, so the colour just drawn is replaced by
+     Z. LEQUAL rejects them, which is why only every other frame goes
+     false-colour.
+- **Workaround:** `patches/spinalvoodoo-glquake.patch` derives `h_disp` /
+  `v_disp` from the colour-buffer size when `videoDimensions` was never
+  captured (640×480 for this trace). `patches/86box-render-robustness.patch`
+  also skips scanlines with `real_y < 0` or `real_y >= v_disp`, so a triangle
+  that still extends off the screen cannot wrap into the neighbouring buffer.
+  Replaying the existing demo1 trace: even frames that were ~4 unique reds at
+  mean about (191, 145, 168) return to ~30 unique reds at mean about
+  (108, 89, 62), matching the neighbouring good frames. Frame 40 (before
+  ztrick) is unchanged.
+- **Proper fix (upstream):** capture `videoDimensions` (or a register snapshot)
+  at trace start, and clip Y in `voodoo_half_triangle` the same way. Turning
+  `gl_ztrick` off only hides the symptom.
+
+### E5. **[UPSTREAM]** Speckled world colours and a garbled status bar
+- **Symptom:** after the depth-buffer false colour (E4) is gone, walls are
+  still high-frequency green/yellow noise and the status bar is not the brown
+  Quake sbar. Saturated greens such as (64, 192, 64) show up in the view. A
+  lightmap multiply cannot raise a channel above the base texture, so those
+  pixels are a replaced sample, not a blend.
+- **Root cause:** three gaps in how the recorded trace is replayed.
+  1. Glide's even/odd table entry 0 was `0xFFFFFFFF`. `grTexCombine` ORs that
+     in before a texture has a real mask, and `grTexSource` keeps the bits it
+     does not replace, so draw-time `tLOD` has `SST_TMULTIBASEADDR` set.
+     `texBaseAddr1/2/38` are 0. Honouring the bit fetches every mip below LOD 0
+     from texture address 0.
+  2. `fxsim` flushes every dword of a dirty 4 KB page. SST-1 8-bit downloads
+     write texels at +0 and +8 and leave +4/+12 unused; replaying the hole
+     replaces the lightmap. Narrower levels also have a 512-byte PCI row
+     stride, so the page tail decodes as `s`/`t` past the level and spills
+     into the next texture. Mesa also downloads through the TMU1 PCI aperture
+     (`addr` bit 21) while the board is one TMU. Folding that aperture onto
+     TMU0 writes over textures that share the byte offset, including the
+     early status bar.
+  3. The draw registers for some images do not match the download that stored
+     the texels. From swap 51 the full status bar is byte base `0x1495b0`:
+     4096 dwords of RGB565, 256×32 (8:1). The triangle samples it as square
+     ARGB4444 LOD 1. The number glyphs are downloaded 4444 and drawn as
+     RGB565. Separately, base `0x17ab0` is downloaded as RGB565 with LOD min
+     2 (the texels live at PCI lod 2 and below, 8192 dwords at the 128-wide
+     level). For a few dozen frames at a time that wall is drawn with LOD min
+     0, so a close-up reads the empty finer levels and the surface turns into
+     a column of garbage. It is brief because the next run of frames draws
+     the same base with a format that already disagreed, which took the
+     download's LOD range.
+- **Workaround:** `patches/spinalvoodoo-glquake.patch` makes even/odd index 0
+  contribute no bits (future captures) and allocates a second texture RAM in
+  the reference model. `patches/86box-texture-layout.patch` honours multibase
+  only when an extra base was written, drops 8-bit hole dwords and out-of-range
+  row tails, keeps TMU1 downloads in their own RAM, and decodes a triangle with
+  the download's LOD range, aspect and format when those disagree with the
+  draw state. The live registers are restored after the triangle so the
+  override does not leak. Replaying this trace: the bright greens are gone,
+  the status-bar rows are the brown sbar, and the close-up wall uses the LOD
+  that was actually downloaded.
+- **Proper fix (upstream):** the even/odd table in Glide, and a trace that
+  records which TMU a download targeted without folding it onto TMU0. The
+  draw-versus-download layout override is a replay compensation for registers
+  already in this trace; a recapture after the Glide/Mesa state is corrected
+  should not need it.
+
+### E6. **[UPSTREAM]** Ammo crate label is mirrored around 1–2 s
+- **Symptom:** the shotgun shell box (`b_shell0`, texture `shot0sid`) shows
+  wood, then the red label, then the black shell windows. On a real box the
+  label is at the top of the side and the window rows are not on that face.
+- **Root cause:** SST-1's `tLOD` has no mirror controls. Bits 28 and 29 are
+  Voodoo2 `TMIRROR_S` / `TMIRROR_T`. Glide's even/odd table entry 0 used to be
+  all-ones, and `grTexSource` keeps bits it does not replace, so draw-time
+  `tLOD` is `0xff83f80c` with both mirror bits set. The reference model
+  bitwise-nots T when bit 12 of the signed coordinate is set. The shell side
+  is `T=-192..0` (24 texels of a 32-wide texture, top of the box at -192).
+  That mirror walks the rows backwards and pulls rows 1–7 (the windows) onto
+  the bottom of the face. S stays in `0..192`, so the columns are not mirrored.
+- **Workaround:** `patches/86box-voodoo1-mirror.patch` honours those bits only
+  when the chip is Voodoo2 or later. Replaying this trace, the shell side is
+  the label over the wood grain.
+- **Proper fix (upstream):** the same type check in 86Box's
+  `voodoo_get_texture`. Clearing the even/odd mask (E5) stops new captures
+  from setting the bits; this trace already has them.
+
 ---
 
 ## F. Capture / rendering workflow
@@ -202,8 +310,12 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 - **Symptom:** killing the process leaves a truncated/short trace.
 - **Root cause:** the trace writer flushes/closes on normal exit (atexit).
 - **Workaround:** free-run the map and stop with **SIGTERM**, which Quake's
-  `signal_handler` turns into `Sys_Quit` → clean shutdown → flush.
-- **Proper fix:** same; or periodic flush in the trace writer.
+  `signal_handler` turns into `Sys_Quit` → clean shutdown → flush. The tail of
+  that flush can still contain coalesced entries whose `count` field is
+  garbage (~1e8). `trace_test` clamps any repeat above 1,000,000 to 1 so
+  replay does not spin on the shutdown garbage.
+- **Proper fix:** same; or periodic flush in the trace writer, and a writer
+  that never emits a repeat count it did not actually observe.
 
 ### F3. Trace size for `-no8bit` full-scene frames
 - **Symptom:** ~1 GB trace for 2 s @ 320×240 (RGBA texture uploads are large);
@@ -211,9 +323,14 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 - **Root cause:** every visible texture is re-uploaded as RGBA; a full Quake
   level has a lot of texture data.
 - **Workaround:** keep runs short (default 2 s); the start-map view is static so
-  a couple of seconds settles it.
+  a couple of seconds settles it. Gameplay clips (`capture-demo.sh` and
+  `capture-software.sh`) default to about 10 s of `demo1`, long enough to
+  reach the e1m3 flythrough. The Voodoo trace for that window is about 2 GB
+  and replays in a few minutes.
 - **Proper fix:** dedupe/cache texture uploads in capture, or use the paletted
-  path (see F1) to shrink traces.
+  path (see F1) to shrink traces. A Voodoo1 TMU is 2–4 MB, so an RGBA cache of
+  a whole level still does not fit; dedupe has to drop textures the hardware
+  would have evicted.
 
 ### F4. Resolution vs framebuffer (letterboxing)
 - **Symptom:** the 320×240 scene sits in the lower-left of the 640×480 Voodoo
@@ -246,7 +363,7 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 A reasonable order for a follow-up branch that turns the workarounds into real
 fixes:
 
-1. **Upstream the three patches** (D1, E1, E2) into SpinalVoodoo / 86Box so
+1. **Upstream the patches** (D1, E1, E2, E4) into SpinalVoodoo / 86Box so
    `trace_test` and `libglide2x` are robust without `sw/quake-glide/patches/`.
 2. **Texture-upload dedupe in capture** (F3) so full-scene traces are tractable,
    then render a 640×480 (F4) GLQuake frame and, ideally, a short timedemo clip.
