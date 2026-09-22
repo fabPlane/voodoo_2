@@ -69,6 +69,17 @@ captured Voodoo command stream is rendered through the model
 
 ## 4. Games
 
+An **open-source** third-party Glide program rendered all the way through the
+Voodoo model — the clean answer to the passthrough problem below:
+
+![nostalgic torus](game_nostalgic_torus.png)
+
+*efliks' GPLv3 [`nostalgic-glide-demo`](https://github.com/efliks/nostalgic-glide-demo)
+— a spinning, environment-mapped torus drawn with direct Glide calls
+(`grDrawTriangle` + env-map combiners). Built against our `libglide2x` (no
+DOSBox, no PCI probing, no binary patch), traced, and replayed through the
+Voodoo reference model. See `sw/glide-demos/nostalgic/`.*
+
 A **real, textured Quake frame** rendered end-to-end through the Voodoo model
 via the period-correct Linux Glide stack (GLQuake → Mesa 3.4.2 `fx` → Glide2 →
 our `libglide2x` → reference model). See `sw/quake-glide/`.
@@ -102,6 +113,8 @@ without touching the host toolchain.
 ### How these were generated
 
 - Homebrew ROMs + renders: `make -C sw/glide-homebrew` then `make -C sw/glide-homebrew render`.
+- Open-source Glide game (torus): `make -C sw/glide-demos/nostalgic && make -C sw/glide-demos/nostalgic render`.
+- GLQuake through the Voodoo model: `sw/quake-glide/build.sh`.
 - Console RTL: the whole-console Verilator harness on the console branch (`amaranth/emu/console`, `make run-demos`).
 - DOS Glide: `sw/glide-demos/dos-fpga/` (DOSBox-X + Open Watcom + 3dfx SDK).
 - Games/Docker: see `docker/README.md` and `sw/quake-riscv/` on the console branches.

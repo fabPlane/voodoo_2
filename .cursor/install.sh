@@ -52,8 +52,10 @@ echo "[install] 32-bit gcc: $(gcc -m32 --version | head -1)"
 #    - ext/tangcore: the Sipeed Tang Console loader/menu the Voodoo core targets.
 #      Only the superproject is initialized; its per-core nested submodules are
 #      large and only needed to build TangCore bitstreams (Gowin EDA required).
-echo "[install] Initializing ext/SpinalVoodoo and ext/tangcore submodules..."
-git submodule update --init ext/SpinalVoodoo ext/tangcore
+#    - ext/nostalgic-glide-demo: efliks' open-source (GPLv3) 3Dfx Glide demo,
+#      built against our libglide2x for sw/glide-demos/nostalgic.
+echo "[install] Initializing ext/SpinalVoodoo, ext/tangcore, ext/nostalgic-glide-demo submodules..."
+git submodule update --init ext/SpinalVoodoo ext/tangcore ext/nostalgic-glide-demo
 
 # 5. Warm the scala-cli / coursier dependency cache (SpinalHDL, scalatest, JDK 17)
 #    so the first `make compile` / `make test` is fast. Best-effort: never fails
