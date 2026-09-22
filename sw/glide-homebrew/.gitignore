@@ -1,0 +1,5 @@
+# Build artifacts, captured traces and rendered screenshots are regenerable;
+# ROMs are committed.
+build/
+traces/
+shots/

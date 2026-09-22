@@ -5,3 +5,6 @@
 	path = sw/quake-riscv/quake-embedded
 	url = https://github.com/sysprog21/quake-embedded.git
 	branch = rv32emu
+[submodule "ext/tangcore"]
+	path = ext/tangcore
+	url = https://github.com/nand2mario/tangcore.git
