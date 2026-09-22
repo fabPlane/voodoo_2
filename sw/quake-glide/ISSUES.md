@@ -214,8 +214,12 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 - **Symptom:** killing the process leaves a truncated/short trace.
 - **Root cause:** the trace writer flushes/closes on normal exit (atexit).
 - **Workaround:** free-run the map and stop with **SIGTERM**, which Quake's
-  `signal_handler` turns into `Sys_Quit` → clean shutdown → flush.
-- **Proper fix:** same; or periodic flush in the trace writer.
+  `signal_handler` turns into `Sys_Quit` → clean shutdown → flush. The tail of
+  that flush can still contain coalesced entries whose `count` field is
+  garbage (~1e8). `trace_test` clamps any repeat above 1,000,000 to 1 so
+  replay does not spin on the shutdown garbage.
+- **Proper fix:** same; or periodic flush in the trace writer, and a writer
+  that never emits a repeat count it did not actually observe.
 
 ### F3. Trace size for `-no8bit` full-scene frames
 - **Symptom:** ~1 GB trace for 2 s @ 320×240 (RGBA texture uploads are large);

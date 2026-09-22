@@ -63,6 +63,14 @@ is the software renderer:
 ./capture-software.sh        # 60 s tyrquake software clip  -> shots/quake_demo_software.mp4
 ```
 
+The Voodoo clip is the 320×240 view cropped out of the 640×480 framebuffer.
+The software clip is tyrquake's native 320×200, scaled up with nearest-neighbor.
+Both play shareware `demo1` (the software minute continues into `demo2` /
+`demo3`). On this machine a 12 s GLQuake capture is about 2.5 GB and replays
+to roughly 12 s of video at the swap rate (~70 fps), long enough to leave the
+loading plaque, pick up the shells and the grenade launcher, and be in the
+e1m3 corridor.
+
 ## How the build is put together
 
 - **Mesa 3.4.2** is the last Mesa whose `fx` driver targets **Glide2** (our

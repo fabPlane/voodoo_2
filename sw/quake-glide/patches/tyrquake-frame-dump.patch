@@ -1,0 +1,125 @@
+diff --git a/common/in_null.c b/common/in_null.c
+index 24619e9..24b42d1 100644
+--- a/common/in_null.c
++++ b/common/in_null.c
+@@ -28,7 +28,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ #include "protocol.h"
+ #endif
+ 
+-cvar_t _windowed_mouse;
++cvar_t _windowed_mouse = { "_windowed_mouse", "0", CVAR_CONFIG };
+ 
+ void
+ IN_Init(void)
+diff --git a/common/snd_null.c b/common/snd_null.c
+index d89f99f..5810482 100644
+--- a/common/snd_null.c
++++ b/common/snd_null.c
+@@ -19,7 +19,24 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ 
+ #include "sound.h"
+ 
+-qboolean SNDDMA_Init(void) { return false; }
++/*
++ * Headless capture has no audio device. Pretend DMA came up so S_Init can
++ * finish (it reads shm->speed) and the software renderer still runs.
++ */
++static dma_t null_shm;
++static unsigned char null_buffer[1 << 16];
++
++qboolean SNDDMA_Init(void) {
++    null_shm.channels = 2;
++    null_shm.samples = 32768;
++    null_shm.submission_chunk = 1;
++    null_shm.samplepos = 0;
++    null_shm.samplebits = 16;
++    null_shm.speed = 22050;
++    null_shm.buffer = null_buffer;
++    shm = &null_shm;
++    return true;
++}
+ int SNDDMA_GetDMAPos(void) { return 0; }
+ void SNDDMA_Shutdown(void) { }
+ void SNDDMA_Submit(void) { }
+diff --git a/common/vid_null.c b/common/vid_null.c
+index e4a5c8e..3c87483 100644
+--- a/common/vid_null.c
++++ b/common/vid_null.c
+@@ -22,6 +22,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ #include "common.h"
+ #include "d_local.h"
+ #include "quakedef.h"
++#include "sys.h"
++
++#include <stdio.h>
++#include <stdlib.h>
+ 
+ #ifdef NQ_HACK
+ #include "host.h"
+@@ -53,9 +57,12 @@ VID_ShiftPalette(const byte *palette)
+ {
+ }
+ 
++static const byte *vid_palette;
++
+ void
+ VID_SetPalette(const byte *palette)
+ {
++    vid_palette = palette;
+ }
+ 
+ void
+@@ -87,6 +94,31 @@ VID_Shutdown(void)
+ void
+ VID_Update(vrect_t *rects)
+ {
++    const char *dir = getenv("QUAKE_FRAME_DIR");
++    const char *lim = getenv("QUAKE_MAX_SECONDS");
++    const byte *pal = vid_palette ? vid_palette : host_basepal;
++    char path[1024];
++    FILE *f;
++    int i;
++    static int frame;
++
++    (void)rects;
++    if (!dir || !pal)
++        return;
++
++    snprintf(path, sizeof(path), "%s/frame_%05d.ppm", dir, frame++);
++    f = fopen(path, "wb");
++    if (f) {
++        fprintf(f, "P6\n%d %d\n255\n", BASEWIDTH, BASEHEIGHT);
++        for (i = 0; i < BASEWIDTH * BASEHEIGHT; i++) {
++            const byte *c = pal + (int)vid_buffer[i] * 3;
++            fwrite(c, 1, 3, f);
++        }
++        fclose(f);
++    }
++
++    if (lim && realtime >= atof(lim))
++        Sys_Quit();
+ }
+ 
+ /*
+@@ -121,6 +153,12 @@ VID_ProcessEvents()
+ {
+ }
+ 
++/* The unix Sys_* object does not provide this; the X11/SDL vid drivers do. */
++void
++Sys_SendKeyEvents(void)
++{
++}
++
+ void
+ VID_LockBuffer(void)
+ {
+@@ -154,7 +192,7 @@ VID_SetDefaultMode()
+ 
+ qboolean window_visible(void)
+ {
+-    return false;
++    return true;
+ }
+ 
+ #ifdef GLQUAKE

@@ -20,7 +20,7 @@ index 1a3adf0..54ed2c8 100644
            hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRev    = info.fbiRevision;
            hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRam    = info.fbiMemSize;
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
-index a24d46b..9cf9c58 100644
+index a24d46b..5ca2ad0 100644
 --- a/emu/test/trace_test.cpp
 +++ b/emu/test/trace_test.cpp
 @@ -281,6 +281,8 @@ int main(int argc, char **argv) {
@@ -110,7 +110,26 @@ index a24d46b..9cf9c58 100644
      uint64_t cmd_type_counts[32] = {0};
      uint32_t fbzmode_writes = 0, fbzcp_writes = 0, texmode0_writes = 0, texmode1_writes = 0;
      uint32_t fbzmode_last = 0, fbzcp_last = 0, texmode0_last = 0, texmode1_last = 0;
-@@ -615,6 +672,7 @@ int main(int argc, char **argv) {
+@@ -484,6 +541,18 @@ int main(int argc, char **argv) {
+         last_entry_replayed = i;
+         const voodoo_trace_entry_t *e = &entries[i];
+         uint32_t repeat = e->count ? e->count : 1;
++        /* A killed capture can flush coalesced entries whose repeat count is
++         * garbage (1e8+). Replaying those hangs for hours and is not a real
++         * command stream. */
++        if (repeat > 1000000u) {
++            static int warned_repeat = 0;
++            if (!warned_repeat++)
++                fprintf(stderr,
++                        "[trace_test] clamping absurd repeat count %u at entry %u "
++                        "(shutdown garbage); treating as 1\n",
++                        repeat, i);
++            repeat = 1;
++        }
+         logical_cmds += repeat;
+         if ((i % 5000) == 0) {
+ #ifdef SIM_INTERFACE_DE10
+@@ -615,6 +684,7 @@ int main(int argc, char **argv) {
                          swap_cmd_count++;
                          have_presented_offset = true;
                          presented_offset = pre_swap_draw_offset;
@@ -118,7 +137,7 @@ index a24d46b..9cf9c58 100644
                      }
                      break;
                  }
-@@ -1273,6 +1331,25 @@ int main(int argc, char **argv) {
+@@ -1273,6 +1343,25 @@ int main(int argc, char **argv) {
                      fb_offset, presented_changed, total, (presented_changed * 100.0) / total,
                      other_offset, other_changed, total, (other_changed * 100.0) / total);
          }
