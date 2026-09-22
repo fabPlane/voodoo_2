@@ -1,3 +1,23 @@
+diff --git a/emu/glide/glide2x/sst1/glide/src/ditex.c b/emu/glide/glide2x/sst1/glide/src/ditex.c
+index 4ba572d..34818c6 100644
+--- a/emu/glide/glide2x/sst1/glide/src/ditex.c
++++ b/emu/glide/glide2x/sst1/glide/src/ditex.c
+@@ -217,7 +217,14 @@ FxU32 _gr_aspect_xlate_table[] =
+ 
+ FxU32 _gr_evenOdd_xlate_table[] = 
+ {
+-  0xFFFFFFFF,                      /* invalid */
++  /*
++   * Index 0 is "no mask yet". It used to be 0xFFFFFFFF, and grTexCombine
++   * ORs this entry in before grTexSource has stored a real mask. That set
++   * SST_TMULTIBASEADDR (and every other high tLOD bit). Later grTexSource
++   * keeps those bits, so every mip below LOD 0 was fetched from texture
++   * address 0. A missing mask contributes no bits.
++   */
++  0,                               /* invalid / not yet set */
+   SST_LOD_TSPLIT,                  /* even */
+   SST_LOD_TSPLIT | SST_LOD_ODD,    /* odd  */
+   0,                               /* both */
 diff --git a/emu/glide/glide2x/sst1/init/init.c b/emu/glide/glide2x/sst1/init/init.c
 index 1a3adf0..54ed2c8 100644
 --- a/emu/glide/glide2x/sst1/init/init.c
@@ -20,7 +40,7 @@ index 1a3adf0..54ed2c8 100644
            hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRev    = info.fbiRevision;
            hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRam    = info.fbiMemSize;
 diff --git a/emu/test/ref_model.c b/emu/test/ref_model.c
-index 3f1a2a8..732f070 100644
+index 3f1a2a8..43a3797 100644
 --- a/emu/test/ref_model.c
 +++ b/emu/test/ref_model.c
 @@ -411,6 +411,21 @@ void voodoo_recalc(voodoo_t *voodoo)
@@ -45,6 +65,54 @@ index 3f1a2a8..732f070 100644
  }
  
  /* -------------------------------------------------------------------
+@@ -431,6 +446,11 @@ void voodoo_queue_triangle(voodoo_t *voodoo, voodoo_params_t *params)
+ 
+     ref_trace_begin_triangle();
+ 
++    uint32_t saved_lod  = params->tLOD[0];
++    uint32_t saved_mode = params->textureMode[0];
++    int      saved_fmt  = params->tformat[0];
++    int      patched    = voodoo_apply_download_layout(voodoo);
++
+     voodoo_use_texture(voodoo, params, 0);
+     if (voodoo->dual_tmus)
+         voodoo_use_texture(voodoo, params, 1);
+@@ -440,6 +460,13 @@ void voodoo_queue_triangle(voodoo_t *voodoo, voodoo_params_t *params)
+     memcpy(&voodoo->params_buffer[0], params, sizeof(voodoo_params_t));
+     voodoo_triangle(voodoo, &voodoo->params_buffer[0], 0);
+ 
++    if (patched) {
++        params->tLOD[0]        = saved_lod;
++        params->textureMode[0] = saved_mode;
++        params->tformat[0]     = saved_fmt;
++        voodoo_recalc_tex12(voodoo, 0);
++    }
++
+     if (params->fbzColorPath & FBZCP_TEXTURE_ENABLED)
+         ref_triangles_textured++;
+     else
+@@ -564,8 +591,10 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+     voodoo->texture_size = tex_size_mb * 1024 * 1024;
+     voodoo->texture_mask = voodoo->texture_size - 1;
+     voodoo->tex_mem[0]   = (uint8_t *)calloc(1, voodoo->texture_size);
++    voodoo->tex_mem[1]   = (uint8_t *)calloc(1, voodoo->texture_size);
+     voodoo->tex_mem_w[0] = (uint16_t *)voodoo->tex_mem[0];
+-    if (!voodoo->tex_mem[0]) return -1;
++    voodoo->tex_mem_w[1] = (uint16_t *)voodoo->tex_mem[1];
++    if (!voodoo->tex_mem[0] || !voodoo->tex_mem[1]) return -1;
+ 
+     /* Texture cache: allocate data buffers for each cache entry.
+      * Size must hold all LOD levels: 256*256 *2 + 128*128 + 64*64 + ... + 2*2 */
+@@ -573,7 +602,9 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+                              32*32 + 16*16 + 8*8 + 4*4 + 2*2) * sizeof(uint32_t);
+     for (int i = 0; i < TEX_CACHE_MAX; i++) {
+         voodoo->texture_cache[0][i].data = (uint32_t *)calloc(1, tex_cache_size);
++        voodoo->texture_cache[0][i].base = -1;
+         voodoo->texture_cache[1][i].data = (uint32_t *)calloc(1, tex_cache_size);
++        voodoo->texture_cache[1][i].base = -1;
+     }
+ 
+     voodoo->initEnable = 0x07;  /* Enable fbiInit writes */
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
 index a24d46b..5ca2ad0 100644
 --- a/emu/test/trace_test.cpp

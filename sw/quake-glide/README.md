@@ -113,8 +113,15 @@ as patches applied to the vendored submodules (idempotently, by `build.sh`):
    `trace_test` now displays that one. `--dump-frames DIR` applies the same
    choice on every swap and writes a PNG, which is how `capture-demo.sh`
    builds a gameplay clip.
+4. **Texture layout on replay** (`86box-texture-layout.patch`,
+   `vid_voodoo_texture.c`, plus the even/odd mask and a second texture RAM in
+   `spinalvoodoo-glquake.patch`). See ISSUES.md E5. Draw-time `tLOD` had
+   multibase set with every extra base at 0, page flushes replayed bytes Glide
+   never wrote, and TMU1 downloads shared TMU0's RAM. Some images (the status
+   bar) were then sampled with a different aspect and format than the download
+   that stored them.
 
-These are general improvements (memory reporting, rasterizer bounds-safety,
-frame selection), not Quake-specific hacks; they belong upstream in
-SpinalVoodoo/86Box and are kept here as patches only because those are vendored
-submodules.
+Items 1–3 are general (memory reporting, rasterizer bounds, frame selection).
+Item 4 is the replay of this trace: the even/odd mask belongs in Glide, and
+the draw-versus-download layout override compensates for registers already
+recorded. They are patches because SpinalVoodoo and 86Box are vendored.

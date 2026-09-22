@@ -226,6 +226,47 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
   at trace start, and clip Y in `voodoo_half_triangle` the same way. Turning
   `gl_ztrick` off only hides the symptom.
 
+### E5. **[UPSTREAM]** Speckled world colours and a garbled status bar
+- **Symptom:** after the depth-buffer false colour (E4) is gone, walls are
+  still high-frequency green/yellow noise and the status bar is not the brown
+  Quake sbar. Saturated greens such as (64, 192, 64) show up in the view. A
+  lightmap multiply cannot raise a channel above the base texture, so those
+  pixels are a replaced sample, not a blend.
+- **Root cause:** three gaps in how the recorded trace is replayed.
+  1. Glide's even/odd table entry 0 was `0xFFFFFFFF`. `grTexCombine` ORs that
+     in before a texture has a real mask, and `grTexSource` keeps the bits it
+     does not replace, so draw-time `tLOD` has `SST_TMULTIBASEADDR` set.
+     `texBaseAddr1/2/38` are 0. Honouring the bit fetches every mip below LOD 0
+     from texture address 0.
+  2. `fxsim` flushes every dword of a dirty 4 KB page. SST-1 8-bit downloads
+     write texels at +0 and +8 and leave +4/+12 unused; replaying the hole
+     replaces the lightmap. Narrower levels also have a 512-byte PCI row
+     stride, so the page tail decodes as `s`/`t` past the level and spills
+     into the next texture. Mesa also downloads through the TMU1 PCI aperture
+     (`addr` bit 21) while the board is one TMU. Folding that aperture onto
+     TMU0 writes over textures that share the byte offset, including the
+     early status bar.
+  3. The draw registers for some 2D images do not match the download that
+     stored the texels. From swap 51 the full status bar is byte base
+     `0x1495b0`: 4096 dwords of RGB565, 256×32 (8:1). The triangle samples it
+     as square ARGB4444 LOD 1, which reads a different address and decodes
+     the bytes as the wrong format. The number glyphs are the same kind of
+     mismatch (downloaded 4444, drawn as RGB565).
+- **Workaround:** `patches/spinalvoodoo-glquake.patch` makes even/odd index 0
+  contribute no bits (future captures) and allocates a second texture RAM in
+  the reference model. `patches/86box-texture-layout.patch` honours multibase
+  only when an extra base was written, drops 8-bit hole dwords and out-of-range
+  row tails, keeps TMU1 downloads in their own RAM, and decodes a triangle with
+  the download's aspect and format when those disagree with the draw state.
+  The live registers are restored after the triangle so the override does not
+  leak. Replaying this trace: the bright greens are gone, and the status-bar
+  rows are the brown sbar (about 90% of HUD pixels).
+- **Proper fix (upstream):** the even/odd table in Glide, and a trace that
+  records which TMU a download targeted without folding it onto TMU0. The
+  draw-versus-download layout override is a replay compensation for registers
+  already in this trace; a recapture after the Glide/Mesa state is corrected
+  should not need it.
+
 ---
 
 ## F. Capture / rendering workflow

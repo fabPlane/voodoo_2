@@ -48,18 +48,21 @@ apply_patch() { # <repo-dir> <patch> <sentinel-file> <sentinel-string>
 }
 
 stage_patches() {
-  # 1. libglide2x: report a sane 2MB Voodoo1 memory size (fxMesa sizes its
-  #    texture heap from grTexMaxAddress) + trace_test back-buffer fallback and
-  #    per-swap PNG dump (--dump-frames). The sentinel is the dump-frames flag
-  #    so an older revision of this patch (memory clamp only) gets replaced.
+  # 1. libglide2x memory size, trace_test dump, ref-model screen size, and
+  #    the even/odd tLOD mask. The sentinel is the ditex mask fix so an older
+  #    revision of this patch (dump-frames / videoDimensions only) is replaced.
   local tt="emu/test/trace_test.cpp"
-  if grep -q "dump_frames_dir" "$EXT/$tt" 2>/dev/null; then
+  local ditex="emu/glide/glide2x/sst1/glide/src/ditex.c"
+  if grep -q "A missing mask contributes no bits" "$EXT/$ditex" 2>/dev/null; then
     echo "[quake-glide] patch already applied: spinalvoodoo-glquake.patch"
   else
-    if grep -q "simulator backend cannot probe" \
+    if grep -q "dump_frames_dir" "$EXT/$tt" 2>/dev/null || \
+       grep -q "simulator backend cannot probe" \
          "$EXT/emu/glide/glide2x/sst1/init/init.c" 2>/dev/null; then
-      echo "[quake-glide] refreshing spinalvoodoo-glquake.patch (dump-frames)"
-      git -C "$EXT" checkout -- emu/glide/glide2x/sst1/init/init.c "$tt"
+      echo "[quake-glide] refreshing spinalvoodoo-glquake.patch"
+      git -C "$EXT" checkout -- \
+        emu/glide/glide2x/sst1/init/init.c \
+        "$ditex" "$tt" emu/test/ref_model.c
     fi
     echo "[quake-glide] applying spinalvoodoo-glquake.patch"
     git -C "$EXT" apply "$HERE/patches/spinalvoodoo-glquake.patch"
@@ -68,7 +71,11 @@ stage_patches() {
   #    path + clamp the span) so unclipped off-screen GL triangles can't crash.
   apply_patch "$EBOX" "$HERE/patches/86box-render-robustness.patch" \
     "src/video/vid_voodoo_render.c" "Safety net for reference-model robustness"
-  # 3. CoreSim HDMI tie-off so the sim top elaborates (shared with homebrew).
+  # 3. Texture RAM: separate TMU aperture, drop page-flush holes, and sample
+  #    a texture with the layout it was downloaded in.
+  apply_patch "$EBOX" "$HERE/patches/86box-texture-layout.patch" \
+    "src/video/vid_voodoo_texture.c" "Keep TMU1 downloads in their own RAM"
+  # 4. CoreSim HDMI tie-off so the sim top elaborates (shared with homebrew).
   if [ -f "$REPO/sw/glide-homebrew/render/coresim-hdmi.patch" ] && \
      ! grep -q 'io.hdmi.clock' "$EXT/src/voodoo/CoreSim.scala"; then
     git -C "$EXT" apply "$REPO/sw/glide-homebrew/render/coresim-hdmi.patch"
