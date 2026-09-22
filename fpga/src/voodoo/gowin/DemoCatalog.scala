@@ -1,10 +1,11 @@
 package voodoo.gowin
 
-/** Console menu: Glide2x SDK tests on the root list, publisher DOS demos
-  * under OTHER DEMOS. Playable items are packed SST-1 streams walked by
-  * DemoAxiLitePlayer. Official `grSplash` / `traces/logo` is ~100k PCI
-  * commands; the chevron stand-in is compact. Game demos have no on-chip
-  * capture — archives live in `sw/glide-demos/`.
+/** Console menu: Glide2x SDK tests plus original homebrew Glide demos
+  * (`sw/glide-homebrew/`, exercising fill rate / Z-buffer / alpha blending)
+  * on the root list, publisher DOS demos under OTHER DEMOS. Playable items are
+  * packed SST-1 streams walked by DemoAxiLitePlayer. Official `grSplash` /
+  * `traces/logo` is ~100k PCI commands; the chevron stand-in is compact. Game
+  * demos have no on-chip capture — archives live in `sw/glide-demos/`.
   */
 object DemoCatalog {
   case class Entry(
@@ -117,6 +118,51 @@ object DemoCatalog {
         " A = RUN   B = BACK"
       )
     ),
+    sdk(
+      "HOMEBREW  PINWHEEL",
+      "demo_hb_pinwheel.bin",
+      0,
+      "MANY TRIANGLES  FILL RATE",
+      Seq(
+        " HOMEBREW PINWHEEL",
+        "",
+        " MANY TRIANGLES / FRAME.",
+        " ORIGINAL MIT GLIDE2X DEMO.",
+        " SW/GLIDE-HOMEBREW HB04.",
+        "",
+        " A = RUN   B = BACK"
+      )
+    ),
+    sdk(
+      "HOMEBREW  DEPTH",
+      "demo_hb_depth.bin",
+      0,
+      "Z-BUFFER  DEPTH TEST",
+      Seq(
+        " HOMEBREW DEPTH",
+        "",
+        " Z-BUFFERED OVERLAP.",
+        " ORIGINAL MIT GLIDE2X DEMO.",
+        " SW/GLIDE-HOMEBREW HB05.",
+        "",
+        " A = RUN   B = BACK"
+      )
+    ),
+    sdk(
+      "HOMEBREW  ALPHA",
+      "demo_hb_alpha.bin",
+      0,
+      "SRC-ALPHA  BLENDING",
+      Seq(
+        " HOMEBREW ALPHA",
+        "",
+        " TRANSLUCENT BLENDING.",
+        " ORIGINAL MIT GLIDE2X DEMO.",
+        " SW/GLIDE-HOMEBREW HB06.",
+        "",
+        " A = RUN   B = BACK"
+      )
+    ),
     Entry(
       "OTHER  DEMOS",
       None,
@@ -163,7 +209,10 @@ object DemoCatalog {
   val test04Index: Int = 1
   val test16Index: Int = 2
   val alphabetIndex: Int = 3
-  val otherDemosIndex: Int = 4
+  val hbPinwheelIndex: Int = 4
+  val hbDepthIndex: Int = 5
+  val hbAlphaIndex: Int = 6
+  val otherDemosIndex: Int = 7
   val tombIndex: Int = 0
 
   val mainCount: Int = main.length
