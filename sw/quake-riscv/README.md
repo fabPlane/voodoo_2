@@ -27,10 +27,12 @@ make install-sd           # copy ELF onto the Console FAT32 card
 
 `make engine` is a host `quake-sw`. `make test-engine` runs a few frames of
 shareware `demo1.dem`. `make engine-rv32` uses the xPack `riscv-none-elf-gcc`
-under `.toolchains/` if it is not on PATH. Entry is `0x80000000`; shareware
-`pak0.pak` is a 20 MiB window at `0x82000000`. That image does not fit the
-32 KiB `BarRv32` BRAM. Live HDMI play still needs the AE350 A25 (or a bigger
-soft RV32) wired onto DDR in the bitstream.
+under `.toolchains/` if it is not on PATH. Entry is `0x80000000` with **256 MiB**
+of DDR (phys 16 MiB); shareware `pak0.pak` is a 32 MiB window at `0x90000000`.
+The 32 KiB `BarRv32` BRAM is only a smoke ROM. The board has ~1 GiB of DDR3 —
+this map spends 256 MiB on the software renderer and 256 MiB on V2GL replay
+(`0x11000000`). Live HDMI play still needs the AE350 A25 (or a bigger soft
+RV32) wired onto that DDR window in the bitstream.
 
 ## Layout
 
@@ -59,5 +61,7 @@ Glide2x lives in `ext/SpinalVoodoo/emu/glide/glide2x/sst1`. Hardware access is
 that HAL (FBI init, gouraud `ftriangleCMD`, `swapbufferCMD` at 0x128).
 
 The Console fabric does not instantiate the Andes A25 yet, so the FPGA menu
-opens info pages. The TangCore bitstream is `cores/console138k/voodootang.bin`;
-the A25 image sits next to it at `voodoo/quake/quake-sw.elf`.
+item **QUAKE RISC-V SW** opens an info page. The TangCore bitstream is
+`cores/console138k/voodootang.bin`; the A25 image sits next to it at
+`voodoo/quake/quake-sw.elf`. Packed Glide replays use **SD CARD PLAY** and
+`sw/glide-sd/`.

@@ -1,6 +1,7 @@
 #include "fxhal.h"
 #include "in_usb.h"
 #include "pak.h"
+#include "tang_mem.h"
 #include "vid_riscv.h"
 #include "voodoo_mmio.h"
 
@@ -110,6 +111,9 @@ int main(void) {
     }
     printf("quake-riscv: SW and Glide backends ok, shareware %s (%d files)\n",
            pak_path, pak_count());
+    printf("quake-riscv: DDR map ram=%#x+%uMiB pak=%#x play=%#x\n",
+           TANG_CPU_RAM_BASE, TANG_CPU_RAM_BYTES / (1024u * 1024u),
+           TANG_PAK_BASE, TANG_GLIDE_PLAY_PHYS);
     pak_close();
   }
   return 0;

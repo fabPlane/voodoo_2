@@ -1,13 +1,13 @@
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 
-/* Andes A25 / AE350 view of Console DDR. Voodoo keeps the first 16 MiB
- * (4 colour + 8 tex + pad). CPU image, heap and stack occupy 32 MiB at
- * 0x80000000 (identity-mapped onto phys 16 MiB). Shareware pak0.pak is a
- * separate 20 MiB window at 0x82000000 for the loader / SD DMA. */
+/* Andes A25 / larger soft RV32 view of Console DDR. Voodoo keeps the first
+ * 16 MiB. CPU image, heap and stack occupy 256 MiB at 0x80000000 (phys
+ * 16 MiB). Shareware pak0.pak is a 32 MiB window at 0x90000000. The 32 KiB
+ * BarRv32 BRAM is only a smoke ROM; this linker script is the DDR map. */
 MEMORY
 {
-  RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 32M
+  RAM (rwx) : ORIGIN = 0x80000000, LENGTH = 256M
 }
 
 SECTIONS
@@ -38,7 +38,7 @@ SECTIONS
   .heap (NOLOAD) : {
     . = ALIGN(16);
     _heap_start = .;
-    . += 8M;
+    . += 64M;
     _heap_end = .;
   } > RAM
 
