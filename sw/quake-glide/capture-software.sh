@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# One minute of the same shareware demo, software-rendered, for comparison
-# with the Voodoo/Glide clip from capture-demo.sh.
+# One minute of the shareware demo, software-rendered, for comparison with
+# the Voodoo/Glide clip from capture-demo.sh.
 #
-# The id GPL drop's Linux port is the GL/fxMesa backend only. The software
-# renderer here is tyrquake (a direct port of id's WinQuake software engine)
-# playing pak0's demo1, then demo2 and demo3 so the recording covers a full
-# minute. Frames are grabbed from a headless Xvfb.
+# The id GPL drop's Linux port is the GL/fxMesa backend only. This builds
+# tyrquake (a direct port of id's WinQuake software engine) with a headless
+# video driver that writes one PPM per frame. Fake DMA sound is required:
+# tyrquake's null sound driver otherwise leaves shm NULL and S_Init faults.
+# demo1, then demo2 and demo3, so the minute continues past the first demo.
 #
-#   ./capture-software.sh            # build tyrquake if needed, record 60s
+#   ./capture-software.sh
 #   SECS=60 ./capture-software.sh
 #
 set -euo pipefail
@@ -17,13 +18,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$HERE/work"
 SRC="$WORK/tyrquake"
 SECS="${SECS:-60}"
+FRAMES="${FRAMES:-$WORK/software-frames}"
 OUT="${OUT:-$HERE/shots/quake_demo_software.mp4}"
-DISPLAY_NUM="${DISPLAY_NUM:-99}"
-
-if ! command -v Xvfb >/dev/null 2>&1; then
-  echo "[capture-software] Xvfb is required" >&2
-  exit 1
-fi
 
 mkdir -p "$WORK/q/id1"
 if [ ! -f "$WORK/q/id1/pak0.pak" ]; then
@@ -40,42 +36,37 @@ if [ ! -d "$SRC/.git" ]; then
   git clone --depth 1 https://github.com/sezero/tyrquake.git "$SRC"
 fi
 
-if [ ! -x "$SRC/tyr-quake" ]; then
-  echo "[capture-software] building tyr-quake (software renderer)..."
-  sudo apt-get install -y --no-install-recommends libsdl2-dev >/dev/null
-  make -C "$SRC" tyr-quake
+if ! grep -q 'QUAKE_FRAME_DIR' "$SRC/common/vid_null.c" 2>/dev/null; then
+  echo "[capture-software] applying frame-dump patch..."
+  git -C "$SRC" apply "$HERE/patches/tyrquake-frame-dump.patch"
 fi
 
-# One X server for the recording. Reuse it if this display is already up.
-if ! xdpyinfo -display ":$DISPLAY_NUM" >/dev/null 2>&1; then
-  Xvfb ":$DISPLAY_NUM" -screen 0 640x480x24 >/tmp/xvfb-quake.log 2>&1 &
-  for _ in $(seq 1 50); do
-    xdpyinfo -display ":$DISPLAY_NUM" >/dev/null 2>&1 && break
-    sleep 0.1
-  done
+if [ ! -x "$SRC/bin/tyr-quake" ] || ! grep -q 'null_shm' "$SRC/common/snd_null.c"; then
+  echo "[capture-software] building tyr-quake (software, headless)..."
+  make -C "$SRC" -j"$(nproc)" \
+    VID_TARGET=null IN_TARGET=null SND_TARGET=null CD_TARGET=null bin/tyr-quake
 fi
 
-echo "[capture-software] recording ${SECS}s -> $OUT"
-mkdir -p "$(dirname "$OUT")"
-# Start the grabber first so the opening frames are not missed.
-ffmpeg -y -f x11grab -video_size 640x480 -framerate 20 -i ":$DISPLAY_NUM" \
-  -t "$SECS" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$OUT" \
-  >/tmp/quake-software-ffmpeg.log 2>&1 &
-FFPID=$!
-sleep 1
+rm -rf "$FRAMES"
+mkdir -p "$FRAMES" "$(dirname "$OUT")"
+echo "[capture-software] recording ${SECS}s of game time -> $FRAMES"
 set +e
-DISPLAY=":$DISPLAY_NUM" SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
-  "$SRC/tyr-quake" -basedir "$WORK/q" -width 320 -height 240 -window \
+QUAKE_FRAME_DIR="$FRAMES" QUAKE_MAX_SECONDS="$SECS" \
+  "$SRC/bin/tyr-quake" -basedir "$WORK/q" \
   +playdemo demo1 +playdemo demo2 +playdemo demo3 \
-  >/tmp/quake-software.log 2>&1 &
-QPID=$!
+  >/tmp/quake-software.log 2>&1
 set -e
-# Let ffmpeg own the duration. If Quake exits early the last frame stays up.
-wait "$FFPID" || true
-if kill -0 "$QPID" 2>/dev/null; then
-  kill "$QPID" 2>/dev/null || true
-  wait "$QPID" 2>/dev/null || true
-fi
 echo "[capture-software] quake log tail:"
 tail -15 /tmp/quake-software.log || true
+
+n="$(find "$FRAMES" -name 'frame_*.ppm' | wc -l)"
+if [ "$n" -lt 1 ]; then
+  echo "[capture-software] no frames written" >&2
+  exit 1
+fi
+fps="$(python3 -c "print(max(1.0, $n / float($SECS)))")"
+echo "[capture-software] encoding $n frames at ${fps} fps -> $OUT"
+ffmpeg -y -framerate "$fps" -i "$FRAMES/frame_%05d.ppm" \
+  -vf "scale=640:400:flags=neighbor" \
+  -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$OUT"
 ls -lh "$OUT"

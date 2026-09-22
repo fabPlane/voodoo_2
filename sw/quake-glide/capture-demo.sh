@@ -55,7 +55,7 @@ case "${1:-all}" in
     rm -rf "$FRAMES"
     mkdir -p "$FRAMES"
     echo "[capture-demo] replaying trace to $FRAMES (this is the slow part)"
-    /usr/bin/time -v "$TT" "$WORK/glquake.trace" \
+    timeout 2400 "$TT" "$WORK/glquake.trace" \
       --ref-only --dump-frames "$FRAMES" --output-dir "$FRAMES" \
       >"$FRAMES/render.log" 2>&1 || {
         echo "[capture-demo] trace_test failed; see $FRAMES/render.log" >&2
