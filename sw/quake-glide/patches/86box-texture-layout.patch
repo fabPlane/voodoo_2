@@ -1,0 +1,264 @@
+diff --git a/src/include/86box/vid_voodoo_texture.h b/src/include/86box/vid_voodoo_texture.h
+index 639001a..e6c6b8b 100644
+--- a/src/include/86box/vid_voodoo_texture.h
++++ b/src/include/86box/vid_voodoo_texture.h
+@@ -33,6 +33,7 @@ static const uint32_t texture_offset[LOD_MAX + 3] = {
+ void voodoo_recalc_tex12(voodoo_t *voodoo, int tmu);
+ void voodoo_recalc_tex3(voodoo_t *voodoo, int tmu);
+ void voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu);
++int  voodoo_apply_download_layout(voodoo_t *voodoo);
+ void voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv);
+ void flush_texture_cache(voodoo_t *voodoo, uint32_t dirty_addr, int tmu);
+ 
+diff --git a/src/video/vid_voodoo_texture.c b/src/video/vid_voodoo_texture.c
+index 7651866..a094fd9 100644
+--- a/src/video/vid_voodoo_texture.c
++++ b/src/video/vid_voodoo_texture.c
+@@ -74,12 +74,25 @@ voodoo_recalc_tex12(voodoo_t *voodoo, int tmu)
+         shift -= aspect;
+     }
+ 
++    /*
++     * SST_TMULTIBASEADDR selects a separate base for LOD 1, 2 and 3-8.
++     * Glide's even/odd table entry 0 is 0xFFFFFFFF, and grTexCombine ORs
++     * that in before a texture has a real even/odd mask. grTexSource then
++     * keeps every bit it does not replace, so draw-time tLOD has the
++     * multibase bit set even though the mip chain was downloaded as one
++     * image and texBaseAddr1/2/38 were never written. Honouring the bit
++     * sends every mip below LOD 0 to texture address 0.
++     */
++    const int multibase = (voodoo->params.tLOD[tmu] & LOD_TMULTIBASEADDR) &&
++        (voodoo->params.texBaseAddr1[tmu] || voodoo->params.texBaseAddr2[tmu] ||
++         voodoo->params.texBaseAddr38[tmu]);
++
+     if ((voodoo->params.tLOD[tmu] & LOD_SPLIT) && (voodoo->params.tLOD[tmu] & LOD_ODD)) {
+         width >>= 1;
+         height >>= 1;
+         shift--;
+         tex_lod++;
+-        if (voodoo->params.tLOD[tmu] & LOD_TMULTIBASEADDR)
++        if (multibase)
+             base = voodoo->params.texBaseAddr1[tmu];
+     }
+ 
+@@ -120,7 +133,7 @@ voodoo_recalc_tex12(voodoo_t *voodoo, int tmu)
+                     tex_lod++;
+                 }
+ 
+-                if (voodoo->params.tLOD[tmu] & LOD_TMULTIBASEADDR) {
++                if (multibase) {
+                     switch (tex_lod) {
+                         case 0:
+                             base = voodoo->params.texBaseAddr[tmu];
+@@ -193,8 +206,11 @@ voodoo_recalc_tex3(voodoo_t *voodoo, int tmu)
+ #if 0
+     voodoo_texture_log("TMU %i:    %08x\n", tmu, voodoo->params.textureMode[tmu]);
+ #endif
++    const int multibase3 = (voodoo->params.tLOD[tmu] & LOD_TMULTIBASEADDR) &&
++        (voodoo->params.texBaseAddr1[tmu] || voodoo->params.texBaseAddr2[tmu] ||
++         voodoo->params.texBaseAddr38[tmu]);
+     for (lod = 0; lod <= LOD_MAX + 1; lod++) {
+-        if (voodoo->params.tLOD[tmu] & LOD_TMULTIBASEADDR) {
++        if (multibase3) {
+             switch (tex_lod) {
+                 case 0:
+                     base = voodoo->params.texBaseAddr[tmu];
+@@ -237,6 +253,92 @@ voodoo_recalc_tex3(voodoo_t *voodoo, int tmu)
+ 
+ #define makergba(r, g, b, a) ((b) | ((g) << 8) | ((r) << 16) | ((a) << 24))
+ 
++/*
++ * Mesa downloads some textures through the TMU1 PCI aperture even though
++ * this board is configured with one TMU. The register file is broadcast,
++ * so a draw names the texture by texBaseAddr alone. Remember which
++ * aperture each base was written to; the two RAMs overlap in address.
++ */
++#define TEX_APERTURE_N 512
++static uint32_t tex_aperture_base[TEX_APERTURE_N];
++static uint32_t tex_download_lod[TEX_APERTURE_N];
++static uint8_t  tex_download_fmt[TEX_APERTURE_N];
++static uint8_t  tex_aperture_tmu[TEX_APERTURE_N];
++static uint8_t  tex_aperture_used[TEX_APERTURE_N];
++static uint8_t  tex_download_valid[TEX_APERTURE_N];
++
++static int
++voodoo_tex_slot(uint32_t base, int create)
++{
++    uint32_t slot = (base >> 4) & (TEX_APERTURE_N - 1);
++
++    for (int n = 0; n < TEX_APERTURE_N; n++) {
++        uint32_t i = (slot + n) & (TEX_APERTURE_N - 1);
++
++        if (tex_aperture_used[i] && tex_aperture_base[i] == base)
++            return (int) i;
++        if (!tex_aperture_used[i]) {
++            if (!create)
++                return -1;
++            tex_aperture_used[i] = 1;
++            tex_aperture_base[i] = base;
++            return (int) i;
++        }
++    }
++    return -1;
++}
++
++static void
++voodoo_note_tex_aperture(uint32_t base, int tmu)
++{
++    int i = voodoo_tex_slot(base, 1);
++    if (i < 0)
++        return;
++    tex_aperture_tmu[i] = (uint8_t) tmu;
++}
++
++static int
++voodoo_tex_aperture(uint32_t base)
++{
++    int i = voodoo_tex_slot(base, 0);
++    if (i < 0)
++        return 0;
++    return tex_aperture_tmu[i];
++}
++
++/*
++ * Glide's draw-time tLOD/textureMode for some 2D images does not match
++ * the download that actually stored the texels (wide RGB565 status bar
++ * sampled later as a square 4444 level). Remember the download's aspect
++ * and format and apply them while this triangle is decoded.
++ * Returns 1 if params were changed; caller restores after the snapshot.
++ */
++int
++voodoo_apply_download_layout(voodoo_t *voodoo)
++{
++    uint32_t base = voodoo->params.texBaseAddr[0];
++    int      i    = voodoo_tex_slot(base, 0);
++    uint32_t draw_lod, dl_lod;
++    int      draw_fmt, dl_fmt;
++
++    if (i < 0 || !tex_download_valid[i])
++        return 0;
++    draw_lod = voodoo->params.tLOD[0];
++    dl_lod   = tex_download_lod[i];
++    draw_fmt = voodoo->params.tformat[0];
++    dl_fmt   = tex_download_fmt[i];
++    if (((draw_lod ^ dl_lod) & 0x00700000) == 0 && draw_fmt == dl_fmt)
++        return 0;
++
++    voodoo->params.tLOD[0] &= ~0x00700fffu;
++    voodoo->params.tLOD[0] |= dl_lod & 0x00700fff;
++    voodoo->params.tformat[0] = dl_fmt;
++    voodoo->params.textureMode[0] &= ~(0xfu << 8);
++    voodoo->params.textureMode[0] |= (dl_fmt & 0xf) << 8;
++    voodoo_recalc_tex12(voodoo, 0);
++    return 1;
++}
++
+ void
+ voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
+ {
+@@ -294,6 +396,20 @@ voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
+ 
+     c = voodoo->texture_last_removed;
+ 
++    /*
++     * Decode from the aperture that was actually downloaded. Sampling
++     * stays on this TMU so the S/T iterators do not switch to TMU1.
++     */
++    uint8_t *saved_tex = NULL;
++    int      src_tmu   = tmu;
++    if (!voodoo->dual_tmus && tmu == 0)
++        src_tmu = voodoo_tex_aperture(params->texBaseAddr[tmu]);
++    if (src_tmu != tmu && voodoo->tex_mem[src_tmu]) {
++        saved_tex              = voodoo->tex_mem[tmu];
++        voodoo->tex_mem[tmu]   = voodoo->tex_mem[src_tmu];
++        voodoo->tex_mem_w[tmu] = (uint16_t *) voodoo->tex_mem[src_tmu];
++    }
++
+     if ((voodoo->params.tLOD[tmu] & LOD_SPLIT) && (voodoo->params.tLOD[tmu] & LOD_ODD) && (voodoo->params.tLOD[tmu] & LOD_TMULTIBASEADDR))
+         voodoo->texture_cache[tmu][c].base = params->texBaseAddr1[tmu];
+     else
+@@ -546,6 +662,11 @@ voodoo_use_texture(voodoo_t *voodoo, voodoo_params_t *params, int tmu)
+ 
+     params->tex_entry[tmu] = c;
+     voodoo->texture_cache[tmu][c].refcount++;
++
++    if (saved_tex) {
++        voodoo->tex_mem[tmu]   = saved_tex;
++        voodoo->tex_mem_w[tmu] = (uint16_t *) saved_tex;
++    }
+ }
+ 
+ void
+@@ -604,8 +725,22 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
+ 
+     tmu = (addr & 0x200000) ? 1 : 0;
+ 
+-    if (tmu && !voodoo->dual_tmus)
++    /*
++     * Keep TMU1 downloads in their own RAM. Mesa allocates that aperture
++     * independently, and folding it onto TMU0 writes over textures that
++     * share the same byte offset (the status bar was one of them).
++     */
++    if (tmu && !voodoo->dual_tmus && !voodoo->tex_mem[1])
+         return;
++    voodoo_note_tex_aperture(voodoo->params.texBaseAddr[0], tmu);
++    if ((voodoo->params.textureMode[0] & ~0xF00u) == 0 && voodoo->params.textureMode[0] != 0) {
++        int slot = voodoo_tex_slot(voodoo->params.texBaseAddr[0], 0);
++        if (slot >= 0) {
++            tex_download_lod[slot]   = voodoo->params.tLOD[0];
++            tex_download_fmt[slot]   = (uint8_t) voodoo->params.tformat[0];
++            tex_download_valid[slot] = 1;
++        }
++    }
+ 
+     if (voodoo->type < VOODOO_BANSHEE) {
+         if (!(voodoo->params.tformat[tmu] & 8) && voodoo->type >= VOODOO_BANSHEE) {
+@@ -620,12 +755,33 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
+         else {
+             if ((voodoo->params.textureMode[tmu] & (1 << 31)) || voodoo->type >= VOODOO_BANSHEE)
+                 s = addr & 0xfc;
+-            else
++            else {
++                /*
++                 * SST-1 8-bit downloads write two texels dwords at +0 and +8
++                 * and leave +4/+12 unused. A trace flush of the whole page
++                 * replays those holes, and (addr>>1)&~3 maps +4 onto the same
++                 * texel as +0, so the stale word replaces the lightmap.
++                 * Sequential 8-bit mode (textureMode bit 31) really does write
++                 * every dword.
++                 */
++                if (addr & 4)
++                    return;
+                 s = (addr >> 1) & 0xfc;
++            }
+         }
+         if (lod > LOD_MAX)
+             return;
+ 
++        /*
++         * Glide's PCI row stride is 512 bytes. A trace flush writes the
++         * whole dirty page, including the unused tail of a narrower level.
++         * Those addresses decode as s or t past the level and spill into
++         * the next texture. Glide never stored a texel there.
++         */
++        if (s >= (voodoo->params.tex_w_mask[tmu][lod] + 1) ||
++            t >= (voodoo->params.tex_h_mask[tmu][lod] + 1))
++            return;
++
+ #if 0
+         if (addr >= 0x200000)
+             return;
+@@ -644,6 +800,13 @@ voodoo_tex_writel(uint32_t addr, uint32_t val, void *priv)
+ #endif
+         flush_texture_cache(voodoo, addr & voodoo->texture_mask, tmu);
+     }
++    /*
++     * Single-TMU replay decodes whichever aperture holds the base into
++     * the TMU0 cache. A write into the other RAM has to drop that copy.
++     */
++    if (!voodoo->dual_tmus && tmu == 1 &&
++        voodoo->texture_present[0][(addr & voodoo->texture_mask) >> TEX_DIRTY_SHIFT])
++        flush_texture_cache(voodoo, addr & voodoo->texture_mask, 0);
+     if (voodoo->type == VOODOO_3 && voodoo->texture_present[tmu ^ 1][(addr & voodoo->texture_mask) >> TEX_DIRTY_SHIFT]) {
+ #if 0
+         voodoo_texture_log("texture_present at %08x %i\n", addr, (addr & voodoo->texture_mask) >> TEX_DIRTY_SHIFT);
