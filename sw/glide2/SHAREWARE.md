@@ -107,7 +107,7 @@ Software mode first (desktop X11 capture), then Glide.
 
 | App | How | Result |
 | --- | --- | --- |
-| Quake II Test | Wine, `+set vid_ref soft +set vid_fullscreen 0 +map demo1` | Windowed 320×240. Loads `ref_soft.dll`, draws demo1 with HUD (health 100, blaster). |
+| Quake II Test | Wine, `+set vid_ref soft +set vid_fullscreen 0 +map demo1` | Windowed 320×240. Loads `ref_soft.dll`. After ~60s of walking, health 104 in a later room. |
 | Quake 1.06 shareware | DOSBox, `QUAKE.EXE -nosound -nocdaudio +map start` | Start map with shotgun HUD (25 shells, 100 health, 25 armor). |
 | MDK demo | DOSBox, `MDKDEMO.EXE` (Win95 DirectX path stays black under Wine) | Shiny Entertainment splash, then HMI Sound Setup. No Glide. |
 
@@ -115,7 +115,7 @@ Software mode first (desktop X11 capture), then Glide.
 
 | App | Exit | Trace cut | Replay |
 | --- | --- | --- | --- |
-| Quake II Test (`3dfxgl.dll`) | 143 | 6 swaps (~1.4GB raw, kept opening frames) | Frames 4–5 are in-level: blaster viewmodel, Strogg corridor, HUD. Strong green tint from the MiniGL/sim path. |
+| Quake II Test (`3dfxgl.dll`) | 143 | 16 swaps (~2.1GB raw) | Swaps 4–15 stay in-level. Later frames are a different room (crate + blaster). Green tint remains. MiniGL re-downloads textures every present, so a wall-clock minute of Glide capture is tens of gigabytes; 16 swaps is as deep as that prefix stays. |
 | GLQuake (MiniGL as `opengl32.dll`) | 143 | 12–16 swaps | Stays on the 3Dfx Voodoo console (`GL_VENDOR: 3Dfx Interactive Inc.`). Map/demo commands under Wine have not left the console yet. |
 | MDK | — | none | Not a Glide client. |
 
@@ -129,6 +129,21 @@ Software mode first (desktop X11 capture), then Glide.
 | `quake_soft_10s.mp4` | DOS Quake shareware, start map |
 | `mdk_demo_10s.mp4` | MDK DOS demo splash / sound setup |
 | `quake2_glide_gameplay_10s.mp4` | Quake II Glide, first in-level frames |
+| `quake2_soft_1min_in_10s.mp4` | Quake II software, ~60s into demo1 then 10s |
+| `quake2_glide_deeper_10s.mp4` | Quake II Glide, later of 16 in-level swaps |
 | `glquake_glide_console_10s.mp4` | GLQuake Glide MiniGL console |
 
-Logs: `runs/quake2-soft/`, `runs/quake-soft/`, `runs/quake2-glide/`, `runs/glquake-glide2/`, `runs/mdk-splash/`.
+`./sw/glide2/record-q2-deeper.sh` builds the two deeper Quake II clips.
+
+Logs: `runs/quake2-soft/`, `runs/quake-soft/`, `runs/quake2-glide/`, `runs/quake2-glide-deep/`, `runs/quake2-soft-deep2/`, `runs/glquake-glide2/`, `runs/mdk-splash/`.
+
+## Is the Glide2 port finished?
+
+The Windows capture path is in place and proven on one real MiniGL client:
+
+- `glide2x.dll` is a Win32 SST-1 / Glide2 build of the existing trace harness.
+- MiniGL's `_grFoo@N` imports resolve.
+- The 3dfx SDK tests draw through it.
+- Quake II Test's `3dfxgl.dll` loads it and presents in-level frames (green tint is a remaining render bug, not a load failure).
+
+That is not a finished port of every Glide2 title. GLQuake initializes the same MiniGL and has not left the console under Wine in the capped runs. MDK is DirectX, not Glide. Texture downloads make long Glide captures huge, so later-level Glide clips are more swaps of the same session, not a full minute of game time. Software Quake II is what actually walks a minute into the map.
