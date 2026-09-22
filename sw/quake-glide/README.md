@@ -46,6 +46,28 @@ SECS=2 ./build.sh       # seconds to free-run the start map (default 2)
 
 The result lands in `shots/glquake.trace_ref.png`.
 
+### Gameplay video
+
+`trace_test --dump-frames DIR` writes a PNG on every `swapbuffer` (carried in
+`patches/spinalvoodoo-glquake.patch`). `capture-demo.sh` plays shareware
+`demo1` through this path and encodes the frames.
+
+With `-no8bit`, Quake re-uploads textures as RGBA on a Voodoo1-class TMU, and
+the trace grows about half a gigabyte per second (ISSUES.md F3). Both clips
+default to about 10 seconds of shareware `demo1`, which is long enough to get
+past the loading plaque into the e1m3 flythrough and keeps the trace and the
+frame dump small.
+
+```bash
+./capture-demo.sh            # Voodoo reference-model clip  -> shots/glquake_demo1_voodoo.mp4
+./capture-software.sh        # tyrquake software clip       -> shots/quake_demo_software.mp4
+```
+
+The Voodoo clip is the 320×240 view cropped out of the 640×480 framebuffer.
+The software clip is tyrquake's native 320×200, scaled up with nearest-neighbor.
+A 10 s GLQuake capture is on the order of 2 GB and replays to about 10 s of
+video at the swap rate (~70 fps).
+
 ## How the build is put together
 
 - **Mesa 3.4.2** is the last Mesa whose `fx` driver targets **Glide2** (our
@@ -83,13 +105,24 @@ as patches applied to the vendored submodules (idempotently, by `build.sh`):
    crashed. The patch masks the colour base like the aux path and clamps the
    per-pixel span to the framebuffer row (advancing the interpolators exactly as
    the `clipLeft`/`clipRight` path does).
-3. **`trace_test` back-buffer fallback** (`spinalvoodoo-glquake.patch`,
-   `trace_test.cpp`). A static single-frame capture may be stopped with the
-   freshly-drawn frame still in the **back** buffer, leaving the recorded
-   "presented" buffer black. If the presented buffer is essentially all black
-   but the other buffer clearly has content, `trace_test` now displays that one.
+3. **`trace_test` back-buffer fallback and per-swap dump**
+   (`spinalvoodoo-glquake.patch`, `trace_test.cpp`). A static single-frame
+   capture may be stopped with the freshly-drawn frame still in the **back**
+   buffer, leaving the recorded "presented" buffer black. If the presented
+   buffer is essentially all black but the other buffer clearly has content,
+   `trace_test` now displays that one. `--dump-frames DIR` applies the same
+   choice on every swap and writes a PNG, which is how `capture-demo.sh`
+   builds a gameplay clip.
+4. **Texture layout on replay** (`86box-texture-layout.patch`,
+   `vid_voodoo_texture.c`, plus the even/odd mask and a second texture RAM in
+   `spinalvoodoo-glquake.patch`). See ISSUES.md E5. Draw-time `tLOD` had
+   multibase set with every extra base at 0, page flushes replayed bytes Glide
+   never wrote, and TMU1 downloads shared TMU0's RAM. Some images (the status
+   bar) were then sampled with a different LOD range, aspect, or format than
+   the download that stored them. A close-up of a texture whose finest stored
+   mip is LOD 2 was drawn with LOD min 0, which is the brief garbage texture.
 
-These are general improvements (memory reporting, rasterizer bounds-safety,
-frame selection), not Quake-specific hacks; they belong upstream in
-SpinalVoodoo/86Box and are kept here as patches only because those are vendored
-submodules.
+Items 1–3 are general (memory reporting, rasterizer bounds, frame selection).
+Item 4 is the replay of this trace: the even/odd mask belongs in Glide, and
+the draw-versus-download layout override compensates for registers already
+recorded. They are patches because SpinalVoodoo and 86Box are vendored.
