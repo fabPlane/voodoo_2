@@ -1,0 +1,86 @@
+diff --git a/src/video/vid_voodoo_render.c b/src/video/vid_voodoo_render.c
+index 9c1204b..a78fbe3 100644
+--- a/src/video/vid_voodoo_render.c
++++ b/src/video/vid_voodoo_render.c
+@@ -906,19 +906,78 @@ voodoo_half_triangle(voodoo_t *voodoo, voodoo_params_t *params, voodoo_state_t *
+             }
+         }
+ 
++        /*
++         * Safety net for reference-model robustness: some GL clients (notably
++         * Mesa's fxMesa fx driver, as used by GLQuake) emit triangles with
++         * hardware clipping disabled (fbzMode bit 0 clear) and vertices that
++         * project far off-screen. Without the clip above, the per-pixel span
++         * [x, x2) can run past the physical framebuffer row and read/write
++         * outside voodoo->fb_mem, crashing the model. Clamp the span to the
++         * framebuffer row (row_width is in bytes -> /2 pixels), advancing the
++         * colour/texture/depth interpolators for a left-edge clamp exactly as
++         * the clipLeft path does so on-screen pixels stay correct.
++         */
++        {
++            int fb_width = (int) (params->row_width >> 1);
++
++            if (state->xdir > 0) {
++                if (x < 0) {
++                    int dx = -x;
++
++                    state->ir += params->dRdX * dx;
++                    state->ig += params->dGdX * dx;
++                    state->ib += params->dBdX * dx;
++                    state->ia += params->dAdX * dx;
++                    state->z += params->dZdX * dx;
++                    state->tmu0_s += params->tmu[0].dSdX * dx;
++                    state->tmu0_t += params->tmu[0].dTdX * dx;
++                    state->tmu0_w += params->tmu[0].dWdX * dx;
++                    state->tmu1_s += params->tmu[1].dSdX * dx;
++                    state->tmu1_t += params->tmu[1].dTdX * dx;
++                    state->tmu1_w += params->tmu[1].dWdX * dx;
++                    state->w += params->dWdX * dx;
++
++                    x = 0;
++                }
++                if (x2 > fb_width)
++                    x2 = fb_width;
++            } else {
++                if (x >= fb_width) {
++                    int dx = (fb_width - 1) - x;
++
++                    state->ir += params->dRdX * dx;
++                    state->ig += params->dGdX * dx;
++                    state->ib += params->dBdX * dx;
++                    state->ia += params->dAdX * dx;
++                    state->z += params->dZdX * dx;
++                    state->tmu0_s += params->tmu[0].dSdX * dx;
++                    state->tmu0_t += params->tmu[0].dTdX * dx;
++                    state->tmu0_w += params->tmu[0].dWdX * dx;
++                    state->tmu1_s += params->tmu[1].dSdX * dx;
++                    state->tmu1_t += params->tmu[1].dTdX * dx;
++                    state->tmu1_w += params->tmu[1].dWdX * dx;
++                    state->w += params->dWdX * dx;
++
++                    x = fb_width - 1;
++                }
++                if (x2 < 0)
++                    x2 = 0;
++            }
++        }
++
+         if (x2 < x && state->xdir > 0)
+             goto next_line;
+         if (x2 > x && state->xdir < 0)
+             goto next_line;
+ 
+         if (SLI_ENABLED) {
+-            state->fb_mem = fb_mem = (uint16_t *) &voodoo->fb_mem[params->draw_offset + ((real_y >> 1) * params->row_width)];
++            state->fb_mem = fb_mem = (uint16_t *) &voodoo->fb_mem[(params->draw_offset + ((real_y >> 1) * params->row_width)) & voodoo->fb_mask];
+             state->aux_mem = aux_mem = (uint16_t *) &voodoo->fb_mem[(params->aux_offset + ((real_y >> 1) * params->row_width)) & voodoo->fb_mask];
+         } else {
+             if (params->col_tiled)
+-                state->fb_mem = fb_mem = (uint16_t *) &voodoo->fb_mem[params->draw_offset + (real_y >> 5) * params->row_width + (real_y & 31) * 128];
++                state->fb_mem = fb_mem = (uint16_t *) &voodoo->fb_mem[(params->draw_offset + (real_y >> 5) * params->row_width + (real_y & 31) * 128) & voodoo->fb_mask];
+             else
+-                state->fb_mem = fb_mem = (uint16_t *) &voodoo->fb_mem[params->draw_offset + (real_y * params->row_width)];
++                state->fb_mem = fb_mem = (uint16_t *) &voodoo->fb_mem[(params->draw_offset + (real_y * params->row_width)) & voodoo->fb_mask];
+             if (params->aux_tiled)
+                 state->aux_mem = aux_mem = (uint16_t *) &voodoo->fb_mem[(params->aux_offset + (real_y >> 5) * params->aux_row_width + (real_y & 31) * 128) & voodoo->fb_mask];
+             else
