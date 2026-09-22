@@ -19,6 +19,32 @@ index 1a3adf0..54ed2c8 100644
            hwInfo[numDevicesInSystem].hwDep.vgInfo.vgBaseAddr = (FxU32) base;
            hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRev    = info.fbiRevision;
            hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRam    = info.fbiMemSize;
+diff --git a/emu/test/ref_model.c b/emu/test/ref_model.c
+index 3f1a2a8..732f070 100644
+--- a/emu/test/ref_model.c
++++ b/emu/test/ref_model.c
+@@ -411,6 +411,21 @@ void voodoo_recalc(voodoo_t *voodoo)
+     voodoo->params.row_width      = voodoo->row_width;
+     voodoo->aux_row_width         = voodoo->row_width;
+     voodoo->params.aux_row_width  = voodoo->row_width;
++
++    /*
++     * Glide programs SST_videoDimensions before drawing, and the rasteriser's
++     * Y-origin flip is (v_disp - 1) - y. A trace that starts after that init
++     * write leaves v_disp at 0, so the flip sends every pixel to a negative
++     * row. The masked address then walks out of the depth buffer into the
++     * back colour buffer (GLQuake gl_ztrick GEQUAL frames show Z as colour).
++     * The colour buffer is buffer_offset bytes tall; use that as the screen
++     * when the register was never captured.
++     */
++    if (voodoo->videoDimensions == 0 && voodoo->row_width > 0 &&
++        buffer_offset >= voodoo->row_width) {
++        voodoo->h_disp = (int) (voodoo->row_width / 2);
++        voodoo->v_disp = (int) (buffer_offset / voodoo->row_width);
++    }
+ }
+ 
+ /* -------------------------------------------------------------------
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
 index a24d46b..5ca2ad0 100644
 --- a/emu/test/trace_test.cpp
