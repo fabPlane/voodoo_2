@@ -66,5 +66,6 @@ aliases. MinGW's own `grFoo` / `grFoo@N` exports stay, so the SDK tests and
 `glide2-clear.exe` still link.
 
 Shareware is the next client after the SDK tests. `./fetch-shareware.sh`
-downloads three archive.org apps and `./run-shareware.sh` launches them.
+downloads three archive.org apps, `./run-shareware.sh` launches them, and
+`./record-clips.sh` / `./record-q2-deeper.sh` write the 10s clips.
 What each one is, and how the run is set up, is in `SHAREWARE.md`.
