@@ -8,3 +8,6 @@
 [submodule "ext/tangcore"]
 	path = ext/tangcore
 	url = https://github.com/nand2mario/tangcore.git
+[submodule "ext/nostalgic-glide-demo"]
+	path = ext/nostalgic-glide-demo
+	url = https://github.com/efliks/nostalgic-glide-demo.git
