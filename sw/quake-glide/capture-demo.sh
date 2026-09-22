@@ -3,15 +3,14 @@
 # Capture a short GLQuake `demo1` clip through the Voodoo reference model and
 # encode it to MP4.
 #
-# A full minute is not replayable on this path. GLQuake with -no8bit re-uploads
-# every texture as RGBA into a Voodoo1-class TMU, so the command trace grows
-# about half a gigabyte per second and `trace_test` replay is linear in that
-# size (see ISSUES.md F3). SECS=12 is long enough for demo1 to finish loading
-# and reach the e1m3 flythrough (the "shells" / "Grenade Launcher" pickups).
-# capture-software.sh records a full minute of the software renderer.
+# GLQuake with -no8bit re-uploads every texture as RGBA into a Voodoo1-class
+# TMU, so the command trace grows about half a gigabyte per second and
+# `trace_test` replay is linear in that size (see ISSUES.md F3). The default
+# is about 10 seconds of demo1: long enough to finish loading and reach the
+# e1m3 flythrough, short enough to keep the trace and the frame dump small.
 #
 #   ./capture-demo.sh                 # build if needed, capture, encode
-#   SECS=12 ./capture-demo.sh         # wall-clock seconds of GLQuake
+#   SECS=10 ./capture-demo.sh         # wall-clock seconds of GLQuake
 #   ./capture-demo.sh encode          # re-encode shots/demo1-frames
 #
 set -euo pipefail
@@ -21,7 +20,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 EXT="$REPO/ext/SpinalVoodoo"
 WORK="$HERE/work"
 TT="$EXT/emu/test/obj_dir/trace_test"
-SECS="${SECS:-12}"
+SECS="${SECS:-10}"
 FRAMES="${FRAMES:-$HERE/shots/demo1-frames}"
 OUT="${OUT:-$HERE/shots/glquake_demo1_voodoo.mp4}"
 

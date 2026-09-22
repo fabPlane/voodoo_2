@@ -18,7 +18,7 @@
 #   ./build.sh run        # capture a trace (QUAKE_CMDS, default "map start")
 #   ./build.sh render     # just re-render the last captured trace
 #   SECS=2 ./build.sh     # seconds to free-run (default 2)
-#   QUAKE_CMDS='playdemo demo1' SECS=12 ./build.sh run
+#   QUAKE_CMDS='playdemo demo1' SECS=10 ./build.sh run
 #
 # Prereqs: Docker with the glide32 image (see docker/glide32.Dockerfile), the
 # ext/SpinalVoodoo submodule, and the multilib host toolchain from install.sh.

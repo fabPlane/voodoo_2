@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 #
-# One minute of the shareware demo, software-rendered, for comparison with
+# About 10 seconds of shareware demo1, software-rendered, for comparison with
 # the Voodoo/Glide clip from capture-demo.sh.
 #
 # The id GPL drop's Linux port is the GL/fxMesa backend only. This builds
 # tyrquake (a direct port of id's WinQuake software engine) with a headless
 # video driver that writes one PPM per frame. Fake DMA sound is required:
 # tyrquake's null sound driver otherwise leaves shm NULL and S_Init faults.
-# demo1, then demo2 and demo3, so the minute continues past the first demo.
+# demo1 is longer than the default capture, so the clip stays inside it.
 #
 #   ./capture-software.sh
-#   SECS=60 ./capture-software.sh
+#   SECS=10 ./capture-software.sh
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$HERE/work"
 SRC="$WORK/tyrquake"
-SECS="${SECS:-60}"
+SECS="${SECS:-10}"
 FRAMES="${FRAMES:-$WORK/software-frames}"
 OUT="${OUT:-$HERE/shots/quake_demo_software.mp4}"
 
@@ -53,7 +53,7 @@ echo "[capture-software] recording ${SECS}s of game time -> $FRAMES"
 set +e
 QUAKE_FRAME_DIR="$FRAMES" QUAKE_MAX_SECONDS="$SECS" \
   "$SRC/bin/tyr-quake" -basedir "$WORK/q" \
-  +playdemo demo1 +playdemo demo2 +playdemo demo3 \
+  +playdemo demo1 \
   >/tmp/quake-software.log 2>&1
 set -e
 echo "[capture-software] quake log tail:"

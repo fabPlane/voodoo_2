@@ -257,11 +257,10 @@ in SpinalVoodoo / 86Box; today they live as patches in `sw/quake-glide/patches/`
 - **Root cause:** every visible texture is re-uploaded as RGBA; a full Quake
   level has a lot of texture data.
 - **Workaround:** keep runs short (default 2 s); the start-map view is static so
-  a couple of seconds settles it. A gameplay clip (`capture-demo.sh`, default
-  12 s of `demo1`) is long enough to reach the e1m3 flythrough and still
-  replay in minutes. A full minute extrapolates to tens of gigabytes and hours
-  of replay, so the one-minute comparison is the software renderer
-  (`capture-software.sh`).
+  a couple of seconds settles it. Gameplay clips (`capture-demo.sh` and
+  `capture-software.sh`) default to about 10 s of `demo1`, long enough to
+  reach the e1m3 flythrough. The Voodoo trace for that window is about 2 GB
+  and replays in a few minutes.
 - **Proper fix:** dedupe/cache texture uploads in capture, or use the paletted
   path (see F1) to shrink traces. A Voodoo1 TMU is 2–4 MB, so an RGBA cache of
   a whole level still does not fit; dedupe has to drop textures the hardware
