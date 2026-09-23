@@ -1,6 +1,6 @@
 create_clock -name clk50 -period 20 -waveform {0 10} [get_ports {clk50}]
 create_clock -name clk100 -period 10.000 -waveform {0 5.000} [get_pins {u_pll_sys/u_pll/PLL_inst/CLKOUT0}]
-create_clock -name clk_core -period 33.333 -waveform {0 16.667} [get_pins {u_core_div/CLKOUT}]
+create_clock -name clk_core -period 50.000 -waveform {0 25.000} [get_pins {u_core_div/CLKOUT}]
 create_clock -name clk400 -period 3.333 -waveform {0 1.667} [get_pins {u_pll_sys/u_pll/PLL_inst/CLKOUT2}]
 create_clock -name clk_hdmi_serial -period 8.0 -waveform {0 4} [get_pins {u_pll_hdmi/u_pll/PLL_inst/CLKOUT0}]
 create_clock -name clk_hdmi_pixel -period 40.0 -waveform {0 20} [get_pins {u_hdmi_div/CLKOUT}]

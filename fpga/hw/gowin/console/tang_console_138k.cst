@@ -6,6 +6,12 @@
 IO_LOC "clk50" V22;
 IO_PORT "clk50" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=OFF;
 
+// These two data nets otherwise take primary clocks and the route stops
+// a few nets short. clk27 has to stay on a primary; a long-wire assignment
+// for it left hundreds of nets unrouted.
+CLOCK_LOC "u_voodoo/core_1/core_1_0/regBank/_zz_2" LOCAL_CLOCK;
+CLOCK_LOC "u_voodoo/core_1/core_1_0/pixelPipeline_1/triangleSetup_1/dxMagWork_15_6" LOCAL_CLOCK;
+
 IO_LOC "led_n[0]" G11;
 IO_LOC "led_n[1]" U12;
 IO_PORT "led_n[0]" IO_TYPE=LVCMOS33 DRIVE=4 PULL_MODE=NONE BANK_VCCIO=3.3;
@@ -73,6 +79,8 @@ IO_LOC "O_ddr_addr[12]" K4;
 IO_PORT "O_ddr_addr[12]" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
 IO_LOC "O_ddr_addr[13]" K1;
 IO_PORT "O_ddr_addr[13]" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC "O_ddr_addr[14]" D1;
+IO_PORT "O_ddr_addr[14]" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
 IO_LOC "O_ddr_ba[0]" P5;
 IO_PORT "O_ddr_ba[0]" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
 IO_LOC "O_ddr_ba[1]" P2;

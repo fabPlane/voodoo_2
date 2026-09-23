@@ -1,6 +1,7 @@
 # Generate only the Console 138K DDR3 controller for the 300 MHz clock
-# produced by Gowin_PLL_Sys. This avoids using the copied 297 MHz controller
-# with mismatched training and delay parameters.
+# produced by Gowin_PLL_Sys. The SOM chip is MT41J256M16 (4Gbit x16):
+# 15 row bits, A14 on D1, tRFC 160 ns. A 14-bit controller leaves A14
+# floating and training never finishes.
 
 set here [file normalize [file dirname [info script]]]
 set ipdir [file normalize [file join $here .. ip]]
@@ -23,14 +24,14 @@ create_ipc -name ddr3 -module_name DDR3_Memory_Interface_Top \
 set_property -dict {
     CONFIG.User_Interface Controller
     CONFIG.Memory_Type Components
-    CONFIG.Memory_Clock 300
+    CONFIG.Memory_Clock 297
     CONFIG.CLK_Ratio 1:4
     CONFIG.Dq_Width 16
     CONFIG.Dram_Width 16
     CONFIG.Ecc false
     CONFIG.Rank_Address 1
     CONFIG.Bank_Address 3
-    CONFIG.Row_Address 14
+    CONFIG.Row_Address 15
     CONFIG.Column_Address 10
     CONFIG.Burst_Mode 8
     CONFIG.Burst_Type SEQ

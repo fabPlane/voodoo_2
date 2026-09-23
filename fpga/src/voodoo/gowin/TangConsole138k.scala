@@ -289,13 +289,14 @@ case class TangConsole138k(c: Config) extends Component {
     nextR := 0
     nextG := 0
     nextB := 0
-    nextHs := False
-    nextVs := False
-    nextDe := False
+    // Always emit the local DMT counters. Switching hsync/vsync over to the
+    // core scanout drops the monitor even though that scanout is also
+    // 640x480; the two counters are not in phase. Core pixels are shown in
+    // the local raster, shifted by that phase, which still reads as a frame.
+    nextHs := scan.io.hSync
+    nextVs := scan.io.vSync
+    nextDe := scan.io.active
     when(overlay) {
-      nextHs := scan.io.hSync
-      nextVs := scan.io.vSync
-      nextDe := scan.io.active
       when(hud.io.hit) {
         nextR := hud.io.r
         nextG := hud.io.g
@@ -306,21 +307,9 @@ case class TangConsole138k(c: Config) extends Component {
         nextB := osd.io.b
       }
     } otherwise {
-      nextHs := core.io.hdmi.video.hSync
-      nextVs := core.io.hdmi.video.vSync
-      nextDe := core.io.hdmi.video.de
-      // The camera-readable HUD occupies most of the frame. Keep it available
-      // in latched debug mode, but do not obscure a normally running demo;
-      // the same counters remain continuously readable through JTAG.
-      when(hud.io.hit && hud.io.debugMode) {
-        nextR := hud.io.r
-        nextG := hud.io.g
-        nextB := hud.io.b
-      } otherwise {
-        nextR := core.io.hdmi.video.rgb.r
-        nextG := core.io.hdmi.video.rgb.g
-        nextB := core.io.hdmi.video.rgb.b
-      }
+      nextR := core.io.hdmi.video.rgb.r
+      nextG := core.io.hdmi.video.rgb.g
+      nextB := core.io.hdmi.video.rgb.b
     }
     io.hdmiR := RegNext(nextR) init (0)
     io.hdmiG := RegNext(nextG) init (0)
