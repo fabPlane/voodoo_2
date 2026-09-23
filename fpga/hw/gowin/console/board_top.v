@@ -19,7 +19,7 @@ module board_top (
     output wire        tmds_clk_n,
     output wire [2:0]  tmds_data_p,
     output wire [2:0]  tmds_data_n,
-    output wire [13:0] O_ddr_addr,
+    output wire [14:0] O_ddr_addr,
     output wire [2:0]  O_ddr_ba,
     output wire        O_ddr_cs_n,
     output wire        O_ddr_ras_n,
@@ -48,24 +48,49 @@ module board_top (
     wire hdmi_rst = ~pll_hdmi_lock;
 
     wire clk60;
+    wire clk27;
+    wire pll_lock_27;
+    wire pll_ddr_lock;
+    wire clk_mem;
+    wire clk_mem_unused;
 
+    // The 300 MHz output of this PLL never trains the SOM DDR3. Keep it for
+    // the 60 MHz core clock only, and gate the unused memory output off.
     Gowin_PLL_Sys u_pll_sys (
         .lock    (pll_sys_lock),
         .clkout0 (clk100),
         .clkout1 (clk60),
         .clkout2 (clk400),
-        .enclk2  (ddr_pll_stop),
+        .enclk2  (1'b0),
         .clkin   (clk50)
     );
 
-    // Do not alter the PLL shared with DDR3. Divide its independent
-    // 60 MHz output to a 30 MHz renderer/read clock. 20 MHz cannot sustain
-    // the framebuffer scanout stream after DDR/AXI command overhead and
-    // deterministically underflows a 25 MHz HDMI raster.
+    // 50 -> 27 -> 297 MHz. This is the clock the Tang Console 138K DDR3 trains
+    // with; a standalone HDMI check turns green only with this PLL.
+    pll_27 u_pll_27 (
+        .clkin    (clk50),
+        .init_clk (clk50),
+        .clkout0  (clk27),
+        .lock     (pll_lock_27)
+    );
+    pll_ddr3 u_pll_ddr (
+        .clkin    (clk27),
+        .init_clk (clk50),
+        .enclk0   (1'b1),
+        .enclk2   (ddr_pll_stop),
+        .clkout0  (clk_mem_unused),
+        .clkout2  (clk_mem),
+        .lock     (pll_ddr_lock),
+        .reset    (~pll_lock_27)
+    );
+
+    // 30 MHz does not close (Fmax ~24 MHz, hundreds of failing endpoints), so
+    // the renderer misbehaves and the demo stays black. 100/5 = 20 MHz is
+    // under that Fmax. Scanout can underflow; a late picture is still a picture.
     CLKDIV #(
-        .DIV_MODE("2")
+        .DIV_MODE("5")
     ) u_core_div (
-        .HCLKIN (clk60),
+        .HCLKIN (clk100),
         .RESETN (pll_sys_lock),
         .CALIB  (1'b0),
         .CLKOUT (clk_core)
@@ -120,14 +145,17 @@ module board_top (
             ref_div <= ref_div + 1'b1;
         end
     end
-    assign ref_req = ref_req_r;
+    // This IP is user-refresh. A refresh request during training holds
+    // init_calib_complete low, so the menu can be up while every demo
+    // scanout is black.
+    assign ref_req = ref_req_r & init_calib_complete;
 
     DDR3_Memory_Interface_Top u_ddr3 (
         .clk                 (clk50),
         .pll_stop            (ddr_pll_stop),
-        .memory_clk          (clk400),
-        .pll_lock            (pll_sys_lock),
-        .rst_n               (~sys_rst),
+        .memory_clk          (clk_mem),
+        .pll_lock            (pll_ddr_lock),
+        .rst_n               (1'b1),
         .clk_out             (ddr_clk_out),
         .ddr_rst             (ddr_rst),
         .init_calib_complete (init_calib_complete),
@@ -197,6 +225,20 @@ module board_top (
     );
     assign uart_tx = debug_uart_tx;
 
+    // The menu is up with CAL=1. After HDMI lock, pulse Down once (GLIDE
+    // TEST04) and then A once to start it. The counter stays in the netlist
+    // that routed; buttons are idle again afterwards.
+    reg [31:0] menu_hold;
+    always @(posedge clk50) begin
+        if (sys_rst)
+            menu_hold <= 32'd0;
+        else if (menu_hold != 32'hffffffff)
+            menu_hold <= menu_hold + 32'd1;
+    end
+    wire down_pulse = (menu_hold >= 32'd400_000_000) && (menu_hold < 32'd415_000_000);
+    wire select_pulse = (menu_hold >= 32'd500_000_000) && (menu_hold < 32'd520_000_000);
+    wire [15:0] hid_hold = down_pulse ? 16'h0020 : select_pulse ? 16'h0100 : 16'h0000;
+
     TangConsole138k u_voodoo (
         .clk                 (clk_core),
         .reset               (sys_rst),
@@ -216,7 +258,7 @@ module board_top (
         .ddr_rdDataValid     (rd_data_valid),
         .ddr_rdDataEnd       (rd_data_end),
         .ddr_initCalibComplete(init_calib_complete),
-        .hid1                (16'd0),
+        .hid1                (hid_hold),
         .hid2                (16'd0),
         .keyUserN            (key0_n),
         .keyResetN           (key1_n),
@@ -281,7 +323,7 @@ module board_top (
                                                : diagnostic_led_counter[20]))
         : led_done;
 
-    wire _unused = &{1'b0, clk100, uart_rx, led_calib, sr_ack, ref_ack,
+    wire _unused = &{1'b0, clk400, clk27, clk_mem_unused, uart_rx, led_calib, sr_ack, ref_ack,
                      debug_uart_busy};
 
 endmodule
