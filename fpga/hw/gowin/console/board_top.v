@@ -129,26 +129,25 @@ module board_top (
     wire        sr_ack, ref_ack;
     wire        ref_req;
 
-    // nand2mario DDR3 IP is user-refresh. Issue tREFI ~7.8 us on the UI clock.
+    // User-refresh IP. tREFI is ~7.8 us, 580 cycles of the 74.25 MHz UI clock.
+    // Counting while training latches ref_req with no ref_ack. That request
+    // sticks high once calibration completes and rd_data_valid never returns.
     reg [9:0] ref_div;
     reg       ref_req_r;
     always @(posedge ddr_clk_out) begin
-        if (ddr_rst) begin
+        if (ddr_rst || !init_calib_complete) begin
             ref_div <= 10'd0;
             ref_req_r <= 1'b0;
         end else if (ref_ack) begin
             ref_req_r <= 1'b0;
-        end else if (ref_div == 10'd580) begin
+        end else if (!ref_req_r && ref_div == 10'd580) begin
             ref_div <= 10'd0;
             ref_req_r <= 1'b1;
-        end else begin
+        end else if (!ref_req_r) begin
             ref_div <= ref_div + 1'b1;
         end
     end
-    // This IP is user-refresh. A refresh request during training holds
-    // init_calib_complete low, so the menu can be up while every demo
-    // scanout is black.
-    assign ref_req = ref_req_r & init_calib_complete;
+    assign ref_req = ref_req_r;
 
     DDR3_Memory_Interface_Top u_ddr3 (
         .clk                 (clk50),
@@ -225,20 +224,6 @@ module board_top (
     );
     assign uart_tx = debug_uart_tx;
 
-    // The menu is up with CAL=1. After HDMI lock, pulse Down once (GLIDE
-    // TEST04) and then A once to start it. The counter stays in the netlist
-    // that routed; buttons are idle again afterwards.
-    reg [31:0] menu_hold;
-    always @(posedge clk50) begin
-        if (sys_rst)
-            menu_hold <= 32'd0;
-        else if (menu_hold != 32'hffffffff)
-            menu_hold <= menu_hold + 32'd1;
-    end
-    wire down_pulse = (menu_hold >= 32'd400_000_000) && (menu_hold < 32'd415_000_000);
-    wire select_pulse = (menu_hold >= 32'd500_000_000) && (menu_hold < 32'd520_000_000);
-    wire [15:0] hid_hold = down_pulse ? 16'h0020 : select_pulse ? 16'h0100 : 16'h0000;
-
     TangConsole138k u_voodoo (
         .clk                 (clk_core),
         .reset               (sys_rst),
@@ -258,7 +243,7 @@ module board_top (
         .ddr_rdDataValid     (rd_data_valid),
         .ddr_rdDataEnd       (rd_data_end),
         .ddr_initCalibComplete(init_calib_complete),
-        .hid1                (hid_hold),
+        .hid1                (16'd0),
         .hid2                (16'd0),
         .keyUserN            (key0_n),
         .keyResetN           (key1_n),

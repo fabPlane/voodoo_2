@@ -82,6 +82,10 @@ case class GowinDdrNativeClockCrossing(
     val state = RegInit(State.idle)
     val reqSync = BufferCC(reqToggle, init = False)
     val ack = RegInit(False)
+    // A user refresh that lands on an outstanding read never asserts
+    // rd_data_valid. Waiting forever stalls scanout below its prefill and
+    // the demo frame stays black. Drop that beat and accept the next command.
+    val readTimer = Reg(UInt(7 bits)) init (0)
     val data = Reg(Bits(dataWidth bits)) init (0)
     val end = RegInit(False)
     val physicalCount = Reg(UInt(16 bits)) init (0)
@@ -131,6 +135,7 @@ case class GowinDdrNativeClockCrossing(
         } otherwise {
           io.output.cmdEn := io.output.cmdReady
           when(io.output.cmdReady) {
+            readTimer := 0
             state := State.readWait
           }
         }
@@ -140,7 +145,16 @@ case class GowinDdrNativeClockCrossing(
           data := io.output.rdData
           end := io.output.rdDataEnd
           ack := reqSync
+          readTimer := 0
           state := State.idle
+        } elsewhen (readTimer === U(80, 7 bits)) {
+          data := 0
+          end := True
+          ack := reqSync
+          readTimer := 0
+          state := State.idle
+        } otherwise {
+          readTimer := readTimer + 1
         }
       }
     }
