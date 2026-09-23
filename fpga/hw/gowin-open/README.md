@@ -4,6 +4,10 @@ This directory is deliberately independent from `../gowin`. It explores a
 Yosys + nextpnr-himbaechel + Apicula flow for the Tang Retro Console 138K
 without changing the known-good Gowin EDA build.
 
+See [`TESTING.md`](TESTING.md) for the hardware test ladder, JTAG diagnostics,
+failure triage, and the rules for keeping open images separate from the vendor
+core.
+
 ## Open-core naming
 
 Every bitstream produced here carries an `-open` suffix, for example
