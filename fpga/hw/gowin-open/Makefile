@@ -19,7 +19,7 @@ OPEN_BINS    := $(addprefix $(BUILD_DIR)/,$(addsuffix $(OPEN_SUFFIX).bin,$(DEMOS
 OPEN_VOODOO_SD_NAME := voodootang-open.bin
 
 .DEFAULT_GOAL := all
-.PHONY: all bin clean print-open-core-name $(DEMOS) hdmi_colorbars hdmi_colorbars-synth
+.PHONY: all bin clean print-open-core-name $(DEMOS) hdmi_colorbars hdmi_colorbars-synth pll_local_probe pll_spine_probe pll_pin_probe pll_half_probe ddr_clock_probe spine24_clock_probe
 .SECONDARY:
 
 all: $(DEMOS)
@@ -32,6 +32,12 @@ $(DEMOS): %: $(BUILD_DIR)/%$(OPEN_SUFFIX).fs
 # before the HDMI demo can produce a complete bitstream.
 hdmi_colorbars-synth: $(BUILD_DIR)/hdmi_colorbars-synth.json
 hdmi_colorbars: $(BUILD_DIR)/hdmi_colorbars$(OPEN_SUFFIX).fs
+pll_local_probe: $(BUILD_DIR)/pll_local_probe$(OPEN_SUFFIX).fs
+pll_spine_probe: $(BUILD_DIR)/pll_spine_probe$(OPEN_SUFFIX).fs
+pll_pin_probe: $(BUILD_DIR)/pll_pin_probe$(OPEN_SUFFIX).fs
+pll_half_probe: $(BUILD_DIR)/pll_half_probe$(OPEN_SUFFIX).fs
+ddr_clock_probe: $(BUILD_DIR)/ddr_clock_probe$(OPEN_SUFFIX).fs
+spine24_clock_probe: $(BUILD_DIR)/spine24_clock_probe$(OPEN_SUFFIX).fs
 
 print-open-core-name:
 	@echo $(OPEN_VOODOO_SD_NAME)
@@ -45,11 +51,49 @@ $(BUILD_DIR)/%-synth.json: rtl/%.v Makefile | $(BUILD_DIR)
 $(BUILD_DIR)/jtag_mailbox-synth.json: rtl/jtag_mailbox.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
 	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
 
+# GW5AST DFF0/Q0 has no fused path off the slice, and a carry chain parks
+# bit 0 on that flop. These probes have to export the count, so keep the
+# adder in LUTs and use DFF1–DFF7, which have real long-wire fuses.
 $(BUILD_DIR)/jtag_clock_probe-synth.json: rtl/jtag_clock_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
-	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
 
 $(BUILD_DIR)/jtag_bram_probe-synth.json: rtl/jtag_bram_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
-	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -json $@"
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/hdmi_colorbars-synth.json: rtl/hdmi_colorbars.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/pll_local_probe-synth.json: rtl/pll_local_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/pll_spine_probe-synth.json: rtl/pll_spine_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/pll_pin_probe-synth.json: rtl/pll_pin_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/pll_half_probe-synth.json: rtl/pll_half_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/ddr_clock_probe-synth.json: rtl/ddr_clock_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/spine24_clock_probe-synth.json: rtl/spine24_clock_probe.v rtl/gw_jtag_primitive.v Makefile | $(BUILD_DIR)
+	$(YOSYS) -p "read_verilog -sv -DOPEN_SOURCE $< rtl/gw_jtag_primitive.v; synth_gowin -top $(TOP) -family gw5a -setundef -noalu -json $@"
+
+$(BUILD_DIR)/spine24_clock_probe-pnr.json: $(BUILD_DIR)/spine24_clock_probe-synth.json spine24_probe.cst
+	$(NEXTPNR) --threads 1 --timing-allow-fail -r \
+		$(CHIPDB_ARG) \
+		--freq 25 --json $< --write $@ --device $(DEVICE) \
+		--vopt cst=spine24_probe.cst --vopt sspi_as_gpio \
+		--vopt disable_gp_clock_routing
+
+$(BUILD_DIR)/ddr_clock_probe-pnr.json: $(BUILD_DIR)/ddr_clock_probe-synth.json tang_console_138k_ddr.cst
+	$(NEXTPNR) --threads 1 --timing-allow-fail -r \
+		$(CHIPDB_ARG) \
+		--freq 25 --json $< --write $@ --device $(DEVICE) \
+		--vopt cst=tang_console_138k_ddr.cst --vopt sspi_as_gpio \
+		--vopt disable_gp_clock_routing
 
 $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 	$(NEXTPNR) --threads $(THREADS) --timing-allow-fail -r \
@@ -59,6 +103,8 @@ $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 
 # Diagnostic fallback: keep the external clock on ordinary routing so the
 # GW5AST global-clock network can be tested independently.
+# clk50 must use the global spine. disable_gp_clock_routing skips the
+# BRMDCLK1_BOT path that is the one proven to clock the HDMI half.
 $(BUILD_DIR)/blinky_local-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
 $(BUILD_DIR)/button_toggle-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing
 $(BUILD_DIR)/reset_toggle-pnr.json: EXTRA_VOPTS += --vopt disable_gp_clock_routing

@@ -50,3 +50,21 @@ object TangMega138kProGen extends App {
     )
   GenSupport.mirrorRomSidecars(targetDirectory, report.toplevelName)
 }
+
+object TangConsole138kGen extends App {
+  val targetDirectory = "rtl/gowin"
+  val report = GowinGenSupport
+    .verilog(targetDirectory)
+    .generate(
+      TangConsole138k(
+        Config
+          .voodoo1()
+          .copy(
+            useFbWriteBuffer = true,
+            fbWriteBufferLineWords = 256,
+            useFbReadCache = true
+          )
+      )
+    )
+  GenSupport.mirrorRomSidecars(targetDirectory, report.toplevelName)
+}

@@ -40,14 +40,19 @@ case class GowinDdrNative(
   * Framebuffer wins over texture when both request. wr_data_mask is active-high
   * inhibit, the inverse of AXI wstrb.
   */
-case class Axi4ToGowinDdrNative(fbConfig: Axi4Config, texConfig: Axi4Config)
-    extends Component {
+case class Axi4ToGowinDdrNative(
+    fbConfig: Axi4Config,
+    texConfig: Axi4Config,
+    nativeDataWidth: Int = GowinAddressMap.ddrNativeDataWidth,
+    nativeAddrWidth: Int = GowinAddressMap.ddrNativeAddrWidth
+) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
+  require(nativeDataWidth == 256, "The native bridge packs eight 32-bit words")
 
   val io = new Bundle {
     val fb = slave(Axi4(fbConfig))
     val tex = slave(Axi4(texConfig))
-    val ddr = master(GowinDdrNative())
+    val ddr = master(GowinDdrNative(addrWidth = nativeAddrWidth, dataWidth = nativeDataWidth))
   }
 
   object State extends SpinalEnum {

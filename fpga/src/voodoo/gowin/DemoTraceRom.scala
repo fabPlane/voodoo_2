@@ -20,15 +20,13 @@ object DemoTraceRom {
       cwd.resolve("fpga").resolve(relativeDir).resolve(name),
       cwd.getParent.resolve("fpga").resolve(relativeDir).resolve(name)
     )
-    candidates.find(Files.exists(_)).getOrElse {
-      throw new RuntimeException(
-        s"$relativeDir/$name not found from $cwd; run fpga/hw/gowin/console/pack_demo_trace.py"
-      )
-    }
+    candidates.find(Files.exists(_)).orNull
   }
 
   def load(name: String): IndexedSeq[(Long, Long)] = {
-    val bytes = Files.readAllBytes(packedPath(name))
+    val path = packedPath(name)
+    if (path == null) return IndexedSeq.empty
+    val bytes = Files.readAllBytes(path)
     require(bytes.length % 8 == 0, s"demo trace length ${bytes.length} is not a multiple of 8")
     val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
     val out = Vector.newBuilder[(Long, Long)]

@@ -15,4 +15,11 @@ object GowinAddressMap {
 
   val ddrNativeAddrWidth = 29
   val ddrNativeDataWidth = 256
+
+  /** First DDR3 on the Retro Console: MT41J256M16, x16, 512 MiB.
+    * Beats stay 256 bits so the existing native bridge applies. A 512 MiB
+    * device then has a 24-bit beat address (2^24 * 32 bytes).
+    */
+  val consoleDdrNativeAddrWidth = 24
+  val consoleDdrNativeDataWidth = 256
 }
