@@ -72,10 +72,13 @@ object TangConsole138kGen extends App {
             useFbReadCache = false,
             useTexFillCache = false,
             texFillRequestWindow = 2,
-            // Preserve 640x480 HDMI timing while halving framebuffer reads.
-            // Full-rate scanout underflows at 30 MHz; 4x repetition visibly
-            // loses too much horizontal detail in the Glide demos.
-            hdmiScanoutPixelRepeatX = 2,
+            hdmiScanoutPixelRepeatX = 1,
+            // 160x120 is the largest window that stayed one solid triangle.
+            // 180x135 and above paint bars off the right edge.
+            hdmiScanoutViewWidth = 160,
+            hdmiScanoutViewHeight = 120,
+            hdmiScanoutOriginX = 240,
+            hdmiScanoutOriginY = 180,
             // The Tang Console HDMI PLL supplies a 25.2 MHz DMT pixel clock.
             // Do not use the core's 27 MHz CEA 720x480p default here.
             hdmiScanoutDmt640x480 = true

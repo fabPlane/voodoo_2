@@ -15,6 +15,12 @@ from pathlib import Path
 LOOP_AT = 362
 FRAMES = 36
 OUT_NAME = "demo_logo_spin.bin"
+# Fastfill stays inside the 160x120 scanout window. A full-screen clear
+# keeps the DDR port busy and the HDMI queue paints black bars.
+CLIP_LEFT = 240
+CLIP_RIGHT = 400
+CLIP_TOP = 180
+CLIP_BOTTOM = 300
 
 
 def f32(x: float) -> int:
@@ -59,8 +65,11 @@ def project(x: float, y: float, z: float, ang: float) -> tuple[float, float]:
     c, s = math.cos(ang), math.sin(ang)
     xr = x * c + z * s
     zr = -x * s + z * c
-    scale = 210.0 / (zr + 3.2)
-    return 320.0 + xr * scale, 240.0 - y * scale
+    # Full-frame scale is 210, which puts the tip outside the 160x120 window.
+    scale = 110.0 / (zr + 3.2)
+    cx = (CLIP_LEFT + CLIP_RIGHT) / 2
+    cy = (CLIP_TOP + CLIP_BOTTOM) / 2
+    return cx + xr * scale, cy - y * scale
 
 
 def rotate_face(
@@ -70,15 +79,14 @@ def rotate_face(
 
 
 def frame_writes(ang: float) -> list[tuple[int, int]]:
-    # 640x480 clip + clear the current back buffer. Clearing both front and
-    # back here erases the frame that was just promoted for scanout as soon as
-    # the next animation frame begins.
+    # Clear only the scanout window, then the 3-triangle dart. The FBI clip
+    # drops fragments outside that window.
     out: list[tuple[int, int]] = [
         (0x148, 0),
         (0x144, 0),
         (0x130, 0),
-        (0x118, 0x280),
-        (0x11C, 0x1E0),
+        (0x118, (CLIP_LEFT << 16) | CLIP_RIGHT),
+        (0x11C, (CLIP_TOP << 16) | CLIP_BOTTOM),
         (0x110, 0x4200),
         (0x124, 0),
         (0x120, 1),
@@ -91,8 +99,8 @@ def frame_writes(ang: float) -> list[tuple[int, int]]:
     for a, b, c, rgb in dart:
         pa, pb, pc = rotate_face([a, b, c], ang)
         out.extend(triangle(pa[0], pa[1], pb[0], pb[1], pc[0], pc[1], *rgb))
-    out.append((0x128, 1))
     out.append((0x120, 1))
+    out.append((0x128, 1))
     return out
 
 

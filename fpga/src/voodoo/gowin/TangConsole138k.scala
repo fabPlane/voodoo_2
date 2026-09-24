@@ -96,7 +96,13 @@ case class TangConsole138k(c: Config) extends Component {
     coreCd,
     ddrCd
   )
-  val player = DemoAxiLitePlayer(DemoTraceRom.banks(), DemoCatalog.playerLoopAt)
+  // 200 ms at the 20 MHz core clock after each FBI NOP (0x120). The logo
+  // ROM uses that NOP to let a clear or a triangle finish before the swap.
+  val player = DemoAxiLitePlayer(
+    DemoTraceRom.banks(),
+    DemoCatalog.playerLoopAt,
+    swapGap = 4000000
+  )
   val ctrlCd = ClockDomain(
     clock = io.ctrlClk,
     reset = io.ctrlReset,
@@ -140,9 +146,6 @@ case class TangConsole138k(c: Config) extends Component {
     )
     val mainSel = bankLut(menu.io.cursor.resize(log2Up(DemoCatalog.mainCount max 2) bits))
     val playerSel = Mux(menu.io.other, U(0, player.io.select.getWidth bits), mainSel)
-    val loopNow =
-      !menu.io.other &&
-        menu.io.cursor === U(DemoCatalog.logoIndex, menu.io.cursor.getWidth bits)
   }
 
   io.debugMode := ctrl.buttons.io.debugMode
@@ -152,7 +155,7 @@ case class TangConsole138k(c: Config) extends Component {
   // subsequent writes with immediate SLVERR, which otherwise makes the player
   // counters race and hides the command that actually failed.
   player.io.enable := usePlayer && !core.io.hostWedged
-  player.io.loop := BufferCC(ctrl.loopNow, init = False)
+  player.io.loop := True
   player.io.select := BufferCC(ctrl.playerSel, U(0, player.io.select.getWidth bits))
   player.io.start := PulseCCByToggle(ctrl.menu.io.start, ctrlCd, ClockDomain.current)
   core.io.bar << player.io.axi

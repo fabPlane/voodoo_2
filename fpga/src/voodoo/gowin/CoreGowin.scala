@@ -73,7 +73,8 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     // priority puts all three write ports ahead of the color/scanout and aux
     // read ports, so a continuously rendering demo can starve HDMI forever.
     // Round-robin retains transaction locking while guaranteeing scanout a
-    // turn between sustained write bursts.
+    // turn between sustained write bursts. Fixed priority for scanout did
+    // not route (1281 unrouted nets).
     lowerFirstPriority = false
   )
   val fbAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)

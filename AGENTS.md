@@ -1,10 +1,16 @@
 # Agent notes: Mac vs Linux FPGA builds
 
-This repo is edited on a Mac. **Gowin PnR always runs on hyper-ms-lin**
-unless that box is down or already in `gw_sh`. Then, and only then, use
-the Mac. `make gowin` / `make gowin-console` from `fpga/` do this via
+This repo is edited on a Mac. Gowin synthesis and PnR prefer `ai_hyper_home`.
+`hyper-ms-lin` is the fallback build host, and it is the machine with the
+JTAG cable and the HDMI capture dongle. The Mac is only for last-resort diagnostics.
+`make gowin` / `make gowin-console` from `fpga/` go through
 `hw/gowin/run_pnr.sh` (RTL still generates on whichever machine you invoked
-make). Do not start a second `gw_sh` on a box that already has one.
+make). Do not start a second `gw_sh` on a box that already has one. Two
+builds may run at once on different hosts. Only one of them may program or
+debug the Tang Console; take the device lock below first.
+
+A session that is already in `gw_sh` on `hyper-ms-lin` finishes there. Do
+not move it to `ai_hyper_home` mid-run.
 
 ## Machines
 
@@ -26,11 +32,16 @@ is often tight. Keep trees, Gowin, and logs under `/home/hyper`.
 |---|---|---|
 | `cd fpga && make compile` / `rtl-console` / `test` | Mac is fine | Mostly serial JVM. M2 Max beat the 9955HX on these. |
 | CoreSim Verilator C++ rebuild | Mac unless it is busy | Same story: not a 32-thread win. Needs Verilator **5.052** (`--decorations none`). |
-| `make gowin` / `make gowin-console` | **Linux PnR, always** | `hw/gowin/run_pnr.sh` SSHes to hyper-ms-lin, runs `gw_sh`, copies `impl/` back. ~2× vs Mac (30m 52s vs ~57 min, 2026-09-18). |
-| Linux already in `gw_sh build*.tcl` | **Mac fallback** | Script prints that and runs local `gw_sh`. If the Mac is also in PnR, it exits instead of stacking a third. |
-| Linux SSH timeout (box off) | **Mac fallback** | Same script. Tell the user the box was down. |
+| `make gowin` / `make gowin-console` | **`ai_hyper_home` first** | Preferred synthesis/PnR host. `hyper-ms-lin` if that box is down or already in `gw_sh`. Mac only if both are unavailable. |
+| JTAG program, HDMI capture | **`hyper-ms-lin` only** | The programmer and the Macrosilicon HDMI input are on this box. Take the device lock first. |
+| Chosen host already in `gw_sh build*.tcl` | next host in the list | Do not stack a second `gw_sh` on the same box. |
 | Force Mac anyway | `GOWIN_PNR_FORCE_LOCAL=1 make gowin-console` | Debug only. |
 | KiCad, docs, small edits | Mac | No reason to remote. |
+
+`ai_hyper_home` is `hyper-ai` at `10.197.1.126` (SSH alias `ai_hyper_home`).
+Benchmark numbers, artifact copy, and hash checks live in
+`docs/gowin-bitstream-checking.md` on the Mac checkout. That write-up is
+newer than `origin/main`.
 
 Measured Gowin console bitstream (same `build_console.tcl`, Education 1.9.11.03):
 
@@ -63,6 +74,90 @@ another `gw_sh build*.tcl` on the same box.
 This Mac sometimes has leftover `gw_sh generate_ip.tcl` / `gw_sh -h`
 processes from earlier IDE runs. Those are not PnR. `run_pnr.sh` ignores
 them.
+
+## Tang Console device lock
+
+The board, JTAG programmer, and HDMI capture live on `hyper-ms-lin`. Builds
+may run in different directories and on different hosts at the same time.
+Only one session may program the SRAM or treat the HDMI picture as its
+result. The lock is one file on that machine:
+
+`/home/hyper/.codex/tang-console-device.lock`
+
+Take it before `programmer_cli` or an HDMI-picture check that you will act on.
+PnR does not need the lock. Another session may take the file when its
+mtime is 5 minutes or older.
+
+```bash
+LOCK=/home/hyper/.codex/tang-console-device.lock
+ssh -o ConnectTimeout=8 -o BatchMode=yes hyper-ms-lin 'bash -s' << 'EOF'
+set -euo pipefail
+LOCK=/home/hyper/.codex/tang-console-device.lock
+mkdir -p "$(dirname "$LOCK")"
+if [ -f "$LOCK" ]; then
+  age=$(( $(date +%s) - $(stat -c %Y "$LOCK") ))
+  if [ "$age" -lt 300 ]; then
+    echo "device busy (${age}s)"
+    cat "$LOCK"
+    exit 1
+  fi
+  echo "stale lock (${age}s), taking it"
+fi
+cat > "$LOCK" << LOCKEOF
+owner: WORKTREE
+host: $(hostname)
+pid: $$
+purpose: program and hdmi check
+since: $(date -Is)
+LOCKEOF
+cat "$LOCK"
+EOF
+```
+
+Replace `WORKTREE` with the checkout you are building from. While the board
+is yours, refresh the mtime at least every two minutes so a five-minute
+stall does not look abandoned:
+
+```bash
+ssh -o BatchMode=yes hyper-ms-lin "touch /home/hyper/.codex/tang-console-device.lock"
+```
+
+Delete the file when the program-and-check is finished. A fresh lock owned
+by someone else means wait or build somewhere else. Do not program over it.
+
+## HDMI capture
+
+The console picture is the Macrosilicon USB HDMI input on `hyper-ms-lin`
+(`345f:2109`). The stable device node is
+`/dev/v4l/by-id/usb-MACROSILICON_2109-video-index0`. The desk camera is the
+Razer Kiyo Pro Ultra,
+`/dev/v4l/by-id/usb-Razer_Inc_Razer_Kiyo_Pro_Ultra-video-index0`. The viewer
+is the user service `voodoo-hdmi.service` (640×480, 15 fps). It owns both
+devices, one at a time. Do not leave another ffmpeg or the old port-8765
+process holding the Razer; the Webcam button then stays on the previous
+picture.
+
+From the Mac, open:
+
+`http://10.197.1.179:8767/REDACTED_TOKEN/`
+
+Off the home LAN, the same page is
+`http://100.118.156.27:8767/REDACTED_TOKEN/`.
+A single frame is `frame.jpg` under that path, and the live feed is
+`stream.mjpg`. The page has HDMI and Webcam buttons. The same switch from
+this machine:
+
+```bash
+TOKEN=REDACTED_TOKEN
+curl -fsS -X POST -d 'name=webcam' http://127.0.0.1:8767/$TOKEN/source
+curl -fsS -X POST -d 'name=hdmi'   http://127.0.0.1:8767/$TOKEN/source
+```
+
+If the HDMI source is down, use the webcam. A down HDMI dongle is a flat
+no-signal frame (JPEG around 2600 bytes, every pixel 0, raw YUYV luma 7).
+That is not a locked black menu. The monitor may still be showing the
+console, and the webcam is pointed at that screen. Reload the page after a
+viewer restart so the browser drops the previous multipart stream.
 
 ## Reach the Linux box
 

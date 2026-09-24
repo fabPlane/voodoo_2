@@ -127,28 +127,34 @@ module board_top (
     wire        rd_data_valid;
     wire        rd_data_end;
     wire        sr_ack, ref_ack;
-    wire        ref_req;
-
-    // nand2mario DDR3 IP is user-refresh. Issue tREFI ~7.8 us on the UI clock.
+    // Hold the counter in reset until training finishes. A request latched
+    // earlier never receives ref_ack and then blocks every read. A refresh
+    // that overlaps a real command returns the wrong word, which shows up as
+    // broken red lines. Leave refresh off unless MODE is held; tying the pin
+    // itself to 0 failed placement.
     reg [9:0] ref_div;
     reg       ref_req_r;
+    reg       key0_meta, key0_sync;
     always @(posedge ddr_clk_out) begin
-        if (ddr_rst) begin
+        if (ddr_rst || !init_calib_complete) begin
             ref_div <= 10'd0;
             ref_req_r <= 1'b0;
-        end else if (ref_ack) begin
-            ref_req_r <= 1'b0;
-        end else if (ref_div == 10'd580) begin
-            ref_div <= 10'd0;
-            ref_req_r <= 1'b1;
+            key0_meta <= 1'b1;
+            key0_sync <= 1'b1;
         end else begin
-            ref_div <= ref_div + 1'b1;
+            key0_meta <= key0_n;
+            key0_sync <= key0_meta;
+            if (ref_ack) begin
+                ref_req_r <= 1'b0;
+            end else if (!ref_req_r && !key0_sync && ref_div == 10'd580) begin
+                ref_div <= 10'd0;
+                ref_req_r <= 1'b1;
+            end else if (!ref_req_r) begin
+                ref_div <= ref_div + 1'b1;
+            end
         end
     end
-    // This IP is user-refresh. A refresh request during training holds
-    // init_calib_complete low, so the menu can be up while every demo
-    // scanout is black.
-    assign ref_req = ref_req_r & init_calib_complete;
+    wire ref_req = ref_req_r;
 
     DDR3_Memory_Interface_Top u_ddr3 (
         .clk                 (clk50),
@@ -225,9 +231,9 @@ module board_top (
     );
     assign uart_tx = debug_uart_tx;
 
-    // The menu is up with CAL=1. After HDMI lock, pulse Down once (GLIDE
-    // TEST04) and then A once to start it. The counter stays in the netlist
-    // that routed; buttons are idle again afterwards.
+    // Keep a free-running counter in the netlist (the console route closes
+    // with it). Eight seconds after lock, press A once so the first menu
+    // item starts on its own. Onboard keys still work before that.
     reg [31:0] menu_hold;
     always @(posedge clk50) begin
         if (sys_rst)
@@ -235,9 +241,8 @@ module board_top (
         else if (menu_hold != 32'hffffffff)
             menu_hold <= menu_hold + 32'd1;
     end
-    wire down_pulse = (menu_hold >= 32'd400_000_000) && (menu_hold < 32'd415_000_000);
-    wire select_pulse = (menu_hold >= 32'd500_000_000) && (menu_hold < 32'd520_000_000);
-    wire [15:0] hid_hold = down_pulse ? 16'h0020 : select_pulse ? 16'h0100 : 16'h0000;
+    wire select_pulse = (menu_hold >= 32'd400_000_000) && (menu_hold < 32'd420_000_000);
+    wire [15:0] hid_hold = select_pulse ? 16'h0100 : 16'h0000;
 
     TangConsole138k u_voodoo (
         .clk                 (clk_core),

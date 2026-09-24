@@ -12,7 +12,8 @@ import voodoo.artix.AxiLite4ToBmbBridge
 case class DemoAxiLitePlayer(
     banks: Seq[IndexedSeq[(Long, Long)]],
     loopAt: Seq[Int] = Seq.empty,
-    addressWidth: Int = CoreGowin.barAddressWidth
+    addressWidth: Int = CoreGowin.barAddressWidth,
+    swapGap: Int = 0
 ) extends Component {
   require(banks.nonEmpty && banks.forall(_.nonEmpty), "demo player needs at least one write per bank")
   val loopIdx = if (loopAt.isEmpty) banks.map(_ => 0) else loopAt
@@ -59,7 +60,19 @@ case class DemoAxiLitePlayer(
   val addr = word(addressWidth + 31 downto 32).asUInt
   val data = word(31 downto 0)
   val waitingB = awSent && wSent
-  val issuing = io.enable && armed && !done && !waitingB
+  // FBI NOP is register 0x120. The logo ROM issues one after a clear and
+  // after the triangles so the rasterizer can finish. Waiting here lets
+  // scanout own the DDR port long enough to draw the frame solid.
+  val gapBusy = if (swapGap == 0) False else {
+    val gap = Reg(UInt(log2Up(swapGap + 1) bits)) init (0)
+    when(!io.start && waitingB && io.axi.b.valid && addr(11 downto 0) === U(0x120, 12 bits)) {
+      gap := swapGap
+    } elsewhen (gap =/= 0) {
+      gap := gap - 1
+    }
+    gap =/= 0
+  }
+  val issuing = io.enable && armed && !done && !waitingB && !gapBusy
 
   when(io.start) {
     index := startVec(sel)
