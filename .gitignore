@@ -20,6 +20,8 @@ sw/quake-riscv/id1/*
 sw/glide-demos/*
 !sw/glide-demos/DATA.txt
 !sw/glide-demos/fetch.sh
+!sw/glide-demos/dos-fpga/
+!sw/glide-demos/nostalgic/
 sw/quake-riscv/host_probe
 sw/quake-riscv/.cache/
 sw/quake-riscv/build/

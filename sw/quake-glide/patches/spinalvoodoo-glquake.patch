@@ -1,0 +1,259 @@
+diff --git a/emu/glide/glide2x/sst1/glide/src/ditex.c b/emu/glide/glide2x/sst1/glide/src/ditex.c
+index 4ba572d..34818c6 100644
+--- a/emu/glide/glide2x/sst1/glide/src/ditex.c
++++ b/emu/glide/glide2x/sst1/glide/src/ditex.c
+@@ -217,7 +217,14 @@ FxU32 _gr_aspect_xlate_table[] =
+ 
+ FxU32 _gr_evenOdd_xlate_table[] = 
+ {
+-  0xFFFFFFFF,                      /* invalid */
++  /*
++   * Index 0 is "no mask yet". It used to be 0xFFFFFFFF, and grTexCombine
++   * ORs this entry in before grTexSource has stored a real mask. That set
++   * SST_TMULTIBASEADDR (and every other high tLOD bit). Later grTexSource
++   * keeps those bits, so every mip below LOD 0 was fetched from texture
++   * address 0. A missing mask contributes no bits.
++   */
++  0,                               /* invalid / not yet set */
+   SST_LOD_TSPLIT,                  /* even */
+   SST_LOD_TSPLIT | SST_LOD_ODD,    /* odd  */
+   0,                               /* both */
+diff --git a/emu/glide/glide2x/sst1/init/init.c b/emu/glide/glide2x/sst1/init/init.c
+index 1a3adf0..54ed2c8 100644
+--- a/emu/glide/glide2x/sst1/init/init.c
++++ b/emu/glide/glide2x/sst1/init/init.c
+@@ -190,6 +190,16 @@ initEnumHardware( InitHWEnumCallback *cb )
+           sst1InitGetDeviceInfo( base, &info );
+           de10EnumStage("initEnumHardware: after sst1InitGetDeviceInfo");
+ 
++          /* The simulator backend cannot probe the real RAM-sizing registers,
++             so sst1InitGetDeviceInfo() may report 0MB. Assume a standard 2MB
++             Voodoo Graphics (2MB FBI + 2MB per TMU) so that texture-memory
++             managers built on grTexMaxAddress()/tfxRam (e.g. Mesa's fxMesa
++             fx driver) size their heaps correctly instead of underflowing. */
++          if( info.fbiMemSize == 0 ) info.fbiMemSize = 2;
++          if( info.numberTmus == 0 ) info.numberTmus = 1;
++          { int _tmu; for( _tmu = 0; _tmu < 3; _tmu++ )
++              if( info.tmuMemSize[_tmu] == 0 ) info.tmuMemSize[_tmu] = 2; }
++
+           hwInfo[numDevicesInSystem].hwDep.vgInfo.vgBaseAddr = (FxU32) base;
+           hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRev    = info.fbiRevision;
+           hwInfo[numDevicesInSystem].hwDep.vgInfo.pfxRam    = info.fbiMemSize;
+diff --git a/emu/test/ref_model.c b/emu/test/ref_model.c
+index 3f1a2a8..43a3797 100644
+--- a/emu/test/ref_model.c
++++ b/emu/test/ref_model.c
+@@ -411,6 +411,21 @@ void voodoo_recalc(voodoo_t *voodoo)
+     voodoo->params.row_width      = voodoo->row_width;
+     voodoo->aux_row_width         = voodoo->row_width;
+     voodoo->params.aux_row_width  = voodoo->row_width;
++
++    /*
++     * Glide programs SST_videoDimensions before drawing, and the rasteriser's
++     * Y-origin flip is (v_disp - 1) - y. A trace that starts after that init
++     * write leaves v_disp at 0, so the flip sends every pixel to a negative
++     * row. The masked address then walks out of the depth buffer into the
++     * back colour buffer (GLQuake gl_ztrick GEQUAL frames show Z as colour).
++     * The colour buffer is buffer_offset bytes tall; use that as the screen
++     * when the register was never captured.
++     */
++    if (voodoo->videoDimensions == 0 && voodoo->row_width > 0 &&
++        buffer_offset >= voodoo->row_width) {
++        voodoo->h_disp = (int) (voodoo->row_width / 2);
++        voodoo->v_disp = (int) (buffer_offset / voodoo->row_width);
++    }
+ }
+ 
+ /* -------------------------------------------------------------------
+@@ -431,6 +446,11 @@ void voodoo_queue_triangle(voodoo_t *voodoo, voodoo_params_t *params)
+ 
+     ref_trace_begin_triangle();
+ 
++    uint32_t saved_lod  = params->tLOD[0];
++    uint32_t saved_mode = params->textureMode[0];
++    int      saved_fmt  = params->tformat[0];
++    int      patched    = voodoo_apply_download_layout(voodoo);
++
+     voodoo_use_texture(voodoo, params, 0);
+     if (voodoo->dual_tmus)
+         voodoo_use_texture(voodoo, params, 1);
+@@ -440,6 +460,13 @@ void voodoo_queue_triangle(voodoo_t *voodoo, voodoo_params_t *params)
+     memcpy(&voodoo->params_buffer[0], params, sizeof(voodoo_params_t));
+     voodoo_triangle(voodoo, &voodoo->params_buffer[0], 0);
+ 
++    if (patched) {
++        params->tLOD[0]        = saved_lod;
++        params->textureMode[0] = saved_mode;
++        params->tformat[0]     = saved_fmt;
++        voodoo_recalc_tex12(voodoo, 0);
++    }
++
+     if (params->fbzColorPath & FBZCP_TEXTURE_ENABLED)
+         ref_triangles_textured++;
+     else
+@@ -564,8 +591,10 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+     voodoo->texture_size = tex_size_mb * 1024 * 1024;
+     voodoo->texture_mask = voodoo->texture_size - 1;
+     voodoo->tex_mem[0]   = (uint8_t *)calloc(1, voodoo->texture_size);
++    voodoo->tex_mem[1]   = (uint8_t *)calloc(1, voodoo->texture_size);
+     voodoo->tex_mem_w[0] = (uint16_t *)voodoo->tex_mem[0];
+-    if (!voodoo->tex_mem[0]) return -1;
++    voodoo->tex_mem_w[1] = (uint16_t *)voodoo->tex_mem[1];
++    if (!voodoo->tex_mem[0] || !voodoo->tex_mem[1]) return -1;
+ 
+     /* Texture cache: allocate data buffers for each cache entry.
+      * Size must hold all LOD levels: 256*256 *2 + 128*128 + 64*64 + ... + 2*2 */
+@@ -573,7 +602,9 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+                              32*32 + 16*16 + 8*8 + 4*4 + 2*2) * sizeof(uint32_t);
+     for (int i = 0; i < TEX_CACHE_MAX; i++) {
+         voodoo->texture_cache[0][i].data = (uint32_t *)calloc(1, tex_cache_size);
++        voodoo->texture_cache[0][i].base = -1;
+         voodoo->texture_cache[1][i].data = (uint32_t *)calloc(1, tex_cache_size);
++        voodoo->texture_cache[1][i].base = -1;
+     }
+ 
+     voodoo->initEnable = 0x07;  /* Enable fbiInit writes */
+diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
+index a24d46b..5ca2ad0 100644
+--- a/emu/test/trace_test.cpp
++++ b/emu/test/trace_test.cpp
+@@ -281,6 +281,8 @@ int main(int argc, char **argv) {
+     int color_tolerance = 0;
+     int disp_width  = 640;
+     int disp_height = 480;
++    const char *dump_frames_dir = nullptr; /* --dump-frames DIR: PNG per swap (ref model) */
++    int dump_frames_stride = 1;            /* --dump-stride N: keep every Nth frame */
+ 
+     for (int i = 1; i < argc; i++) {
+         if (strcmp(argv[i], "--ref-only") == 0) {
+@@ -307,6 +309,11 @@ int main(int argc, char **argv) {
+             disp_height = atoi(argv[++i]);
+         } else if (strcmp(argv[i], "--tex-access-dump") == 0 && i + 1 < argc) {
+             sim_tex_access_dump(argv[++i]);
++        } else if (strcmp(argv[i], "--dump-frames") == 0 && i + 1 < argc) {
++            dump_frames_dir = argv[++i];
++        } else if (strcmp(argv[i], "--dump-stride") == 0 && i + 1 < argc) {
++            dump_frames_stride = atoi(argv[++i]);
++            if (dump_frames_stride < 1) dump_frames_stride = 1;
+         } else if (!trace_path) {
+             trace_path = argv[i];
+         } else {
+@@ -317,7 +324,8 @@ int main(int argc, char **argv) {
+ 
+     if (!trace_path) {
+         fprintf(stderr, "Usage: trace_test <path> [--ref-only] [--sim-replay-only] [--output-dir DIR] [--profile-json PATH] [--ref-trace-jsonl PATH] "
+-                "[--max-mismatches N] [--max-sim-black-mismatches N] [--max-parity-mismatch-skew N] [--color-tolerance N] [--width W] [--height H]\n");
++                "[--max-mismatches N] [--max-sim-black-mismatches N] [--max-parity-mismatch-skew N] [--color-tolerance N] [--width W] [--height H] "
++                "[--dump-frames DIR] [--dump-stride N]\n");
+         return 1;
+     }
+ 
+@@ -471,6 +479,55 @@ int main(int argc, char **argv) {
+     int tex_write_count = 0;
+     int fb_write_count = 0;
+     int swap_cmd_count = 0;
++
++    /* Per-swap frame dumping for video capture. Each swapbufferCMD presents the
++     * buffer that was just drawn (pre_swap_draw_offset); write it to a PNG so a
++     * sequence of frames can be assembled into a video of Quake playing through
++     * the Voodoo reference model. Only meaningful with --ref-only. */
++    int dumped_frames = 0;
++    int swap_seen = 0;
++    uint32_t bufOffA = 0xffffffffu, bufOffB = 0xffffffffu; /* the two draw buffers */
++    auto dumpSwapFrame = [&](uint32_t fbOff) {
++        if (!dump_frames_dir) return;
++        if ((swap_seen++ % dump_frames_stride) != 0) return;
++        /* Learn the two ping-pong buffer offsets. */
++        if (bufOffA == 0xffffffffu) bufOffA = fbOff;
++        else if (fbOff != bufOffA && bufOffB == 0xffffffffu) bufOffB = fbOff;
++        uint32_t rw = ref_get_row_width();
++        if (rw == 0) rw = (uint32_t)disp_width * 2;
++        int stride = (int)(rw / 2);
++        uint16_t *base = ref_get_fb();
++        auto blackness = [&](uint32_t off) {
++            uint16_t *fb = (uint16_t *)((uint8_t *)base + off);
++            uint32_t b = 0;
++            for (int y = 0; y < disp_height; y++)
++                for (int x = 0; x < disp_width; x++)
++                    if (fb[(size_t)y * stride + x] == 0) b++;
++            return b;
++        };
++        /* The just-drawn buffer sometimes reads as the stale (black) one due to
++         * double-buffer swap parity; if so, the completed frame is in the other
++         * buffer. Pick whichever has content. */
++        uint32_t total = (uint32_t)disp_width * (uint32_t)disp_height;
++        uint32_t chosen = fbOff;
++        if (blackness(fbOff) >= (total * 99) / 100) {
++            uint32_t other = (fbOff == bufOffA) ? bufOffB : bufOffA;
++            if (other != 0xffffffffu && blackness(other) < (total * 99) / 100)
++                chosen = other;
++        }
++        uint16_t *fb = (uint16_t *)((uint8_t *)base + chosen);
++        std::vector<uint8_t> rgb((size_t)disp_width * disp_height * 3);
++        for (int y = 0; y < disp_height; y++)
++            traceReplayRgb565ToRgb24(&fb[(size_t)y * stride], &rgb[(size_t)y * disp_width * 3], disp_width, srgb_lut);
++        char path[1024];
++        snprintf(path, sizeof(path), "%s/frame_%05d.png", dump_frames_dir, dumped_frames);
++        if (stbi_write_png(path, disp_width, disp_height, 3, rgb.data(), disp_width * 3))
++            fprintf(stderr, "[trace_test] dumped frame %d (swapbuf @0x%x, shown @0x%x)\n",
++                    dumped_frames, fbOff, chosen);
++        else
++            fprintf(stderr, "[trace_test] ERROR: failed to write %s\n", path);
++        dumped_frames++;
++    };
+     uint64_t cmd_type_counts[32] = {0};
+     uint32_t fbzmode_writes = 0, fbzcp_writes = 0, texmode0_writes = 0, texmode1_writes = 0;
+     uint32_t fbzmode_last = 0, fbzcp_last = 0, texmode0_last = 0, texmode1_last = 0;
+@@ -484,6 +541,18 @@ int main(int argc, char **argv) {
+         last_entry_replayed = i;
+         const voodoo_trace_entry_t *e = &entries[i];
+         uint32_t repeat = e->count ? e->count : 1;
++        /* A killed capture can flush coalesced entries whose repeat count is
++         * garbage (1e8+). Replaying those hangs for hours and is not a real
++         * command stream. */
++        if (repeat > 1000000u) {
++            static int warned_repeat = 0;
++            if (!warned_repeat++)
++                fprintf(stderr,
++                        "[trace_test] clamping absurd repeat count %u at entry %u "
++                        "(shutdown garbage); treating as 1\n",
++                        repeat, i);
++            repeat = 1;
++        }
+         logical_cmds += repeat;
+         if ((i % 5000) == 0) {
+ #ifdef SIM_INTERFACE_DE10
+@@ -615,6 +684,7 @@ int main(int argc, char **argv) {
+                         swap_cmd_count++;
+                         have_presented_offset = true;
+                         presented_offset = pre_swap_draw_offset;
++                        dumpSwapFrame(pre_swap_draw_offset);
+                     }
+                     break;
+                 }
+@@ -1273,6 +1343,25 @@ int main(int argc, char **argv) {
+                     fb_offset, presented_changed, total, (presented_changed * 100.0) / total,
+                     other_offset, other_changed, total, (other_changed * 100.0) / total);
+         }
++
++        /*
++         * Swap-parity fallback: for a static scene the app may quit (or be
++         * stopped) with the freshly-drawn frame still in the back buffer, so
++         * the buffer we recorded as "presented" is the stale/cleared one. If
++         * that presented buffer is essentially all black but the other buffer
++         * clearly has content, display the other buffer instead. This makes
++         * single-frame captures robust to which buffer the last swap left in
++         * front (e.g. GLQuake stopped with SIGTERM at the start map).
++         */
++        if (presented_black >= (total * 99) / 100 &&
++            other_black + (total / 20) < presented_black) {
++            fprintf(stderr,
++                    "[trace_test] Presented buffer @0x%x is essentially black; "
++                    "displaying buffer @0x%x which holds the drawn frame.\n",
++                    fb_offset, other_offset);
++            fb_offset = other_offset;
++            ref_fb = (uint16_t *)((uint8_t *)ref_fb_base + fb_offset);
++        }
+     }
+ 
+     /* Get sim framebuffer.

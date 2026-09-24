@@ -1,0 +1,27 @@
+--- a/src/video/vid_voodoo_render.c
++++ b/src/video/vid_voodoo_render.c
+@@ -297,13 +297,22 @@ voodoo_get_texture(voodoo_t *voodoo, voodoo_params_t *params, voodoo_state_t *state, int tmu, int x)
+     texture_state.h_mask    = state->tex_h_mask[tmu][state->lod];
+     texture_state.tex_shift = 8 - tex_lod;
+ 
+-    if (params->tLOD[tmu] & LOD_TMIRROR_S) {
++    /*
++     * Voodoo1 ignores stray tLOD mirror bits. Bits 28 and 29 are the
++     * Voodoo2 TMIRROR_S/T controls; SST-1 leaves them unused. Glide ORs a
++     * wide even/odd mask into tLOD and grTexSource keeps every bit it does
++     * not replace, so a Voodoo1 draw still has them set. Treating bit 12 of
++     * a negative T as an odd repeat bitwise-nots the coordinate. Quake's
++     * shell box side is T=-192..0, and that mirror pulls in the unused
++     * window rows of shot0sid under the label.
++     */
++    if (voodoo->type >= VOODOO_2 && (params->tLOD[tmu] & LOD_TMIRROR_S)) {
+         if (state->tex_s & 0x1000)
+             state->tex_s = ~state->tex_s;
+     }
+-    if (params->tLOD[tmu] & LOD_TMIRROR_T) {
++    if (voodoo->type >= VOODOO_2 && (params->tLOD[tmu] & LOD_TMIRROR_T)) {
+         if (state->tex_t & 0x1000)
+             state->tex_t = ~state->tex_t;
+     }
+ 
+     if (voodoo->bilinear_enabled && params->textureMode[tmu] & 6) {
