@@ -11,3 +11,6 @@
 [submodule "ext/nostalgic-glide-demo"]
 	path = ext/nostalgic-glide-demo
 	url = https://github.com/efliks/nostalgic-glide-demo.git
+[submodule "ext/chromatix"]
+	path = ext/chromatix
+	url = https://github.com/enjoy-digital/chromatix.git
