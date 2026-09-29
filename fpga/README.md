@@ -9,6 +9,7 @@ Board-specific packages for SpinalVoodoo. The Voodoo core itself is the upstream
 | AMD Artix-7 AC701 (XC7A200T) | `voodoo.artix` | AXI PCIe BAR0 → AXI4-Lite | two AXI4 masters into MIG | parallel RGB → ADV7511 |
 | Sipeed Tang Mega 138K Pro Dock | `voodoo.gowin` | Gowin PCIe TLP BAR0 → AXI4-Lite | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
 | Sipeed Tang Retro Console 138K | `voodoo.gowin` | USB-pad Glide SDK tests + Tomb info | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
+| ModRetro Chromatic (GW5A-25) | `voodoo.chromatix` | LiteX Wishbone → AXI4-Lite BAR | AXI4 → 8 MiB OPI PSRAM (stubs today) | 160×144 into ChromatiX video/UVC |
 
 Upstream SpinalVoodoo only has the DE10-Nano (`CoreDe10`). `CoreArtix` /
 `CoreGowin` are the ports of that wrapper. The Artix board top (`AmdAc701`)
@@ -25,16 +26,18 @@ window at 0x250 (Gowin BARs max out at 1 MiB). Vendor IP is instantiated in
 - Vivado plus the IP cores in `hw/artix/ip.md` for an AC701 bitstream.
 
 ```
-make compile      # type-check both ports
-make rtl          # Artix + Gowin Verilog
-make rtl-artix    # rtl/artix/AmdAc701.v
-make rtl-gowin    # rtl/gowin/TangMega138kPro.v
-make rtl-console  # rtl/gowin/TangConsole138k.v
-make test         # SpinalSim, including the TLP BAR target
-make artix        # Vivado bitstream (after generating IP)
-make gowin        # Gowin EDA bitstream (after generating IP)
-make gowin-console # Retro Console 138K Glide-test bitstream
+make compile         # type-check Artix / Gowin / Chromatix ports
+make rtl             # Artix + Gowin + Chromatix Verilog
+make rtl-artix       # rtl/artix/AmdAc701.v
+make rtl-gowin       # rtl/gowin/TangMega138kPro.v
+make rtl-chromatix   # rtl/chromatix/ModRetroChromatic.v
+make litex-chromatix # LiteX elaborate ChromatiX+Voodoo (--no-compile)
+make test            # SpinalSim, including the TLP BAR target
+make artix           # Vivado bitstream (after generating IP)
+make gowin           # Gowin EDA bitstream (after generating IP)
 ```
+
+ChromatiX details: `chromatix/README.md` and `docs/chromatix-port.md`.
 
 Program the AC701 with Vivado or `openFPGALoader`. Program the dock with the
 Gowin programmer or `openFPGALoader -c ft2232`. The Console demo needs Gowin

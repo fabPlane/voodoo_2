@@ -3,6 +3,10 @@ fpga/.scala-build/
 fpga/.bsp/
 fpga/rtl/
 fpga/simWorkspace/
+fpga/chromatix/build/
+fpga/chromatix/csr.csv
+fpga/chromatix/__pycache__/
+fpga/chromatix/gateware/__pycache__/
 fpga/hw/gowin/impl/
 fpga/hw/gowin/ip/**/*.v
 fpga/hw/gowin/ip/**/*.vo

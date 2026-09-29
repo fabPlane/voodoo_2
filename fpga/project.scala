@@ -1,4 +1,5 @@
-// Artix-7 200T (AMD AC701) and Gowin (Sipeed Tang Mega 138K Pro) ports of SpinalVoodoo.
+// Artix-7 200T (AMD AC701), Gowin (Sipeed Tang Mega 138K Pro), and Chromatix
+// (ModRetro Chromatic / GW5A-25) ports of SpinalVoodoo.
 // The upstream core is pulled in as source from ext/SpinalVoodoo; only the
 // board-specific packages live here.
 //> using scala "2.12.18"
