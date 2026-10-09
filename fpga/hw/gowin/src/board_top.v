@@ -29,8 +29,10 @@ module board_top (
 );
 
     wire pll_sys_lock;
+    wire ddr_pll_stop;  // DDR3 IP gates memory_clk during calibration
     wire clk100;
     wire clk400;
+    wire clk_core;      // 50 MHz Voodoo core clock (SST-1 graphics clock)
     wire pll_hdmi_lock;
     wire clk_hdmi_serial;
     wire clk_hdmi_pixel;
@@ -41,6 +43,8 @@ module board_top (
         .lock    (pll_sys_lock),
         .clkout0 (clk100),
         .clkout1 (clk400),
+        .clkout_core (clk_core),
+        .enclk1  (ddr_pll_stop),
         .clkin   (clk50)
     );
 
@@ -75,45 +79,45 @@ module board_top (
     wire [4:0]  pcie_ltssm;
     wire [7:0]  tl_rx_err;
 
-    PCIE_Controller_Top u_pcie (
-        .pcie_rstn_i           (pcie_rstn),
-        .pcie_tl_clk_i         (tlp_clk),
-        .pcie_linkup_o         (pcie_linkup),
-        .pcie_ltssm_o          (pcie_ltssm),
-        .pcie_tl_cfg_busdev_o  (tl_cfg_busdev),
-        .pcie_tl_rx_sop_o      (tl_rx_sop),
-        .pcie_tl_rx_eop_o      (tl_rx_eop),
-        .pcie_tl_rx_valid_o    (tl_rx_valid),
-        .pcie_tl_rx_data_o     (tl_rx_data),
-        .pcie_tl_rx_bardec_o   (tl_rx_bardec),
-        .pcie_tl_rx_err_o      (tl_rx_err),
-        .pcie_tl_rx_wait_i     (tl_rx_wait),
-        .pcie_tl_rx_masknp_i   (1'b0),
-        .pcie_tl_tx_sop_i      (tl_tx_sop),
-        .pcie_tl_tx_eop_i      (tl_tx_eop),
-        .pcie_tl_tx_valid_i    (tl_tx_valid),
-        .pcie_tl_tx_data_i     (tl_tx_data),
-        .pcie_tl_tx_wait_o     (tl_tx_wait),
-        .pcie_tl_tx_creditsp_o (tl_tx_p_credits),
-        .pcie_tl_tx_creditsnp_o(tl_tx_np_credits),
-        .pcie_tl_tx_creditscpl_o(tl_tx_cpl_credits),
-        .pcie_tl_int_status_i  (1'b0),
-        .pcie_tl_int_req_i     (1'b0),
-        .pcie_tl_int_msinum_i  (5'b0),
-        .pcie_tl_int_ack_o     (),
-        .pcie_tl_drp_clk_o     (),
-        .pcie_tl_drp_rddata_o  (),
-        .pcie_tl_drp_resp_o    (),
-        .pcie_tl_drp_rd_valid_o(),
-        .pcie_tl_drp_ready_o   (),
-        .pcie_tl_drp_addr_i    (24'b0),
-        .pcie_tl_drp_wrdata_i  (32'b0),
-        .pcie_tl_drp_strb_i    (8'b0),
-        .pcie_tl_drp_wr_i      (1'b0),
-        .pcie_tl_drp_rd_i      (1'b0)
+    // Gowin wraps the controller as SerDes_Top with prefixed port names.
+    SerDes_Top u_pcie (
+        .PCIE_Controller_Top_pcie_rstn_i           (pcie_rstn),
+        .PCIE_Controller_Top_pcie_tl_clk_i         (tlp_clk),
+        .PCIE_Controller_Top_pcie_linkup_o         (pcie_linkup),
+        .PCIE_Controller_Top_pcie_ltssm_o          (pcie_ltssm),
+        .PCIE_Controller_Top_pcie_tl_cfg_busdev_o  (tl_cfg_busdev),
+        .PCIE_Controller_Top_pcie_tl_rx_sop_o      (tl_rx_sop),
+        .PCIE_Controller_Top_pcie_tl_rx_eop_o      (tl_rx_eop),
+        .PCIE_Controller_Top_pcie_tl_rx_valid_o    (tl_rx_valid),
+        .PCIE_Controller_Top_pcie_tl_rx_data_o     (tl_rx_data),
+        .PCIE_Controller_Top_pcie_tl_rx_bardec_o   (tl_rx_bardec),
+        .PCIE_Controller_Top_pcie_tl_rx_err_o      (tl_rx_err),
+        .PCIE_Controller_Top_pcie_tl_rx_wait_i     (tl_rx_wait),
+        .PCIE_Controller_Top_pcie_tl_rx_masknp_i   (1'b0),
+        .PCIE_Controller_Top_pcie_tl_tx_sop_i      (tl_tx_sop),
+        .PCIE_Controller_Top_pcie_tl_tx_eop_i      (tl_tx_eop),
+        .PCIE_Controller_Top_pcie_tl_tx_valid_i    (tl_tx_valid),
+        .PCIE_Controller_Top_pcie_tl_tx_data_i     (tl_tx_data),
+        .PCIE_Controller_Top_pcie_tl_tx_wait_o     (tl_tx_wait),
+        .PCIE_Controller_Top_pcie_tl_tx_creditsp_o (tl_tx_p_credits),
+        .PCIE_Controller_Top_pcie_tl_tx_creditsnp_o(tl_tx_np_credits),
+        .PCIE_Controller_Top_pcie_tl_tx_creditscpl_o(tl_tx_cpl_credits),
+        .PCIE_Controller_Top_pcie_tl_int_status_i  (1'b0),
+        .PCIE_Controller_Top_pcie_tl_int_req_i     (1'b0),
+        .PCIE_Controller_Top_pcie_tl_int_msinum_i  (5'b0),
+        .PCIE_Controller_Top_pcie_tl_int_ack_o     (),
+        .PCIE_Controller_Top_pcie_tl_drp_clk_o     (),
+        .PCIE_Controller_Top_pcie_tl_drp_rddata_o  (),
+        .PCIE_Controller_Top_pcie_tl_drp_resp_o    (),
+        .PCIE_Controller_Top_pcie_tl_drp_rd_valid_o(),
+        .PCIE_Controller_Top_pcie_tl_drp_ready_o   (),
+        .PCIE_Controller_Top_pcie_tl_drp_addr_i    (24'b0),
+        .PCIE_Controller_Top_pcie_tl_drp_wrdata_i  (32'b0),
+        .PCIE_Controller_Top_pcie_tl_drp_strb_i    (8'b0),
+        .PCIE_Controller_Top_pcie_tl_drp_wr_i      (1'b0),
+        .PCIE_Controller_Top_pcie_tl_drp_rd_i      (1'b0)
     );
 
-    wire        ddr_pll_stop;
     wire        ddr_clk_out;
     wire        ddr_rst;
     wire        init_calib_complete;
@@ -178,10 +182,20 @@ module board_top (
     wire       hdmi_hs, hdmi_vs, hdmi_de;
     wire       led_link, led_calib, led_wedge, led_heartbeat;
 
-    // Fabric runs on the DDR3 UI clock so native command/data are synchronous.
+    // Core held in reset until DDR3 is calibrated; synchronised into clk_core.
+    reg [2:0] core_rst_sync = 3'b111;
+    wire      core_rst_async = ~pll_sys_lock | ddr_rst | ~init_calib_complete;
+    always @(posedge clk_core or posedge core_rst_async)
+        if (core_rst_async) core_rst_sync <= 3'b111;
+        else                core_rst_sync <= {core_rst_sync[1:0], 1'b0};
+
+    // Implicit domain = DDR3 UI clock (native-port adapter only); the Voodoo
+    // core runs on clk_core and crosses into it through Axi4CC.
     TangMega138kPro u_voodoo (
         .clk                 (ddr_clk_out),
         .reset               (ddr_rst | ~init_calib_complete),
+        .coreClk             (clk_core),
+        .coreReset           (core_rst_sync[2]),
         .pcieClk             (clk100),
         .pcieReset           (tlp_rst),
         .pcieLinkup          (pcie_linkup),
@@ -248,6 +262,6 @@ module board_top (
     assign led_n[3] = led_wedge;
 
     wire _unused = &{1'b0, tmds_hpd, tlp_rst, tl_tx_p_credits, tl_tx_np_credits,
-                     pcie_ltssm, tl_rx_err, ddr_pll_stop, sr_ack, ref_ack};
+                     pcie_ltssm, tl_rx_err, sr_ack, ref_ack};
 
 endmodule

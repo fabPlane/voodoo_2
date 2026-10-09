@@ -239,7 +239,7 @@ object CoreArtix {
   /** 256-byte AXI bursts (64 beats of 32 bits). */
   val axiBurstLog2 = 8
 
-  def fbAxiConfig(c: Config) = BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), axiBurstLog2)
+  def fbAxiConfig(c: Config) = BmbToAxi4Mem.axiConfig(Core.fbMemSharedBmbParams(c), axiBurstLog2)
   def texAxiConfig(c: Config) = BmbToAxi4Mem.axiConfig(Core.texMemBmbParams(c), axiBurstLog2)
 }
 
@@ -258,10 +258,10 @@ case class CoreArtix(c: Config) extends Component {
   // Same five-way framebuffer arbitration CoreSim uses; the DE10 backend had one Avalon port per bus.
   val fbArbiter = BmbArbiter(
     inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
-    outputParameter = Core.fbMemBmbParams(c),
+    outputParameter = Core.fbMemSharedBmbParams(c),
     lowerFirstPriority = true
   )
-  val fbAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), CoreArtix.axiBurstLog2)
+  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), CoreArtix.axiBurstLog2)
   val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreArtix.axiBurstLog2)
 
   io.bar <> barBridge.io.axi

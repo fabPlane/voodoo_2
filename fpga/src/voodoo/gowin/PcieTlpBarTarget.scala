@@ -21,6 +21,10 @@ object PcieTlpBarTarget {
   * Turns 32-bit Memory Read/Write TLPs on BAR0 into AXI4-Lite. Gowin BAR
   * windows top out at 1 MiB, so a host-visible window register at byte 0x250
   * selects which megabyte of the 16 MiB Voodoo map the TLP offset lands in.
+  * It decodes as a byte write (first BE 0001) at 0x250 in any window - the
+  * Voodoo never takes 8-bit writes - or as any access to 0x250 while the
+  * window is in register space (0-3). Offset 0x250 of the LFB / texture
+  * windows is therefore ordinary memory.
   * Status at 0x254 is forwarded to the AXI-Lite bridge, same as DE10/Artix.
   *
   * TLP data is Gowin native: first header dword in bits 255:224.
@@ -95,7 +99,10 @@ case class PcieTlpBarTarget(
   }
 
   val offset20 = capturedAddr(windowAddressWidth - 1 downto 0)
-  val isWindowReg = offset20 === windowAddress
+  val headerFirstBe = header1(3 downto 0)
+  val inRegisterSpace = window < 4
+  val isWindowReg = offset20 === windowAddress &&
+    (inRegisterSpace || (hasData && headerFirstBe === B"0001"))
   val mappedAddr = (window @@ offset20).resized
 
   io.window := window

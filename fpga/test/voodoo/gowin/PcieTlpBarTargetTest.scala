@@ -159,4 +159,39 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       assert((dut.io.axi.aw.addr.toLong & 0xffffffL) == 0x400100L)
     }
   }
+  test("outside register space only a byte write to 0x250 moves the window") {
+    compiled.doSim("tlp-window-lfb") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.clockDomain.waitSampling()
+
+      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, 0x4L))
+      dut.clockDomain.waitSampling(4)
+      assert(dut.io.window.toInt == 4)
+
+      // 32-bit write to LFB offset 0x250 is data, not the window register.
+      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, 0x1234L))
+      var cycles = 0
+      while (!dut.io.axi.aw.valid.toBoolean && cycles < 32) {
+        dut.clockDomain.waitSampling()
+        cycles += 1
+      }
+      assert((dut.io.axi.aw.addr.toLong & 0xffffffL) == 0x400250L)
+      assert(dut.io.window.toInt == 4)
+      dut.io.axi.aw.ready #= true
+      dut.io.axi.w.ready #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.aw.ready #= false
+      dut.io.axi.w.ready #= false
+      dut.io.axi.b.valid #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.b.valid #= false
+      dut.clockDomain.waitSampling(2)
+
+      // Byte write (first BE 0001) at 0x250 selects window 0 again.
+      beat(dut, Seq(0x40000001L, 0x00000001L, 0x250L, 0x0L))
+      dut.clockDomain.waitSampling(4)
+      assert(dut.io.window.toInt == 0)
+    }
+  }
 }

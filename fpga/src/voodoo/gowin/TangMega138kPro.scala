@@ -2,6 +2,7 @@ package voodoo.gowin
 
 import spinal.core._
 import spinal.lib._
+import spinal.lib.bus.amba4.axi.Axi4CC
 import voodoo.Config
 
 /** Sipeed Tang Mega 138K Pro Dock fabric.
@@ -10,11 +11,18 @@ import voodoo.Config
   * board wrapper. This component is the SpinalVoodoo side: TLP BAR0 -> AXI-Lite
   * -> Core, AXI4 framebuffer/texture -> Gowin DDR3 native UI, parallel RGB out
   * to DVI_TX_Top.
+  *
+  * Clock domains: the implicit domain is the DDR3 UI clock (100 MHz) and only
+  * runs the native-port adapter. The Voodoo core runs on coreClk (50 MHz, the
+  * SST-1 graphics clock); framebuffer / texture AXI cross into the DDR3
+  * domain through Axi4CC FIFOs.
   */
 case class TangMega138kPro(c: Config) extends Component {
   noIoPrefix()
 
   val io = new Bundle {
+    val coreClk = in Bool ()
+    val coreReset = in Bool ()
     val pcieClk = in Bool ()
     val pcieReset = in Bool ()
     val pcieLinkup = in Bool ()
@@ -49,7 +57,12 @@ case class TangMega138kPro(c: Config) extends Component {
     val ledHeartbeat = out Bool ()
   }
 
-  val core = CoreGowin(c)
+  val coreCd = ClockDomain(
+    clock = io.coreClk,
+    reset = io.coreReset,
+    config = ClockDomainConfig(resetKind = SYNC, resetActiveLevel = HIGH)
+  )
+  val core = coreCd(CoreGowin(c))
   val pcieCd = ClockDomain(
     clock = io.pcieClk,
     reset = io.pcieReset,
@@ -76,14 +89,22 @@ case class TangMega138kPro(c: Config) extends Component {
   val barCc = AxiLite4ClockCrossing(
     PcieTlpBarTarget.axiConfig(),
     pcieCd,
-    ClockDomain.current
+    coreCd
   )
   val ddr = Axi4ToGowinDdrNative(CoreGowin.fbAxiConfig(c), CoreGowin.texAxiConfig(c))
+  // One full burst (2^axiBurstLog2 beats) of W / R buffering per direction.
+  private val burstBeats = 1 << CoreGowin.axiBurstLog2
+  val fbCc = Axi4CC(CoreGowin.fbAxiConfig(c), coreCd, ClockDomain.current,
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
+  val texCc = Axi4CC(CoreGowin.texAxiConfig(c), coreCd, ClockDomain.current,
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
 
   pcie.bar.io.axi <> barCc.io.input
   core.io.bar <> barCc.io.output
-  ddr.io.fb << core.io.memFb
-  ddr.io.tex << core.io.memTex
+  fbCc.io.input << core.io.memFb
+  texCc.io.input << core.io.memTex
+  ddr.io.fb << fbCc.io.output
+  ddr.io.tex << texCc.io.output
   io.ddr <> ddr.io.ddr
 
   core.io.hdmi.clock := io.hdmiClk

@@ -5,7 +5,16 @@ Generate these in Gowin EDA → IP Core Generator and drop the Verilog into
 `src/board_top.v`. If a generated wrapper uses longer names (for example
 `PCIE_Controller_Top_pcie_rstn_i`), add a thin Verilog shim.
 
-Device: `GW5AST-LV138FPG676AES` / `GW5AST-138B`.
+Device: `GW5AST-LV138FPG676AES` / `GW5AST-138B` for the Pro Dock.
+PLLs can be generated with `hw/gowin/generate_ip.sh` (GowinModgen). DDR3,
+DVI TX, and PCIe SerDes for the first bitstream are Sipeed's
+already-generated cores for `GW5AST-LV138FPG676` (from
+`TangMega-138KPro-example` ddr/hdmi and the Pro `pcie_dma_demo` `.gar`).
+`board_top.v` instantiates `SerDes_Top` (prefixed ports). That PCIe IP
+enumerates as `22c2:1100`; host tools also accept `10ee:0007`.
+Regenerate with `generate_vendor_ip.tcl` when Sipeed's float license
+holds long enough. This machine's Standard 1.9.12.04 is
+`$HOME/gowin/standard-1.9.12.04` (`106.55.34.119:10559`).
 
 ## Gowin_PLL_Sys
 

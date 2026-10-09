@@ -7,11 +7,13 @@
 #   make lint        Verilator lint of generated Verilog
 #   make test        SpinalSim tests (needs verilator on PATH)
 #   make gowin       Gowin EDA bitstream (needs gw_sh and generated IP; see hw/gowin/ip.md)
+#   make gowin-ip    generate Pro Dock PLLs (DDR3 + PCIe still from the GUI)
 #   make artix       Vivado bitstream (needs vivado and generated IP; see hw/artix/ip.md)
 
 SCALA_CLI ?= scala-cli
 VERILATOR ?= verilator
-GOWIN_SH  ?= gw_sh
+GOWINHOME ?= $(shell bash -c '. hw/gowin/env.sh && printf %s "$$GOWINHOME"')
+GOWIN_SH  ?= $(if $(wildcard $(GOWINHOME)/IDE/bin/gw_sh),$(GOWINHOME)/IDE/bin/gw_sh,gw_sh)
 VIVADO    ?= vivado
 ARTIX_RTL  = rtl/artix
 GOWIN_RTL  = rtl/gowin
@@ -19,7 +21,7 @@ ARTIX_TOP  = AmdAc701
 GOWIN_TOP  = TangMega138kPro
 LINT_FLAGS = --lint-only -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CMPCONST -Wno-UNSIGNED -Wno-UNOPTFLAT
 
-.PHONY: compile rtl rtl-artix rtl-gowin lint test gowin artix clean
+.PHONY: compile rtl rtl-artix rtl-gowin lint test gowin gowin-ip artix clean
 
 compile:
 	$(SCALA_CLI) compile .
@@ -44,6 +46,9 @@ lint: $(ARTIX_RTL)/$(ARTIX_TOP).v $(GOWIN_RTL)/$(GOWIN_TOP).v
 
 test:
 	$(SCALA_CLI) test .
+
+gowin-ip:
+	hw/gowin/generate_ip.sh
 
 gowin: rtl-gowin
 	cd hw/gowin && $(GOWIN_SH) build.tcl
