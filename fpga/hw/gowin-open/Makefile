@@ -1,5 +1,20 @@
+# BOARD=console (Tang Console 138K, PBGA484) or BOARD=pro (Tang Mega 138K
+# Pro Dock, FCPBGA676). Both are the GW5AST-138 die; only the package differs.
+BOARD        ?= console
+ifeq ($(BOARD),pro)
+DEVICE       := GW5AST-LV138FPG676AC1/I0
+CST          := tang_mega_138k_pro_open.cst
+BUILD_DIR    := build-pro
+else
 DEVICE       := GW5AST-LV138PG484AC1/I0
+CST          := tang_console_138k_open.cst
+BUILD_DIR    := build
+endif
 PACK_DEVICE  := GW5AST-138C
+# Optional: nextpnr chip database that includes the FCPBGA676A package
+# (built from apicula against Gowin 1.9.12.04 data). Empty = toolchain default.
+CHIPDB       ?=
+NEXTPNR_CHIPDB := $(if $(CHIPDB),--chipdb $(CHIPDB),)
 TOP          := top
 THREADS      ?= 8
 
@@ -8,8 +23,6 @@ NEXTPNR      ?= nextpnr-himbaechel
 GOWIN_PACK   ?= gowin_pack
 
 DEMOS        := blinky bram_test uart_hello
-BUILD_DIR    := build
-CST          := tang_console_138k_open.cst
 OPEN_SUFFIX  := -open
 OPEN_BINS    := $(addprefix $(BUILD_DIR)/,$(addsuffix $(OPEN_SUFFIX).bin,$(DEMOS)))
 # Reserved SD-card name for a future complete open-source Voodoo core.
@@ -17,10 +30,13 @@ OPEN_BINS    := $(addprefix $(BUILD_DIR)/,$(addsuffix $(OPEN_SUFFIX).bin,$(DEMOS
 OPEN_VOODOO_SD_NAME := voodootang-open.bin
 
 .DEFAULT_GOAL := all
-.PHONY: all bin clean print-open-core-name $(DEMOS) hdmi_colorbars hdmi_colorbars-synth
+.PHONY: all bin clean print-open-core-name $(DEMOS) blinky_pro hdmi_colorbars hdmi_colorbars-synth
 .SECONDARY:
 
 all: $(DEMOS)
+
+# Pro Dock smoke test: make BOARD=pro blinky_pro
+blinky_pro: $(BUILD_DIR)/blinky_pro$(OPEN_SUFFIX).fs
 
 bin: $(OPEN_BINS)
 
@@ -42,7 +58,7 @@ $(BUILD_DIR)/%-synth.json: rtl/%.v Makefile | $(BUILD_DIR)
 
 $(BUILD_DIR)/%-pnr.json: $(BUILD_DIR)/%-synth.json $(CST)
 	$(NEXTPNR) --threads $(THREADS) --timing-allow-fail -r \
-		--freq 50 --json $< --write $@ --device $(DEVICE) --vopt cst=$(CST)
+		--freq 50 --json $< --write $@ --device $(DEVICE) $(NEXTPNR_CHIPDB) --vopt cst=$(CST)
 
 $(BUILD_DIR)/%$(OPEN_SUFFIX).fs: $(BUILD_DIR)/%-pnr.json
 	$(GOWIN_PACK) --cpu_as_gpio -d $(PACK_DEVICE) -o $@ $<

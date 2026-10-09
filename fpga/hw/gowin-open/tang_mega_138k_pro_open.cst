@@ -1,0 +1,15 @@
+// Minimal open-source-flow constraints for the Tang Mega 138K Pro Dock.
+// Device: GW5AST-LV138FPG676AC1/I0 (same GW5AST-138 die as the Console,
+// JTAG idcode 0x1081b). Pins match fpga/hw/gowin/tang_mega_138k_pro.cst.
+
+IO_LOC "clk50" P16;
+IO_PORT "clk50" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
+
+IO_LOC "led_n[0]" J14;
+IO_LOC "led_n[1]" R26;
+IO_LOC "led_n[2]" L20;
+IO_LOC "led_n[3]" M25;
+IO_PORT "led_n[0]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE BANK_VCCIO=3.3;
+IO_PORT "led_n[1]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE BANK_VCCIO=3.3;
+IO_PORT "led_n[2]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE BANK_VCCIO=3.3;
+IO_PORT "led_n[3]" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE BANK_VCCIO=3.3;
