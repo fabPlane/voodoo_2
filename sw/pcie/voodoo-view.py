@@ -3,7 +3,7 @@
 
     sudo ./voodoo-stream | ./voodoo-view.py [--port 8090] [--record out.mp4]
 
-Reads 640x480 rgb565le frames on stdin; http://<host>:8090/ shows the latest
+Reads 720x480 (--size) rgb565le frames on stdin; http://<host>:8090/ shows the latest
 frame. --record also encodes every frame to an MP4 via ffmpeg (at --fps).
 """
 import argparse
@@ -16,15 +16,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PIL import Image
 
-W, H = 640, 480
-FRAME = W * H * 2
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--port", type=int, default=8090)
 ap.add_argument("--record")
 ap.add_argument("--fps", type=float, default=60)
 ap.add_argument("--quality", type=int, default=80)
+ap.add_argument("--size", default="720x480", help="must match voodoo-stream --size")
 args = ap.parse_args()
+W, H = map(int, args.size.split("x"))
+FRAME = W * H * 2
 
 latest = None  # (seq, jpeg bytes)
 cond = threading.Condition()

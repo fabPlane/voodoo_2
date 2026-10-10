@@ -1,7 +1,11 @@
 // Live HDMI scanout from the Tang dock over PCIe DMA (FrameDmaWriter, B27+).
 //
 //   sudo insmod voodoo_dma/voodoo_dma.ko
-//   sudo ./voodoo-stream [--skip N] [--frames N] > frames.rgb565   (640x480 rgb565le)
+//   sudo ./voodoo-stream [--skip N] [--frames N] [--size WxH] > frames.rgb565
+//   (rgb565le; the scanout is 720x480 CEA timing, the 640x480 Voodoo image inside it)
+//   sudo ./voodoo-stream --setup-only    program the writer and exit (hold the board lock)
+//   sudo ./voodoo-stream --attach ...    read frames without touching the BAR, so a
+//                                        game can own the board meanwhile
 //   sudo ./voodoo-stream --stop          disable the writer
 //   sudo ./voodoo-stream --counters      print the writer's counters
 //
@@ -20,9 +24,6 @@
 namespace {
 constexpr uint32_t kLocalWindow = 31;
 constexpr uint32_t kMagic = 0x444d4131;
-constexpr uint32_t kWidth = 640, kHeight = 480;
-constexpr uint32_t kFrameBytes = kWidth * kHeight * 2;
-constexpr uint32_t kFrameWords = kFrameBytes / 32;
 
 enum Reg : uint32_t {
   kRegMagic = 0x00, kRegCtrl = 0x04, kRegBase = 0x08, kRegSlots = 0x0c, kRegFrameWords = 0x10,
@@ -67,22 +68,26 @@ void printCounters(pci_bar::Bar &bar) {
 int main(int argc, char **argv) {
   unsigned skip = 0;
   long maxFrames = -1;
-  bool stop = false, counters = false;
+  bool stop = false, counters = false, setupOnly = false, attach = false;
+  uint32_t width = 720, height = 480;
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i];
     if (a == "--skip" && i + 1 < argc) skip = strtoul(argv[++i], nullptr, 0);
     else if (a == "--frames" && i + 1 < argc) maxFrames = strtol(argv[++i], nullptr, 0);
+    else if (a == "--size" && i + 1 < argc) sscanf(argv[++i], "%ux%u", &width, &height);
+    else if (a == "--setup-only") setupOnly = true;
+    else if (a == "--attach") attach = true;
     else if (a == "--stop") stop = true;
     else if (a == "--counters") counters = true;
     else {
-      fprintf(stderr, "usage: %s [--skip N] [--frames N] | --stop | --counters\n", argv[0]);
+      fprintf(stderr, "usage: %s [--skip N] [--frames N] [--size WxH] [--setup-only|--attach] | --stop | --counters\n", argv[0]);
       return 2;
     }
   }
 
   pci_bar::Bar bar;
-  if (!openBar(&bar)) return 1;
-  if (reg(bar, kRegMagic) != kMagic) {
+  if (!attach && !openBar(&bar)) return 1;
+  if (!attach && reg(bar, kRegMagic) != kMagic) {
     fprintf(stderr, "no frame DMA in this bitstream (magic %08x)\n", reg(bar, kRegMagic));
     return 1;
   }
@@ -113,13 +118,20 @@ int main(int argc, char **argv) {
     perror("mmap dma");
     return 1;
   }
+  const uint32_t kFrameBytes = width * height * 2;
+  if (kFrameBytes % 256) {
+    fprintf(stderr, "frame size must be a multiple of 256 bytes\n");
+    return 2;
+  }
+  const uint32_t kFrameWords = kFrameBytes / 32;
   const uint32_t slots = std::min<uint64_t>(255, (info.size - 4096) / kFrameBytes);
   const uint32_t statusOff = slots * kFrameBytes;
   auto *status = reinterpret_cast<volatile uint32_t *>(buf + statusOff);
-  *status = 0;
   fprintf(stderr, "dma buffer bus %08llx, %u slots, status at +%x\n", (unsigned long long)info.bus,
           slots, statusOff);
 
+  if (!attach) {
+  *status = 0;
   setReg(bar, kRegCtrl, 0);
   setReg(bar, kRegBase, uint32_t(info.bus));
   setReg(bar, kRegSlots, slots);
@@ -129,6 +141,8 @@ int main(int argc, char **argv) {
   setReg(bar, kRegCtrl, 1 | (skip << 8));
   bar.selectWindow(0);  // leave the BAR as other users expect it
   bar.close();
+  }
+  if (setupOnly) return 0;
 
   signal(SIGINT, onSignal);
   signal(SIGTERM, onSignal);
