@@ -5,6 +5,8 @@ set_device -name GW5AST-138B GW5AST-LV138FPG676AES
 
 add_file -type verilog [file normalize ../../rtl/gowin/TangMega138kPro.v]
 add_file -type verilog [file normalize src/board_top.v]
+add_file -type verilog [file normalize src/jtag_diag.v]
+add_file -type verilog [file normalize $::env(GOWINHOME)/IDE/data/ipcores/gw_jtag.v]
 foreach f [glob -nocomplain ip/*/*.v] {
     add_file -type verilog [file normalize $f]
 }
@@ -21,8 +23,10 @@ set_option -use_ready_as_gpio 1
 set_option -use_done_as_gpio 1
 set_option -use_cpu_as_gpio 1
 set_option -rw_check_on_ram 1
-set_option -place_option 1
+set_option -place_option 3
 set_option -max_fanout 100
+# Tried Sipeed's PCIe demo settings (clock_route_order 1, route_option 1)
+# plus replicate_resources: 12k unrouted nets on this design. Leave off.
 set_option -bit_compress 0
 set_option -bit_encrypt 0
 set_option -bit_security 0

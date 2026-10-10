@@ -102,9 +102,9 @@ EOF
 }
 
 # GW5AST PLL VCO must be 650–1300 MHz (VCO = 50 * mdiv with idiv=1).
-# 50 * 24 / 12 = 100 MHz TLP, 50 * 24 / 3 = 400 MHz DDR3 memory_clk
-# clkout1: 50 * 24 / 24 = 50 MHz Voodoo core clock.
-en1=true odiv1=24 gen_pll Gowin_PLL_Sys 24 12 3 true true true
+# 50 * 24 / 16 = 75 MHz TLP (was /12 = 100: vendor upar_arbiter missed timing), 50 * 24 / 3 = 400 MHz DDR3 memory_clk
+# clkout1: 50 * 24 / 26 = 46.15 MHz Voodoo core clock (24 -> 50 MHz once timing closes).
+en1=true odiv1=26 gen_pll Gowin_PLL_Sys 24 16 3 true true true
 # 50 * 25 / 10 = 125 MHz HDMI serial (~5x 25.0 MHz VGA). 126 MHz needs VCO 3150.
 gen_pll Gowin_PLL_Hdmi 25 10 8 false true false
 
@@ -122,9 +122,10 @@ module Gowin_PLL_Sys (
     // clkout1 (DDR3 memory_clk) enable, driven by the DDR3 IP's pll_stop.
     input  enclk1
 );
-    // VCO 1200 MHz: clkout0 = /12 = 100 MHz (PCIe TLP), clkout1 = /3 =
-    // 400 MHz (DDR3 memory_clk), clkout_core = /24 = 50 MHz (Voodoo core,
-    // the SST-1 graphics clock).
+    // VCO 1200 MHz: clkout0 = /16 = 75 MHz (PCIe TLP; 100 MHz left the vendor
+    // SerDes upar_arbiter 3.2 ns short, Gen2 x4 @ 256 bit needs only 62.5 MHz), clkout1 = /3 =
+    // 400 MHz (DDR3 memory_clk), clkout_core = /26 = 46.15 MHz (Voodoo core;
+    // /24 = 50 MHz is the SST-1 graphics clock, once the core closes timing).
     Gowin_PLL_Sys_MOD u_pll (
         .lock   (lock),
         .clkout0(clkout0),

@@ -19,6 +19,10 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
     acc
   }
 
+  // Payload dwords are in PCIe byte order (lowest-address byte in 31:24).
+  private def pcie(v: Long): Long =
+    ((v & 0xffL) << 24) | ((v & 0xff00L) << 8) | ((v >> 8) & 0xff00L) | ((v >> 24) & 0xffL)
+
   private def unpackDw(data: BigInt, index: Int): Long = {
     val shifted = data >> (224 - index * 32)
     (shifted & 0xffffffffL).toLong
@@ -69,7 +73,7 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
           0x40000001L, // 3DW MWr, length 1
           0x0000000fL, // req id 0, tag 0, BE 0xf
           addr,
-          data
+          pcie(data)
         )
       )
 
@@ -136,7 +140,7 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       val dw3 = unpackDw(dut.io.tlTxData.toBigInt, 3)
       assert((dw0 >> 24) == 0x4a, f"CplD header 0x$dw0%08x")
       assert(((dw2 >> 16) & 0xffff) == 0x0102)
-      assert((dw3 & 0xffffffffL) == 0xc0ffeel)
+      assert((dw3 & 0xffffffffL) == pcie(0xc0ffeel))
     }
   }
 
@@ -146,11 +150,11 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       init(dut)
       dut.clockDomain.waitSampling()
 
-      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, 0x4L))
+      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, pcie(0x4L)))
       dut.clockDomain.waitSampling(4)
       assert(dut.io.window.toInt == 4)
 
-      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x100L, 0x11L))
+      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x100L, pcie(0x11L)))
       var cycles = 0
       while (!dut.io.axi.aw.valid.toBoolean && cycles < 32) {
         dut.clockDomain.waitSampling()
@@ -165,12 +169,12 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       init(dut)
       dut.clockDomain.waitSampling()
 
-      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, 0x4L))
+      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, pcie(0x4L)))
       dut.clockDomain.waitSampling(4)
       assert(dut.io.window.toInt == 4)
 
       // 32-bit write to LFB offset 0x250 is data, not the window register.
-      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, 0x1234L))
+      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x250L, pcie(0x1234L)))
       var cycles = 0
       while (!dut.io.axi.aw.valid.toBoolean && cycles < 32) {
         dut.clockDomain.waitSampling()
@@ -189,9 +193,47 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       dut.clockDomain.waitSampling(2)
 
       // Byte write (first BE 0001) at 0x250 selects window 0 again.
-      beat(dut, Seq(0x40000001L, 0x00000001L, 0x250L, 0x0L))
+      beat(dut, Seq(0x40000001L, 0x00000001L, 0x250L, pcie(0x0L)))
       dut.clockDomain.waitSampling(4)
       assert(dut.io.window.toInt == 0)
+    }
+  }
+  test("a timed-out read's late response is discarded, not given to the next read") {
+    compiled.doSim("tlp-read-timeout") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.clockDomain.waitSampling()
+      def waitCpl(): Long = {
+        var c = 0
+        while (dut.io.tlTxValid.toInt == 0 && c < 4000) { dut.clockDomain.waitSampling(); c += 1 }
+        assert(dut.io.tlTxValid.toInt != 0, "no completion")
+        val v = unpackDw(dut.io.tlTxData.toBigInt, 3)
+        dut.clockDomain.waitSampling()
+        v
+      }
+      // Read 1: AR accepted, but R withheld past the read timeout.
+      beat(dut, Seq(0x00000001L, 0x0000000fL, 0x200L))
+      dut.io.axi.ar.ready #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.ar.ready #= false
+      assert(waitCpl() == 0xffffffffL)
+      // Its late R arrives now and must be swallowed.
+      dut.io.axi.r.valid #= true
+      dut.io.axi.r.data #= 0xbadL
+      dut.clockDomain.waitSampling()
+      dut.io.axi.r.valid #= false
+      dut.clockDomain.waitSampling(2)
+      // Read 2 gets its own data.
+      beat(dut, Seq(0x00000001L, 0x0000000fL, 0x204L))
+      dut.io.axi.ar.ready #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.ar.ready #= false
+      dut.clockDomain.waitSampling(3)
+      dut.io.axi.r.valid #= true
+      dut.io.axi.r.data #= 0x600dL
+      dut.clockDomain.waitSampling()
+      dut.io.axi.r.valid #= false
+      assert(waitCpl() == pcie(0x600dL))
     }
   }
 }

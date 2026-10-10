@@ -388,3 +388,196 @@ Stateless regression set compared with the previous build (`/tmp/shrink/out_new2
   valley_of_ra and test20.
 - **Stateless tomb:** gets past the hang, then segfaults inside the 86Box
   reference model (`voodoo_triangle`), not in the RTL.
+
+### Bring-up state, 2026-10-10 (before first flash + reboot)
+
+Design changes since the shrink (all uncommitted):
+
+- Voodoo core on its own clock `clk_core` from the sys PLL (`clkout1`,
+  VCO 1200 / ODIV1). **30 MHz for bring-up** (ODIV1 = 40); 50 MHz (= SST-1
+  graphics clock, ODIV1 = 24) once the core closes timing. DDR3 adapter stays
+  on the 100 MHz UI clock; fb/tex AXI cross via `Axi4CC`
+  (`TangMega138kPro.scala`), BMB hops registered in `CoreGowin.scala`,
+  scanout requests `m2sPipe`d in ext `Core.scala`.
+- Deadlock fix (ext): `FramebufferPlaneReader` lane credits + 5-way fb arbiter
+  needs `Core.fbMemSharedBmbParams` (also applied in `CoreGowin` /
+  `CoreArtix`). Quake / Tomb / Screamer2 / Valley / Tower state traces now
+  complete in CoreSim.
+- `PcieTlpBarTarget`: window register = byte write at 0x250 from any window,
+  or any access at 0x250 in register space (windows 0-3). Host side
+  `sw/pcie/pci_bar.h` uses the byte write. Timeout uses counter MSB.
+- `src/jtag_diag.v` + `board_diag.py`: read LTSSM / link / calib / PLL /
+  core reset / wedge / clock rates / TLP counts over the USB JTAG
+  (`sudo python3 board_diag.py --watch 3`).
+- `build.tcl`: Sipeed PCIe demo PnR options (clock_route_order 1,
+  route_option 1) + replicate_resources.
+
+Timing at the B2 build (50 MHz core target): core Fmax 32.1 MHz (TMU /
+span walker / pciFifo->regBank paths ~31 ns), DDR UI 75 MHz, TLP 76.9 MHz.
+B3/B4 add the fixes above; check `impl/pnr/*_tr_content.html`.
+
+PCIe on this host (ASUS ProArt X870E-Creator, dock in **PCIEX16(G4)**,
+chipset x4): the BIOS disables an empty slot's port at boot, so JTAG/SRAM
+hot-loading can never link (tried with Sipeed's known-good PCIe demo,
+retrain + secondary bus reset). The Voodoo bitstream must be in the dock's
+SPI flash at power-on. Factory flash backup (W25Q128, 16 MiB, Sipeed LED
+demo): `~/tang-mega-138k-pro-backup/sipeed_factory_w25q128.bin`
+(sha256 1ca34c7f...). Restore with
+`sudo openFPGALoader -c ft2232 -f --file-type bin <backup>` (raw image).
+
+After reboot: `lspci -nn | grep -i "22c2\|10ee"`, then
+`sudo python3 fpga/hw/gowin/board_diag.py`, `sudo sw/pcie/pci-bar status`,
+`sudo sw/pcie/pci-trace-replay <logo trace dir>`, and the live Glide demo
+`sudo sw/glide-homebrew/build/pcie/hb04_pinwheel 0` (`make -C
+sw/glide-homebrew pcie`).
+
+**Flashed 2026-10-10 03:4x: build B5** (`hw/gowin-c`, RTL snapshot
+`/tmp/TangMega138kPro_v4.v`; copy of the .fs in
+`~/tang-mega-138k-pro-backup/voodoo_b5_flashed.fs`). Routed, bitstream OK.
+Timing not fully clean: core 28.9 MHz vs 30 (10 endpoints), DDR UI 78 MHz
+(31; adapter + tex R CDC -> adapter), TLP 77 MHz (70; mostly the vendor
+SerDes upar_arbiter, 4 in PcieTlpBarTarget). On SRAM and after a
+reconfigure-from-flash: PLLs locked, DDR3 calibrated, core out of reset,
+not wedged, clk_core 30.0 / DDR 100.0 / TLP 100.0 / pixel 25.0 MHz, HDMI
+frames counting, LTSSM 0 (slot port disabled until reboot). Next: reboot,
+check `lspci`, then `board_diag.py`, `pci-bar status`, logo replay,
+`hb04_pinwheel 0`. B3 note: Sipeed's route_option 1 / clock_route_order 1
+/ replicate_resources gave 12k unrouted nets; left off.
+
+### Update 2026-10-10: clk_core closes at 50 MHz (ext pipelining, pixels unchanged)
+
+Scratch build dirs `hw/gowin-{t,v,x}` (copies of `hw/gowin` with ODIV1 = 24 and
+`clk_core` period 20; TLP 75 MHz as in `hw/gowin`). Agent log:
+`~/.cache/timing50/NOTES.md`; helper `~/.cache/timing50/mkbuild.sh`.
+
+| build | RTL snapshot | clk_core Fmax | clk_core TNS / endpoints | TLP (75) | DDR UI |
+|---|---|---|---|---|---|
+| B2 (before, 50 MHz target) | - | 32.1 MHz | ~14k endpoints | - | 75 MHz |
+| t2 (iter 1+2) | `~/.cache/gowin-builds/rtl_t2` | 38.7 MHz | -4632 ns / 2434 | 70.4 (vendor upar_arbiter) | 102.0 |
+| **t5 (iter 1-5)** | `~/.cache/gowin-builds/rtl_t5` | **50.02 MHz** | **0 / 0** | 76.1, TNS 0 | 101.5, TNS 0 |
+
+t5: every clock setup + hold TNS 0, bitstream
+`hw/gowin-x/impl/pnr/spinalvoodoo_tang_mega_138k_pro.fs` (copy + reports in
+`~/.cache/timing50/best_t5/`). Logic 49 %, FF 47 %, CLS 86 %, BSRAM 227, DSP 59.
+Worst core slack is only +0.01 ns (span walker probe step, TMU stageA -> stageGrad,
+regBank tex config -> textureMem drain tables, triangle setup).
+
+Changes (all in `ext/SpinalVoodoo`, uncommitted, on top of the earlier edits;
+pre-change diff in `~/.cache/ext_before_timing50.patch`):
+
+- `pixel/FramebufferAccess.scala`: `m2sPipe` after the colour/aux plane address math
+  (inside `inFlightCount`, so `fbAccess.busy` covers it).
+- `core/FramebufferMemSubsystem.scala`: colour/aux pixel read requests
+  `s2mPipe().m2sPipe()` into the cached readers.
+- `core/PixelPipeline.scala`: span prefetch requests `m2sPipe`d (y-origin swap + row
+  multiply -> reader span queues).
+- `texture/Tmu.scala`: new stages `stageClz` (abs + clz64 before normalise/ROM),
+  `stageMul` (the two 48x18 perspective products), `sampleRequestMid` (packed-layout
+  LOD range match / base select, then offset subtract + bank bits). The LOD select is
+  flattened (parallel end compares, one-hot "highest LOD wins"), line base + byte is a
+  concat. `s2mPipe` after `stageMul` and `stageLod` to cut the ready chain. All new
+  stages are in `io.busy`.
+- `raster/SpanWalker.scala`: new `RowPrep` state per row: registers the row's edge
+  bounds (`xi`/`x2i`, so the per-pixel inside test is two compares) and the
+  per-triangle clip/visible bounds; `AdvanceRow` registers the vertical step
+  (`rowBase`), `RowPrep` does the optional left step. One or two extra cycles per row.
+- `bus/PciFifo.scala`: CPU ingress skid buffer (registered ready to the host bridge)
+  + register stage holding the command and its registered address decode; one register
+  stage between the drain/passthrough mux and the register bank (`regCmdStage`),
+  `floatShadow` / `syncDrained` delayed to match. Sync=Yes drains also wait for
+  `regCmdStage`; a command-register write is held while the same command is still in
+  the issue / regBank stages; `fifoEmpty` is false while a write sits in any of the new
+  stages (reads excluded so status polling still sees empty), so LFB accesses keep
+  their ordering.
+- `texture/TexLayoutTables.scala`: per-LOD offsets are constant prefix-sum tables
+  indexed by (aspect, 16-bit) instead of a 9-deep adder chain (same values mod 2^22).
+  Not in t5: it is in t6 (`~/.cache/gowin-builds/rtl_t6`, `hw/gowin-t`, = current
+  ext). t6 was still in routing phase 0 after 40 min when this was written (t5 routed
+  in ~6 min), so it may miss timing by a little because of PnR variance. Check
+  `hw/gowin-t/impl/pnr/*_tr_content.html`; if it isn't clean, use t5.
+
+Pixel check (CoreSim `trace_test`, Verilator 5.052, baseline = ext tree before these
+changes; copies under `~/.cache/voodoo-sim/`): logo (stateless), test02, test04,
+test28, test_alphabet, qatest00_filter, qatest00_mipmap, quake / tomb / tower (v2
+state): final `*_sim.png` **byte-identical** at every iteration (t1..t6). Cycle counts
++0.0..+1.1 % (quake 3 420 443 -> 3 450 481).
+
+### Overnight 2026-10-10: PCIe up, rendering correct, board resets under DDR3 load
+
+What works now (bitstream B16, in flash; copy `~/.cache/overnight/candidates/voodoo_b16.fs`):
+
+- **PCIe enumerates** as `08:00.0 [22c2:1100]` behind chipset port 07:00.0 (PCIEX16(G4)), x4.
+  Requires a **cold boot** (board programmed while the PC is fully off, per Sipeed's README);
+  warm reboots never link. Re-enumerate after an FPGA reload while the slot clock is live:
+  `echo 1 > /sys/bus/pci/devices/0000:08:00.0/remove; echo 1 > /sys/bus/pci/rescan;
+  setpci -s 08:00.0 COMMAND=0006`.
+- **Live Glide over PCIe**: `sudo sw/glide-homebrew/build/pcie/hb04_pinwheel 0` renders correctly
+  at 18.5 frames/s (28.6 MHz core). Logo trace replays in ~1 s. Readback:
+  `sudo sw/pcie/lfb-capture out.ppm [front|back]`.
+
+Bugs found and fixed tonight:
+
+1. **Warm reboot** (above).
+2. **TLP payload byte order**: PCIe payload dwords have the first byte in bits 31:24;
+   `PcieTlpBarTarget` now swaps write data and completion data (`pcieSwap`).
+3. **Window register** stole LFB/texture offset 0x250 in every megabyte: now a byte write to 0x250
+   (any window) or any access in register space; host `pci_bar.h` uses the byte store.
+4. **PcieTlpBarTarget abandoned AXI transactions** on timeout (dropped valid, late response
+   desynced everything): AXI valids now held until handshake, orphaned B/R counted and dropped,
+   write timeout ~1.8 s, read timeout ~7 ms returning all-ones; host treats all-ones as "busy".
+5. **Host tools**: bridge status (0x254) only exists in window 0 - `Bar::status()` selects it.
+6. **Framebuffer write-buffer drain** (ext `FramebufferPlaneBuffer`) advanced the BMB command
+   address every beat; `BmbLengthFixer` splits 1 KiB lines into 256 B AXI bursts from it, so only
+   alternate 256 B chunks were written (half-rendered frames on HW, CoreSim's RAM model hid it).
+   Fixed (hold the burst start address); `fpga/test/voodoo/gowin/FbMemPathTest.scala` covers the
+   path (BMB -> BmbToAxi4Mem -> Axi4CC -> adapter) incl. arbiter contention.
+7. Vendor SerDes `upar_arbiter` missed timing at 100 MHz: TLP clock now 75 MHz (enough for Gen2 x4).
+8. `GowinMemStylePhase` no longer forces dual-clock (CDC FIFO) memories to registers.
+
+**Open blocker: the FPGA reloads itself (from flash) under sustained DDR3 traffic**, typically
+within seconds of heavy rendering, minutes when idle with the PCIe link up. Not timing (all clocks
+clean), not logic (a probe build with DDR3/core/DVI held in reset stays up; the DDR3 stress test
+kills it within ~1 ms at gap 0 even at 300 MHz memory clock, RTT_NOM 120 ohm, 8 mA drive).
+The dock is currently powered from the PCIe slot only; Sipeed specifies **12 V via the DC jack**.
+Next: run the dock from a 12 V supply (and a fan), then re-run the stress test
+(`ddr3_test`: `bist --bursts 0x40000 --gap 0`) - it should survive.
+
+Full speed: the core meets 50 MHz with the timing agent's pipelining (`~/.cache/timing50/`);
+B17 (50 MHz + every fix above) is building in `hw/gowin-f2` (B14b at 50 MHz was 4 ns short).
+
+**Full-speed candidate (timing clean): B18b** — `~/tang-mega-138k-pro-backup/voodoo_b18b_46mhz.fs`
+(build dir `hw/gowin-g3`, RTL `~/.cache/gowin-builds/rtl_b17`): core 46.15 MHz (PLL ODIV1=26; 92 % of the
+SST-1's 50 MHz), TLP 75 MHz, DDR UI 100 MHz, all setup/hold TNS 0, with every fix above plus the 50 MHz
+pipelining. Not flashed: on slot power a 50 MHz build (B17) went straight into the reload loop.
+Flash it once the dock runs from 12 V: `sudo openFPGALoader -c ft2232 -f --verify <fs>`, then power-cycle.
+B16 (28.6 MHz, `voodoo_b16.fs`) stays in flash as the known-good image.
+
+### 2026-10-10 afternoon: demo running on 12 V
+
+With the dock on its **12 V DC jack** (not slot power alone) the resets stopped for real workloads:
+52 min idle with the link up, minutes of continuous rendering, no reload. The synthetic DDR3 BIST at
+command gap 0-4 still reloads the FPGA; gap >= 8 is clean (the Voodoo's adapter stays there).
+
+**Flashed: B18b** (`~/tang-mega-138k-pro-backup/voodoo_b18b_46mhz.fs`), core 46.15 MHz, timing clean.
+`sudo sw/glide-homebrew/build/pcie/hb04_pinwheel 0` → **27.8 frames/s** live over PCIe (B16 @ 28.6 MHz:
+18.5). After any FPGA reload: `echo 1 > /sys/bus/pci/devices/0000:08:00.0/remove; echo 1 >
+/sys/bus/pci/rescan; setpci -s 08:00.0 COMMAND=0006` (or cold boot).
+
+Known issue: a few stray pixel runs (fixed screen positions, a handful of rows near blade edges and
+at x < 100) appear while frames render back to back; a lone clear is pixel-exact and repeated readbacks
+are identical, so they are real writes from the triangle path. HW-only (CoreSim pinwheel is exact).
+Next suspects: write-buffer run/rotate edge cases under real DDR3 latency.
+
+### Sharing the board between agents
+
+Anything that touches the dock (JTAG/openocd, `openFPGALoader` load or flash, PCIe tests, reboots)
+must hold the board lock; builds don't need it and can run in parallel:
+
+    fpga/hw/gowin/board-lock -m "why" -- sudo openFPGALoader -c ft2232 -m bitstream.fs
+    fpga/hw/gowin/board-lock -m "pinwheel test" -- sudo sw/glide-homebrew/build/pcie/hb04_pinwheel 0
+    fpga/hw/gowin/board-lock status        # who has it, since when, why
+
+`ddr3_jtag.py` / `board_diag.py` take the lock themselves (and skip it when run under board-lock).
+The lock is an flock on `~/.cache/tang-board/lock` (holder info in `lock.holder`); it is released
+automatically if the holder dies. `run_detached.sh` also flocks each build directory, so two agents
+can't build in the same `hw/<dir>` at once (use separate dirs).

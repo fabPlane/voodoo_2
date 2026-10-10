@@ -188,9 +188,25 @@ public:
     writeLocal16(windowOffset(voodooAddr), value);
   }
 
-  uint32_t status() { return readLocal32(kStatusReg); }
+  // The bridge status word only exists in register space (window 0); in the
+  // LFB / texture windows offset 0x254 is ordinary memory.
+  uint32_t status() {
+    selectWindow(0);
+    return readLocal32(kStatusReg);
+  }
 
   uint32_t window() const { return window_; }
+
+  // A read that the FPGA can't complete in time (the core is busy behind a
+  // stalled write, e.g. a full PCI FIFO during heavy rendering) comes back
+  // all-ones. Treat that as "busy, ask again", not as a wedged bridge.
+  bool wedged() {
+    for (int i = 0; i < 300; ++i) {   // ~2 s worst case (7 ms per timed-out read)
+      uint32_t s = status();
+      if (s != 0xffffffffu) return (s & kStatusWedged) != 0;
+    }
+    return true;
+  }
 
 private:
   int fd_ = -1;

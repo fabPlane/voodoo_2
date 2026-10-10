@@ -33,13 +33,10 @@ constexpr uint32_t kSstBusy = 1u << 9;
 constexpr uint32_t kPciFifoFreeMask = 0x3fu;
 
 bool checkBridge(const char *where) {
-  uint32_t s = g_bar.status();
-  if (s == 0xffffffffu) {
-    fprintf(stderr, "[pcie] %s: BAR reads all-ones (device gone or link down)\n", where);
-    return false;
-  }
-  if (s & pci_bar::kStatusWedged) {
-    fprintf(stderr, "[pcie] %s: host bridge wedged (%s)\n", where, pci_bar::statusText(s));
+  // All-ones = read timed out while the core was busy; Bar::wedged() retries.
+  if (g_bar.wedged()) {
+    uint32_t s = g_bar.status();
+    fprintf(stderr, "[pcie] %s: host bridge wedged or gone (%s)\n", where, pci_bar::statusText(s));
     return false;
   }
   return true;

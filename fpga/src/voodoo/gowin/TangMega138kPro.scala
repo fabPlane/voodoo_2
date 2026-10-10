@@ -2,7 +2,7 @@ package voodoo.gowin
 
 import spinal.core._
 import spinal.lib._
-import spinal.lib.bus.amba4.axi.Axi4CC
+import spinal.lib.bus.amba4.axi.{Axi4, Axi4CC}
 import voodoo.Config
 
 /** Sipeed Tang Mega 138K Pro Dock fabric.
@@ -103,8 +103,13 @@ case class TangMega138kPro(c: Config) extends Component {
   core.io.bar <> barCc.io.output
   fbCc.io.input << core.io.memFb
   texCc.io.input << core.io.memTex
-  ddr.io.fb << fbCc.io.output
-  ddr.io.tex << texCc.io.output
+  // Register the channels between the CDC FIFOs and the adapter: the
+  // request pop-side valid and the R push-side ready otherwise fed the
+  // adapter's state / address decode combinationally.
+  private def staged(a: Axi4): Axi4 =
+    a.pipelined(StreamPipe.FULL, StreamPipe.FULL, StreamPipe.NONE, StreamPipe.FULL, StreamPipe.FULL)
+  ddr.io.fb << staged(fbCc.io.output)
+  ddr.io.tex << staged(texCc.io.output)
   io.ddr <> ddr.io.ddr
 
   core.io.hdmi.clock := io.hdmiClk

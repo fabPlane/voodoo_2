@@ -208,6 +208,9 @@ case class AxiLite4ToBmbBridge(
   * nothing crosses a 4 KiB boundary or exceeds AXI's 256-beat limit, then bridges to AXI4.
   */
 object BmbToAxi4Mem {
+  // Input bursts must not cross a 4 KiB page (BMB rule; BmbAligner and
+  // BmbLengthFixer only increment in-page address bits). The core's
+  // framebuffer write buffer guarantees this (FramebufferPlaneBuffer).
   def alignedParameter(p: BmbParameter, burstLog2: Int): BmbParameter = {
     val aligned = BmbAligner.outputParameter(p.access, burstLog2)
     BmbLengthFixer.outputParameter(aligned, burstLog2).toBmbParameter()

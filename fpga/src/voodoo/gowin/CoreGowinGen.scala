@@ -22,8 +22,23 @@ class GowinMemStylePhase(
     smallMaxDepth: Int,
     smallMaxBits: Int
 ) extends PhaseNetlist {
+  // Clock-crossing FIFOs (StreamFifoCC: Axi4CC, AXI-Lite CDC, HDMI pixel
+  // FIFO) write in one domain and read in another. Forcing those to
+  // registers lost every other 256-byte AXI write burst on the board (the
+  // 4-deep AW FIFO in Axi4CC); sim was clean. Leave dual-clock mems alone.
+  private def isDualClock(mem: Mem[_]): Boolean = {
+    val cds = scala.collection.mutable.LinkedHashSet[ClockDomain]()
+    mem.foreachStatements {
+      case s: MemWrite => cds += s.clockDomain
+      case s: MemReadSync => cds += s.clockDomain
+      case s: MemReadWrite => cds += s.clockDomain
+      case _ =>
+    }
+    cds.size > 1
+  }
+
   override def impl(pc: PhaseContext): Unit = pc.walkDeclarations {
-    case mem: Mem[_] if mem.initialContent == null =>
+    case mem: Mem[_] if mem.initialContent == null && !isDualClock(mem) =>
       val depth = mem.wordCount
       val small = depth <= smallMaxDepth && depth * mem.getWidth <= smallMaxBits
       if (depth <= registersMaxDepth || small)

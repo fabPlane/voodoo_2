@@ -42,3 +42,9 @@ node_modules
 *-backups/
 fpga/hw/gowin-open/vendor-jtag-mailbox/impl/
 fpga/hw/gowin/ddr3_test/impl/
+
+# Gowin scratch build directories (one per parallel build; see hw/gowin/run_detached.sh)
+fpga/hw/gowin-[a-z]*/
+!fpga/hw/gowin-open/
+fpga/hw/gowin/ddr3_test_t*/
+fpga/hw/gowin/.build.lock

@@ -1,3 +1,5 @@
 pci-bar
 pci-trace-replay
 pci_window_test
+lfb-capture
+lfb-pattern

@@ -71,10 +71,33 @@ case class PcieTlpBarTarget(
   val writeData = Reg(Bits(32 bits)) init (0)
   val readData = Reg(Bits(32 bits)) init (0)
   val lowerAddr = Reg(Bits(7 bits)) init (0)
-  val stall = Reg(UInt((timeoutLog2 + 1) bits)) init (0)
-  val awSent = RegInit(False)
-  val wSent = RegInit(False)
-  val arSent = RegInit(False)
+  // Timeouts. A read must complete before the host's completion timeout, so
+  // it gives up after ~2^(timeoutLog2-1) cycles and returns all-ones. Writes
+  // are posted: holding the link (backpressure) is legal and correct, so they
+  // only give up after ~2^(timeoutLog2+7) cycles (~1.8 s at 75 MHz), as a
+  // last resort against a dead core. Gowin maps a wide increment to a LUT
+  // ripple chain, so count ticks of a free-running prescaler instead.
+  private val readTimeoutLog2 = timeoutLog2 - 1
+  private val writeTimeoutLog2 = timeoutLog2 + 7
+  private val prescaleBits = 8.min(readTimeoutLog2 - 1)
+  val prescale = Reg(UInt(prescaleBits bits)) init (0)
+  prescale := prescale + 1
+  val prescaleTick = RegNext(prescale.andR) init (False)
+  val stall = Reg(UInt((writeTimeoutLog2 - prescaleBits + 1) bits)) init (0)
+  val readTimeout = stall(readTimeoutLog2 - prescaleBits)
+  val writeTimeout = stall.msb
+
+  // AXI-side state, independent of the TLP state machine. A request valid is
+  // held until its handshake (dropping it would break AXI and leave a stale
+  // response in flight). If the TLP side gives up on a transaction, its
+  // response is counted here and discarded when it eventually arrives, so
+  // it can't be mistaken for the next transaction's response.
+  val awPend = RegInit(False)
+  val wPend = RegInit(False)
+  val arPend = RegInit(False)
+  val dropB = Reg(UInt(4 bits)) init (0)
+  val dropR = Reg(UInt(4 bits)) init (0)
+  val axiIdle = !awPend && !wPend && !arPend
 
   val rxBeat = io.tlRxValid.orR
   val bar0 = io.tlRxBardec(0)
@@ -89,13 +112,19 @@ case class PcieTlpBarTarget(
   val hasData = fmt(1)
   val fourDw = fmt(0)
   val capturedAddr = UInt(addressWidth bits)
-  val capturedData = Bits(32 bits)
+  // TLP payload dwords are in PCIe byte order: the lowest-addressed byte
+  // sits in bits 31:24. Swap to little-endian so a host store of V lands
+  // as V (and first-BE bit i matches byte lane i). Found on hardware: every
+  // read came back byte-reversed (SST status 0x0ffff03f read as 0x3ff0ff0f).
+  def pcieSwap(dw: Bits): Bits = dw(7 downto 0) ## dw(15 downto 8) ## dw(23 downto 16) ## dw(31 downto 24)
+  val capturedPayload = Bits(32 bits)
+  val capturedData = pcieSwap(capturedPayload)
   when(fourDw) {
     capturedAddr := header3.asUInt.resized
-    capturedData := dword(io.tlRxData, 4)
+    capturedPayload := dword(io.tlRxData, 4)
   } otherwise {
     capturedAddr := header2.asUInt.resized
-    capturedData := header3
+    capturedPayload := header3
   }
 
   val offset20 = capturedAddr(windowAddressWidth - 1 downto 0)
@@ -112,17 +141,27 @@ case class PcieTlpBarTarget(
   io.tlTxValid := 0
   io.tlTxData := 0
 
-  io.axi.aw.valid := False
+  io.axi.aw.valid := awPend
   io.axi.aw.addr := tlpAddr.resized
   io.axi.aw.prot := 0
-  io.axi.w.valid := False
+  io.axi.w.valid := wPend
   io.axi.w.data := writeData
   io.axi.w.strb := firstBe
-  io.axi.b.ready := False
-  io.axi.ar.valid := False
+  io.axi.b.ready := True
+  io.axi.ar.valid := arPend
   io.axi.ar.addr := tlpAddr.resized
   io.axi.ar.prot := 0
-  io.axi.r.ready := False
+  io.axi.r.ready := True
+  when(io.axi.aw.fire) { awPend := False }
+  when(io.axi.w.fire) { wPend := False }
+  when(io.axi.ar.fire) { arPend := False }
+  val bForUs = io.axi.b.valid && dropB === 0
+  val rForUs = io.axi.r.valid && dropR === 0
+  val dropBInc, dropRInc = False
+  val dropBDec = io.axi.b.valid && dropB =/= 0
+  val dropRDec = io.axi.r.valid && dropR =/= 0
+  dropB := dropB + dropBInc.asUInt.resized - dropBDec.asUInt.resized
+  dropR := dropR + dropRInc.asUInt.resized - dropRDec.asUInt.resized
 
   val cplCreditOk = io.tlTxCreditsCpl(31)
 
@@ -144,20 +183,20 @@ case class PcieTlpBarTarget(
     io.tlTxSop := True
     io.tlTxEop := True
     io.tlTxValid := (if (withData) B"11110000" else B"11100000")
-    io.tlTxData := dw0 ## dw1 ## dw2 ## (if (withData) data else B(0, 32 bits)) ## B(0, 128 bits)
+    io.tlTxData := dw0 ## dw1 ## dw2 ## (if (withData) pcieSwap(data) else B(0, 32 bits)) ## B(0, 128 bits)
   }
 
   switch(state) {
     is(State.idle) {
       stall := 0
-      when(rxBeat && io.tlRxSop && bar0 && isMem) {
+      // Don't take a new TLP while an abandoned request still waits for its
+      // AXI handshake (tlpAddr / writeData drive the pending channels).
+      io.tlRxWait := !axiIdle
+      when(axiIdle && rxBeat && io.tlRxSop && bar0 && isMem) {
         reqId := header1(31 downto 16)
         reqTag := header1(15 downto 8)
         firstBe := header1(3 downto 0)
         lowerAddr := capturedAddr.asBits(6 downto 0)
-        awSent := False
-        wSent := False
-        arSent := False
         when(isWindowReg) {
           when(hasData) {
             window := capturedData(3 downto 0).asUInt
@@ -173,12 +212,15 @@ case class PcieTlpBarTarget(
           tlpAddr := mappedAddr
           writeData := capturedData
           when(hasData) {
+            awPend := True
+            wPend := True
             state := State.axiWrite
           } otherwise {
+            arPend := True
             state := State.axiRead
           }
         }
-      } elsewhen (rxBeat && io.tlRxSop && !bar0) {
+      } elsewhen (axiIdle && rxBeat && io.tlRxSop && !bar0) {
         when(!io.tlRxEop) {
           state := State.drop
         }
@@ -186,46 +228,26 @@ case class PcieTlpBarTarget(
     }
     is(State.axiWrite) {
       io.tlRxWait := True
-      io.axi.aw.valid := !awSent
-      io.axi.w.valid := !wSent
-      io.axi.b.ready := True
-      when(io.axi.aw.fire) {
-        awSent := True
-      }
-      when(io.axi.w.fire) {
-        wSent := True
-      }
-      when(io.axi.b.valid) {
-        awSent := False
-        wSent := False
+      when(bForUs) {
         state := State.idle
-      }
-      when(stall === (1 << timeoutLog2) - 1) {
-        awSent := False
-        wSent := False
+      } elsewhen (writeTimeout) {
+        dropBInc := True     // its B, if it ever comes, is discarded
         state := State.idle
       } otherwise {
-        stall := stall + 1
+        when(prescaleTick) { stall := stall + 1 }
       }
     }
     is(State.axiRead) {
       io.tlRxWait := True
-      io.axi.ar.valid := !arSent
-      io.axi.r.ready := True
-      when(io.axi.ar.fire) {
-        arSent := True
-      }
-      when(io.axi.r.valid) {
+      when(rForUs) {
         readData := io.axi.r.data
-        arSent := False
         state := State.cpl
-      }
-      when(stall === (1 << timeoutLog2) - 1) {
-        readData := 0
-        arSent := False
+      } elsewhen (readTimeout) {
+        dropRInc := True     // discard the late R
+        readData := B(0xffffffffL, 32 bits)
         state := State.cpl
       } otherwise {
-        stall := stall + 1
+        when(prescaleTick) { stall := stall + 1 }
       }
     }
     is(State.cpl) {

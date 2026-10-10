@@ -11,6 +11,11 @@ module board_top (
     output wire [2:0]  tmds_data_p,
     output wire [2:0]  tmds_data_n,
     input  wire        tmds_hpd,
+    // GW_JTAG pads (dedicated JTAG pins, no CST entry) for jtag_diag.
+    input  wire        tck_pad_i,
+    input  wire        tms_pad_i,
+    input  wire        tdi_pad_i,
+    output wire        tdo_pad_o,
     output wire [14:0] O_ddr_addr,
     output wire [2:0]  O_ddr_ba,
     output wire        O_ddr_cs_n,
@@ -32,7 +37,7 @@ module board_top (
     wire ddr_pll_stop;  // DDR3 IP gates memory_clk during calibration
     wire clk100;
     wire clk400;
-    wire clk_core;      // 50 MHz Voodoo core clock (SST-1 graphics clock)
+    wire clk_core;      // Voodoo core clock (46.15 MHz; 50 MHz = SST-1)
     wire pll_hdmi_lock;
     wire clk_hdmi_serial;
     wire clk_hdmi_pixel;
@@ -260,6 +265,84 @@ module board_top (
     assign led_n[1] = led_link;
     assign led_n[2] = led_calib;
     assign led_n[3] = led_wedge;
+
+    // ------------------------------------------------------------------
+    // JTAG diagnostics (fpga/hw/gowin/board_diag.py): link / clocks / TLPs.
+    // ------------------------------------------------------------------
+    reg [31:0] cnt_core = 0, cnt_ddr = 0, cnt_tlp = 0, cnt_pix = 0;
+    reg [31:0] rx_tlps = 0, tx_tlps = 0, hdmi_frames = 0;
+    reg        hdmi_vs_d = 1'b0;
+    always @(posedge clk_core)       cnt_core <= cnt_core + 1'b1;
+    always @(posedge ddr_clk_out)    cnt_ddr  <= cnt_ddr + 1'b1;
+    always @(posedge clk_hdmi_pixel) begin
+        cnt_pix <= cnt_pix + 1'b1;
+        hdmi_vs_d <= hdmi_vs;
+        if (hdmi_vs && !hdmi_vs_d) hdmi_frames <= hdmi_frames + 1'b1;
+    end
+    always @(posedge tlp_clk) begin
+        cnt_tlp <= cnt_tlp + 1'b1;
+        if (|tl_rx_valid && tl_rx_sop) rx_tlps <= rx_tlps + 1'b1;
+        if (|tl_tx_valid && tl_tx_sop && !tl_tx_wait) tx_tlps <= tx_tlps + 1'b1;
+    end
+
+    wire [31:0] diag_status = {
+        8'hD1,                    // [31:24] magic
+        3'b0, pcie_ltssm,         // [23:16]
+        tl_cfg_busdev[12:5],      // [15:8]  PCI bus number
+        pcie_rstn,                // [7]
+        pcie_linkup,              // [6]
+        init_calib_complete,      // [5]
+        ddr_rst,                  // [4]
+        pll_sys_lock,             // [3]
+        pll_hdmi_lock,            // [2]
+        core_rst_sync[2],         // [1]
+        ~led_wedge                // [0]  host bridge wedged
+    };
+
+    // On-die temperature (GW5A ADC hard block, temperature mode): ADCVALUE is
+    // signed degrees C * 4. A new measurement is requested every ~42 ms.
+    reg  [20:0] adc_tick = 0;
+    reg         adc_req = 1'b0;
+    wire        adc_rdy;
+    wire [13:0] adc_val;
+    reg  [2:0]  adc_rdy_s = 3'b0;
+    reg  [13:0] die_temp = 14'd0;
+    reg  [15:0] die_temp_n = 16'd0;
+    always @(posedge clk50) begin
+        adc_tick <= adc_tick + 1'b1;
+        adc_req <= adc_tick[20];
+        adc_rdy_s <= {adc_rdy_s[1:0], adc_rdy};
+        if (adc_rdy_s[1] && !adc_rdy_s[2]) begin
+            die_temp <= adc_val;
+            die_temp_n <= die_temp_n + 1'b1;
+        end
+    end
+    ADC #(
+        .CLK_SEL(1'b0), .DIV_CTL(2'd0),
+        .CSR_ADC_MODE(1'b0), .CSR_VSEN_CTRL(3'd0),
+        .CSR_SAMPLE_CNT_SEL(3'd4), .CSR_RATE_CHANGE_CTRL(3'd4),
+        .CSR_FSCAL(10'd730), .CSR_OFFSET(-12'd1180)
+    ) u_adc (
+        .CLK(clk50), .VSENCTL(3'd0), .ADCMODE(1'b0), .DRSTN(pll_sys_lock),
+        .ADCREQI(adc_req), .ADCRDY(adc_rdy), .ADCVALUE(adc_val),
+        .MDRP_CLK(1'b0), .MDRP_WDATA(8'd0), .MDRP_A_INC(1'b0), .MDRP_OPCODE(2'd0),
+        .MDRP_RDATA(), .ADCEN(1'b1)
+    );
+
+    jtag_diag u_diag (
+        .tck_pad_i (tck_pad_i),
+        .tms_pad_i (tms_pad_i),
+        .tdi_pad_i (tdi_pad_i),
+        .tdo_pad_o (tdo_pad_o),
+        .page0     (diag_status),
+        .page1     (cnt_core),
+        .page2     (cnt_ddr),
+        .page3     (cnt_tlp),
+        .page4     (cnt_pix),
+        .page5     (rx_tlps),
+        .page6     ({die_temp_n, 2'b00, die_temp}),  // temp: signed C*4
+        .page7     (hdmi_frames)
+    );
 
     wire _unused = &{1'b0, tmds_hpd, tlp_rst, tl_tx_p_credits, tl_tx_np_credits,
                      pcie_ltssm, tl_rx_err, sr_ack, ref_ack};

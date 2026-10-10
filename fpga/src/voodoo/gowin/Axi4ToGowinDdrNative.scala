@@ -74,6 +74,18 @@ case class Axi4ToGowinDdrNative(
   val state = RegInit(State.idle)
   val useTex = RegInit(False)
   val addr = Reg(UInt(32 bits)) init (0)
+  // addr + beatBytes, timing-friendly: Gowin built the 32-bit add as a LUT
+  // ripple chain (~12 ns at 100 MHz). The carry out of the low part and the
+  // incremented high part are registered one cycle ahead; addr never changes
+  // in the cycle before it is incremented (collect / unpack states sit in
+  // between), so the registered terms are always current.
+  private val splitBit = 14
+  val addrHiPlusOne = RegNext(addr(31 downto splitBit) + 1)
+  val addrLoWraps = RegNext(addr(splitBit - 1 downto log2Up(beatBytes)).andR)
+  val addrNextBeat = UInt(32 bits)
+  addrNextBeat(log2Up(beatBytes) - 1 downto 0) := addr(log2Up(beatBytes) - 1 downto 0)
+  addrNextBeat(splitBit - 1 downto log2Up(beatBytes)) := addr(splitBit - 1 downto log2Up(beatBytes)) + 1
+  addrNextBeat(31 downto splitBit) := Mux(addrLoWraps, addrHiPlusOne, addr(31 downto splitBit))
   val beatsLeft = Reg(UInt(9 bits)) init (0)
   val groupIdx = Reg(UInt(log2Up(nativeWords) bits)) init (0)
   val words = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
@@ -109,6 +121,20 @@ case class Axi4ToGowinDdrNative(
 
   io.ddr.cmd := 0
   io.ddr.cmdEn := False
+  // Minimum spacing between native commands. On the Pro Dock, sustained
+  // back-to-back DDR3 traffic browns out / resets the FPGA (see
+  // hw/gowin/ddr3_test/README.md: gap >= 8 UI cycles was clean); keep at
+  // least cmdGapCycles idle cycles after every command.
+  // 16 was tried against the board resets: no effect on them, 7x slower.
+  val cmdGapCycles = 0
+  val cmdGapOk = Bool()
+  if (cmdGapCycles == 0) cmdGapOk := True
+  else {
+    val cmdGap = Reg(UInt(log2Up(cmdGapCycles + 1) bits)) init (0)
+    cmdGapOk := cmdGap === 0
+    when(!cmdGapOk) { cmdGap := cmdGap - 1 }
+    when(io.ddr.cmdEn) { cmdGap := cmdGapCycles }
+  }
   val nativeAddr = UInt(nativeAddrWidth bits)
   nativeAddr := (addr >> nativeAddrShift).resized
   // BL8 commands start on an eight-address boundary. AXI's low address bits
@@ -134,7 +160,6 @@ case class Axi4ToGowinDdrNative(
           if (fbConfig.useId) fbId := io.fb.aw.id
           io.fb.aw.ready := True
           groupIdx := io.fb.aw.addr(beatOffsetBits - 1 downto 2).resized
-          words.foreach(_ := 0)
           strbs.foreach(_ := 0)
           state := State.wrCollect
         } elsewhen (io.fb.ar.valid) {
@@ -152,7 +177,6 @@ case class Axi4ToGowinDdrNative(
           if (texConfig.useId) texId := io.tex.aw.id
           io.tex.aw.ready := True
           groupIdx := io.tex.aw.addr(beatOffsetBits - 1 downto 2).resized
-          words.foreach(_ := 0)
           strbs.foreach(_ := 0)
           state := State.wrCollect
         } elsewhen (io.tex.ar.valid) {
@@ -192,17 +216,16 @@ case class Axi4ToGowinDdrNative(
       // Do not spend a native DDR command on a four-beat AXI group made
       // entirely of alignment padding.
       val groupHasData = Cat(strbs).orR
-      val fire = groupHasData && io.ddr.cmdReady && io.ddr.wrDataRdy
+      val fire = groupHasData && cmdGapOk && io.ddr.cmdReady && io.ddr.wrDataRdy
       io.ddr.cmd := GowinDdrNative.cmdWrite
       io.ddr.cmdEn := fire
       io.ddr.wrDataEn := fire
       io.ddr.wrDataEnd := True
       when(!groupHasData || fire) {
-        addr := addr + beatBytes
+        addr := addrNextBeat
         when(beatsLeft === 0) {
           state := State.wrResp
         } otherwise {
-          words.foreach(_ := 0)
           strbs.foreach(_ := 0)
           state := State.wrCollect
         }
@@ -218,8 +241,8 @@ case class Axi4ToGowinDdrNative(
     }
     is(State.rdIssue) {
       io.ddr.cmd := GowinDdrNative.cmdRead
-      io.ddr.cmdEn := io.ddr.cmdReady
-      when(io.ddr.cmdReady) {
+      io.ddr.cmdEn := io.ddr.cmdReady && cmdGapOk
+      when(io.ddr.cmdReady && cmdGapOk) {
         state := State.rdHold
       }
     }
@@ -248,7 +271,7 @@ case class Axi4ToGowinDdrNative(
         when(lastBeat) {
           state := State.idle
         } elsewhen (unpackIdx === lastIdx) {
-          addr := addr + beatBytes
+          addr := addrNextBeat
           unpackIdx := 0
           state := State.rdIssue
         } otherwise {

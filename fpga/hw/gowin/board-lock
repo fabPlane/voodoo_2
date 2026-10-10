@@ -1,0 +1,51 @@
+#!/bin/bash
+# Serialise access to the Tang Mega 138K Pro dock (JTAG, flash, PCIe tests)
+# between agents / shells. Builds don't need the board and don't take it.
+#
+#   board-lock [-w SECONDS] [-m "why"] -- command args...   run holding the lock
+#   board-lock status                                       who holds it
+#
+# Waits up to -w seconds (default 900) for the lock, printing the holder.
+# Exports TANG_BOARD_LOCK_HELD=1 so tools that lock by themselves
+# (ddr3_jtag.py / board_diag.py) don't deadlock on the same lock.
+# Lock file: $TANG_BOARD_LOCK (default ~/.cache/tang-board/lock); holder info
+# in <lock>.holder. The kernel drops a flock when its holder dies, so a crashed
+# agent never leaves the board locked.
+set -u
+LOCK="${TANG_BOARD_LOCK:-$HOME/.cache/tang-board/lock}"
+HOLDER="$LOCK.holder"
+mkdir -p "$(dirname "$LOCK")"
+touch "$LOCK"
+
+if [ "${1:-}" = status ]; then
+  if flock -n "$LOCK" true; then echo "free"; else echo "held:"; cat "$HOLDER" 2>/dev/null; fi
+  exit 0
+fi
+
+WAIT=900
+WHY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -w) WAIT="$2"; shift 2 ;;
+    -m) WHY="$2"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+[ $# -gt 0 ] || { echo "usage: board-lock [-w secs] [-m why] -- cmd..." >&2; exit 2; }
+
+if [ "${TANG_BOARD_LOCK_HELD:-}" = 1 ]; then exec "$@"; fi
+
+exec 9>>"$LOCK"
+if ! flock -n 9; then
+  echo "[board-lock] board busy, waiting up to ${WAIT}s; holder:" >&2
+  cat "$HOLDER" >&2 2>/dev/null
+  flock -w "$WAIT" 9 || { echo "[board-lock] timed out" >&2; exit 75; }
+fi
+printf 'pid=%s user=%s agent=%s since=%s\nwhy=%s\ncmd=%s\n' "$$" "$(id -un)" \
+  "${AGENT_NAME:-${CLAUDE_SESSION_ID:-unknown}}" "$(date '+%F %T')" "$WHY" "$*" > "$HOLDER"
+export TANG_BOARD_LOCK_HELD=1
+"$@"
+rc=$?
+: > "$HOLDER"
+exit $rc

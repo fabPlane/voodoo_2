@@ -65,7 +65,9 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   )
 
   io.bar <> barBridge.io.axi
-  core.io.cpuBus <> barBridge.io.cpuBus
+  // Host register writes went bridge -> PCI FIFO ingress -> register bank in
+  // one ~30 ns chain; register the CPU bus in between.
+  core.io.cpuBus <> barBridge.io.cpuBus.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
   io.hostWedged := barBridge.io.wedged
 
   // Register every BMB hop (cmd valid + ready, rsp valid). Without these the

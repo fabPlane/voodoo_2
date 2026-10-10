@@ -114,7 +114,7 @@ public:
   }
 
 private:
-  bool wedged() const { return (bar_->status() & pci_bar::kStatusWedged) != 0; }
+  bool wedged() const { return bar_->wedged(); }
 
   bool writeBulk(uint32_t voodooAddr, const uint8_t *data, uint32_t size) {
     uint32_t off = 0;

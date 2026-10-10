@@ -48,9 +48,40 @@ def decode_status(s: int) -> dict:
     }
 
 
+def acquire_board_lock(why: str, wait_s: float = 900):
+    """Take the shared board lock (see ../board-lock) unless a wrapper holds it.
+    Returns the open lock file (keep it alive) or None."""
+    import fcntl
+    if os.environ.get("TANG_BOARD_LOCK_HELD") == "1":
+        return None
+    path = Path(os.environ.get("TANG_BOARD_LOCK", Path.home() / ".cache/tang-board/lock"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+")
+    holder = Path(str(path) + ".holder")
+    deadline = time.time() + wait_s
+    warned = False
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if not warned:
+                print("[board-lock] board busy, waiting; holder:\n" +
+                      (holder.read_text() if holder.exists() else "?"), file=sys.stderr)
+                warned = True
+            if time.time() > deadline:
+                raise SystemExit("[board-lock] timed out waiting for the board")
+            time.sleep(1)
+    holder.write_text(f"pid={os.getpid()} user={os.environ.get('USER','?')} "
+                      f"agent={os.environ.get('AGENT_NAME', os.environ.get('CLAUDE_SESSION_ID','unknown'))} "
+                      f"since={time.strftime('%F %T')}\nwhy={why}\ncmd={' '.join(sys.argv)}\n")
+    return f
+
+
 class Jtag:
     def __init__(self, khz: int, openocd: str, sudo: bool):
         self.proc = None
+        self._lock = acquire_board_lock("JTAG (openocd)")
         cfg = HERE / "openocd-tang-mega-138k-pro.cfg"
         argv = [openocd, "-f", str(cfg), "-c", f"adapter speed {khz}",
                 "-c", f"tcl_port {TCL_PORT}", "-c", "telnet_port disabled",
@@ -59,7 +90,7 @@ class Jtag:
         if sudo and os.geteuid() != 0:
             argv = ["sudo", "-n"] + argv
         # Log to a file: an unread stderr pipe fills up and stalls openocd.
-        self.log_path = Path(os.environ.get("TMPDIR", "/tmp")) / "ddr3_jtag_openocd.log"
+        self.log_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"ddr3_jtag_openocd.{os.getuid()}.log"
         self.log = open(self.log_path, "w")
         self.proc = subprocess.Popen(argv, stdout=self.log, stderr=subprocess.STDOUT)
         deadline = time.time() + 10
@@ -130,6 +161,11 @@ class Jtag:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+        if self._lock is not None:
+            holder = Path(self._lock.name + ".holder")
+            holder.write_text("")
+            self._lock.close()
+            self._lock = None
 
 
 def status(j: Jtag) -> dict:

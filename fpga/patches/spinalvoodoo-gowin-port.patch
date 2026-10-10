@@ -1,0 +1,2213 @@
+diff --git a/emu/sim/harness/sim_harness.cpp b/emu/sim/harness/sim_harness.cpp
+index eda5bba..e888df0 100644
+--- a/emu/sim/harness/sim_harness.cpp
++++ b/emu/sim/harness/sim_harness.cpp
+@@ -474,6 +474,85 @@ static void tick_one(void) {
+     }
+ #endif
+ 
++    /* Watched-pixel TMU sample. The older block above is stale; these names
++     * follow the pixelPipeline_1 hierarchy in the current CoreSim model. */
++    if (watch_x >= 0) {
++        auto r = top->rootp;
++        static int tmu_follow = 0;
++        if (r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__rasterFork_0_valid) {
++            int16_t px = sext12(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__rasterFork_0_payload_coords_0);
++            int16_t py = sext12(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__rasterFork_0_payload_coords_1);
++            if (px == watch_x && py == watch_y) {
++                uint64_t s = r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__rasterFork_0_payload_grads_sGrad;
++                uint64_t t = r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__rasterFork_0_payload_grads_tGrad;
++                uint64_t w = r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__rasterFork_0_payload_grads_wGrad;
++                fprintf(stderr,
++                        "[PIXEL %d,%d] TMU_IN s=%lld t=%lld w=%lld\n",
++                        px, py,
++                        (long long)sext48(s), (long long)sext48(t), (long long)sext48(w));
++                tmu_follow = 20;
++            }
++        }
++        if (tmu_follow > 0) {
++            auto sext18 = [](uint32_t v) -> int32_t {
++                v &= 0x3ffffu;
++                if (v & 0x20000u) v |= 0xfffc0000u;
++                return (int32_t)v;
++            };
++            auto sext14 = [](uint16_t v) -> int16_t {
++                v = (uint16_t)(v & 0x3fffu);
++                if (v & 0x2000u) v = (uint16_t)(v | 0xc000u);
++                return (int16_t)v;
++            };
++            auto sext14s = [](uint16_t v) -> int16_t {
++                v = (uint16_t)(v & 0x3fffu);
++                if (v & 0x2000u) v = (uint16_t)(v | 0xc000u);
++                return (int16_t)v;
++            };
++            fprintf(stderr,
++                    "[PIXEL follow %d] si=%d ti=%d ds=%u dt=%u x=%u,%u y=%u,%u texS=%d\n",
++                    tmu_follow,
++                    (int)sext14s(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_finalSi),
++                    (int)sext14s(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_finalTi),
++                    r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_finalDs,
++                    r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_finalDt,
++                    r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__addressGen_biX0,
++                    r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__addressGen_biX1,
++                    r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__addressGen_biY0,
++                    r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__addressGen_biY1,
++                    (int)sext18(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__lodPipeline_stageLod_payload_texS));
++            tmu_follow--;
++        }
++        if (r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_valid) {
++            int16_t ix = sext12(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_coords_x);
++            int16_t iy = sext12(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_coords_y);
++            if (ix == watch_x && iy == watch_y) {
++                fprintf(stderr, "[CCIN %d,%d] tex=%u,%u,%u iter=%u,%u,%u\n", ix, iy,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_r,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_g,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_b,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_iterated_r,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_iterated_g,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_iterated_b);
++            }
++        }
++        if (r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1_io_output_valid) {
++            int16_t cx = sext12(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_output_payload_coords_x);
++            int16_t cy = sext12(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_output_payload_coords_y);
++            if (cx == watch_x && cy == watch_y) {
++                fprintf(stderr, "[PIXEL %d,%d] sh3=%u base3=%u CC tex=%u,%u,%u out=%u,%u,%u\n", cx, cy,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_meta_config_texTables_texShift_3,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_meta_config_texTables_texBase_3,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_r,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_g,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_b,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_output_payload_color_r,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_output_payload_color_g,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_output_payload_color_b);
++            }
++        }
++    }
++
+     /* Check cycle limit (sim_time/2 = tick count) */
+     if (cycle_limit && (sim_time / 2) >= cycle_limit) {
+         fprintf(stderr, "[sim_harness] Cycle limit reached (%lu ticks), shutting down.\n",
+diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
+index d163ab7..7bea856 100644
+--- a/emu/test/trace_test.cpp
++++ b/emu/test/trace_test.cpp
+@@ -680,6 +680,14 @@ int main(int argc, char **argv) {
+             break;
+     }
+ 
++    if (!ref_only && watch_x >= 0) {
++        const uint32_t probes[] = {168, 232, 172200, 172264};
++        for (uint32_t off : probes) {
++            uint32_t w = 0;
++            sim_read_tex(off, &w, 1);
++            fprintf(stderr, "[trace_test] TEX[%u]=0x%08x\n", off, w);
++        }
++    }
+     fprintf(stderr, "[trace_test] Replay %s: %u/%u packed entries (%llu logical commands), %d triangles, %d tex writes, %d fb writes, %d swaps\n",
+             replay_truncated ? "truncated" : "complete",
+             replay_truncated ? (last_entry_replayed + 1) : num_entries,
+diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
+index 100f1c6..53be16e 100644
+--- a/src/voodoo/Core.scala
++++ b/src/voodoo/Core.scala
+@@ -36,6 +36,27 @@ object Core {
+     alignment = BmbParameter.BurstAlignement.BYTE
+   )
+ 
++  /** Number of fb* memory ports a board/sim wrapper merges into one memory. */
++  val fbMemPortCount = 5
++
++  /** Params for the single memory behind a BmbArbiter merging the fbMemPortCount
++    * fb* ports. The arbiter appends the input index below the input source, so
++    * the shared side needs log2Up(fbMemPortCount) more source bits than
++    * fbMemBmbParams; with the same width the upper source bits are dropped and
++    * responses come back misrouted (e.g. LFB reads to the scanout reader,
++    * direct-miss reads tagged as prefetch data), wedging the shared port.
++    */
++  def fbMemSharedBmbParams(c: Config) = BmbParameter(
++    addressWidth = c.addressWidth.value,
++    dataWidth = 32,
++    sourceWidth = fbMemBmbParams(c).access.sourceWidth + log2Up(fbMemPortCount),
++    contextWidth = 0,
++    lengthWidth = c.memBurstLengthWidth,
++    canRead = true,
++    canWrite = true,
++    alignment = BmbParameter.BurstAlignement.BYTE
++  )
++
+   def texMemBmbParams(c: Config) = BmbParameter(
+     addressWidth = c.addressWidth.value,
+     dataWidth = 32,
+@@ -173,8 +194,11 @@ case class Core(c: Config) extends Component {
+   framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
+   framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
+   pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
+-  framebufferMem.io.scanoutPrefetchReq << hdmiScanout.io.prefetchReq
+-  framebufferMem.io.scanoutReadReq << hdmiScanout.io.readReq
++  // Register the scanout requests: their addresses come from fbiInit1 stride
++  // math and otherwise chain straight into the framebuffer read arbiters.
++  // Both get the same latency, so prefetch-before-read order is kept.
++  framebufferMem.io.scanoutPrefetchReq << hdmiScanout.io.prefetchReq.m2sPipe()
++  framebufferMem.io.scanoutReadReq << hdmiScanout.io.readReq.m2sPipe()
+   hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
+   framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
+   pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
+diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
+index 9effb48..2e25087 100644
+--- a/src/voodoo/CoreSim.scala
++++ b/src/voodoo/CoreSim.scala
+@@ -31,12 +31,12 @@ case class CoreSim(
+ 
+   def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
+ 
+-  val fbWriteRam = simRam(Core.fbMemBmbParams(c), 4 * 1024 * 1024)
++  val fbWriteRam = simRam(Core.fbMemSharedBmbParams(c), 4 * 1024 * 1024)
+   val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024)
+ 
+   val fbArbiter = BmbArbiter(
+-    inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
+-    outputParameter = Core.fbMemBmbParams(c),
++    inputsParameter = Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)),
++    outputParameter = Core.fbMemSharedBmbParams(c),
+     lowerFirstPriority = true
+   )
+ 
+diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
+index 226d60e..1c4285f 100644
+--- a/src/voodoo/bus/PciFifo.scala
++++ b/src/voodoo/bus/PciFifo.scala
+@@ -97,20 +97,57 @@ case class PciFifo(
+   // ========================================================================
+   // Address categorization signals (assigned in addPrePopTask)
+   // ========================================================================
++  // Decode of the incoming (not yet registered) command address, assigned in addPrePopTask.
+   private val decodeInfo = AddressDecodeInfo()
+-  private val fifoBypass = decodeInfo.fifoBypass.setName("pciFifo_fifoBypass")
+-  private val syncRequired = decodeInfo.syncRequired.setName("pciFifo_syncRequired")
++
++  // Timing: CPU commands enter through a skid buffer (registered ready towards the host
++  // bridge) and a register stage that also holds the address decode. Writes held here
++  // count as "FIFO not empty" (see fifoEmpty), so LFB accesses still wait for them.
++  private case class CpuCmdDecoded() extends Bundle {
++    val cmd = BmbCmd(busParams)
++    val dec = AddressDecodeInfo()
++  }
++  private val cpuSkid = new Area {
++    val valid = RegInit(False)
++    val payload = Reg(BmbCmd(busParams))
++    val out = Stream(BmbCmd(busParams))
++    out.valid := io.cpuSide.cmd.valid || valid
++    out.payload := valid ? payload | io.cpuSide.cmd.fragment
++    io.cpuSide.cmd.ready := !valid
++    when(!valid && io.cpuSide.cmd.valid && !out.ready) {
++      valid := True
++      payload := io.cpuSide.cmd.fragment
++    }
++    when(valid && out.ready) {
++      valid := False
++    }
++  }
++  private val cpuCmdIn = cpuSkid.out
++  private val cpuCmd = cpuCmdIn
++    .translateWith {
++      val o = CpuCmdDecoded()
++      o.cmd := cpuCmdIn.payload
++      o.dec := decodeInfo
++      o
++    }
++    .m2sPipe()
++  private val cpuCmdWriteHeld =
++    (cpuSkid.valid && cpuSkid.payload.opcode === Bmb.Cmd.Opcode.WRITE) ||
++      (cpuCmd.valid && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.WRITE)
++
++  private val fifoBypass = cpuCmd.dec.fifoBypass.setName("pciFifo_fifoBypass")
++  private val syncRequired = cpuCmd.dec.syncRequired.setName("pciFifo_syncRequired")
+ 
+   // Float alias conversion signals
+-  private val isFloatAlias = decodeInfo.isFloatAlias
+-  private val floatTargetAddr = decodeInfo.floatTargetAddr
+-  private val floatShiftAmount = decodeInfo.floatShiftAmount
++  private val isFloatAlias = cpuCmd.dec.isFloatAlias
++  private val floatTargetAddr = cpuCmd.dec.floatTargetAddr
++  private val floatShiftAmount = cpuCmd.dec.floatShiftAmount
+ 
+   // Detection signals: isWriteCmd uses cmd.valid (no ready dependency) for routing decisions.
+   // doWriteImmediate uses cmd.fire for response/push (registered paths, no combinatorial loop).
+-  private val isWriteCmd = io.cpuSide.cmd.valid && io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.WRITE
++  private val isWriteCmd = cpuCmd.valid && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.WRITE
+   private val doWriteImmediate =
+-    (io.cpuSide.cmd.fire && io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.WRITE).allowPruning()
++    (cpuCmd.fire && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.WRITE).allowPruning()
+ 
+   private case class StagedWrite() extends Bundle {
+     val address = UInt(busAddrWidth bits)
+@@ -170,10 +207,10 @@ case class PciFifo(
+     clearStaged(stagedWriteTx)
+ 
+     when(queueableCpuWrite) {
+-      stagedWriteTx.valid := io.cpuSide.cmd.valid
+-      stagedWriteTx.address := io.cpuSide.cmd.address
+-      stagedWriteTx.data := io.cpuSide.cmd.data
+-      stagedWriteTx.mask := io.cpuSide.cmd.mask
++      stagedWriteTx.valid := cpuCmd.valid
++      stagedWriteTx.address := cpuCmd.cmd.address
++      stagedWriteTx.data := cpuCmd.cmd.data
++      stagedWriteTx.mask := cpuCmd.cmd.mask
+       stagedWriteTx.syncRequired := syncRequired
+       stagedWriteTx.isFloatAlias := isFloatAlias
+       stagedWriteTx.floatTargetAddr := floatTargetAddr
+@@ -283,6 +320,13 @@ case class PciFifo(
+   // ========================================================================
+   // Drain blocking logic
+   // ========================================================================
++  // Timing: one register stage between the FIFO drain / CPU passthrough mux and the
++  // register bank. The regBank side is always ready, so every accepted command lands
++  // exactly one cycle later; floatShadow / syncDrained are delayed to match.
++  private val regCmdRaw = Stream(Fragment(BmbCmd(busParams)))
++  private val regCmdStage = regCmdRaw.m2sPipe()
++  io.regSide.cmd << regCmdStage
++
+   private val drainControl = new Area {
+     val canDrain = Bool()
+     canDrain := True
+@@ -294,6 +338,15 @@ case class PciFifo(
+     when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
+       canDrain := False
+     }
++    // The previous write (e.g. a triangle command) is still in the issue stage
++    // and not yet visible in pipelineBusy: let it land first.
++    when(pciFifo.io.pop.syncRequired && issuedWrite.valid) {
++      canDrain := False
++    }
++    // ... and the same for the regBank stage after it.
++    when(pciFifo.io.pop.syncRequired && regCmdStage.valid) {
++      canDrain := False
++    }
+ 
+     val commandStreamBlocked = Bool()
+     commandStreamBlocked := False
+@@ -303,7 +356,8 @@ case class PciFifo(
+ 
+     val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
+     fifoEmpty.simPublic()
+-    fifoEmpty := !pciFifo.io.pop.valid && !issuedWrite.valid
++    fifoEmpty := !pciFifo.io.pop.valid && !issuedWrite.valid && !cpuCmdWriteHeld &&
++      !(regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE)
+     io.fifoEmpty := fifoEmpty
+   }
+   private val canDrain = drainControl.canDrain
+@@ -324,11 +378,12 @@ case class PciFifo(
+     io.texDrain.pciAddr := drainedWrite.texPciAddr
+     io.texDrain.data := drainedWrite.data
+     io.texDrain.mask := drainedWrite.mask
+-    io.floatShadow.valid := isRegDrain && drainedWrite.fire && drainedWrite.hasFloatShadow
+-    io.floatShadow.address := drainedWrite.address
+-    io.floatShadow.raw := drainedWrite.floatShadowRaw
++    val floatShadowNow = isRegDrain && drainedWrite.fire && drainedWrite.hasFloatShadow
++    io.floatShadow.valid := RegNext(floatShadowNow) init (False)
++    io.floatShadow.address := RegNext(drainedWrite.address)
++    io.floatShadow.raw := RegNext(drainedWrite.floatShadowRaw)
+ 
+-    io.syncDrained := isRegDrain && drainedWrite.fire && drainedWrite.syncRequired
++    io.syncDrained := RegNext(isRegDrain && drainedWrite.fire && drainedWrite.syncRequired) init (False)
+   }
+   val isTexDrain = drainRoute.isTexDrain
+   val isRegDrain = drainRoute.isRegDrain
+@@ -341,31 +396,31 @@ case class PciFifo(
+     // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
+     // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
+     val doWriteDirect = isWriteCmd && fifoBypass
+-    val cpuPassthrough = io.cpuSide.cmd.valid &&
+-      (io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.READ || doWriteDirect)
++    val cpuPassthrough = cpuCmd.valid &&
++      (cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.READ || doWriteDirect)
+     val doRegDrain = isRegDrain && !cpuPassthrough
+ 
+-    io.regSide.cmd.valid := cpuPassthrough || doRegDrain
+-    io.regSide.cmd.last := True
+-    io.regSide.cmd.source := io.cpuSide.cmd.source
++    regCmdRaw.valid := cpuPassthrough || doRegDrain
++    regCmdRaw.last := True
++    regCmdRaw.source := cpuCmd.cmd.source
+     if (busParams.access.contextWidth > 0)
+-      io.regSide.cmd.context := io.cpuSide.cmd.context
++      regCmdRaw.context := cpuCmd.cmd.context
+ 
+     when(doRegDrain) {
+-      io.regSide.cmd.opcode := Bmb.Cmd.Opcode.WRITE
+-      io.regSide.cmd.address := drainedWrite.address
+-      io.regSide.cmd.data := drainedWrite.data
+-      io.regSide.cmd.mask := drainedWrite.mask
+-      io.regSide.cmd.length := 3
++      regCmdRaw.opcode := Bmb.Cmd.Opcode.WRITE
++      regCmdRaw.address := drainedWrite.address
++      regCmdRaw.data := drainedWrite.data
++      regCmdRaw.mask := drainedWrite.mask
++      regCmdRaw.length := 3
+     } otherwise {
+-      io.regSide.cmd.opcode := io.cpuSide.cmd.opcode
+-      io.regSide.cmd.address := io.cpuSide.cmd.address
+-      io.regSide.cmd.data := io.cpuSide.cmd.data
+-      io.regSide.cmd.mask := io.cpuSide.cmd.mask
+-      io.regSide.cmd.length := io.cpuSide.cmd.length
++      regCmdRaw.opcode := cpuCmd.cmd.opcode
++      regCmdRaw.address := cpuCmd.cmd.address
++      regCmdRaw.data := cpuCmd.cmd.data
++      regCmdRaw.mask := cpuCmd.cmd.mask
++      regCmdRaw.length := cpuCmd.cmd.length
+     }
+ 
+-    drainedWrite.ready := (isRegDrain && !cpuPassthrough && io.regSide.cmd.ready) ||
++    drainedWrite.ready := (isRegDrain && !cpuPassthrough && regCmdRaw.ready) ||
+       (isTexDrain && io.texDrain.ready)
+   }
+   private val doWriteDirect = regSideMux.doWriteDirect
+@@ -383,16 +438,16 @@ case class PciFifo(
+     io.regSide.rsp.ready := True
+ 
+     io.cpuSide.rsp.valid := RegNext(
+-      doWriteImmediate || (io.cpuSide.cmd.fire && io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.READ)
++      doWriteImmediate || (cpuCmd.fire && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.READ)
+     ) init (False)
+     io.cpuSide.rsp.last := True
+     io.cpuSide.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
+-    io.cpuSide.rsp.source := RegNext(io.cpuSide.cmd.source)
++    io.cpuSide.rsp.source := RegNext(cpuCmd.cmd.source)
+     if (busParams.access.contextWidth > 0)
+-      io.cpuSide.rsp.context := RegNext(io.cpuSide.cmd.context)
++      io.cpuSide.rsp.context := RegNext(cpuCmd.cmd.context)
+ 
+     val pendingRead = RegInit(False)
+-    when(io.cpuSide.cmd.fire && io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.READ) {
++    when(cpuCmd.fire && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.READ) {
+       pendingRead := True
+     }
+     when(pendingRead && io.regSide.rsp.valid) {
+@@ -414,18 +469,18 @@ case class PciFifo(
+   // Stall logic
+   // ========================================================================
+   private val cpuReady = new Area {
+-    io.cpuSide.cmd.ready := True
++    cpuCmd.ready := True
+     when(queueableCpuWrite) {
+-      io.cpuSide.cmd.ready := stageFifo.io.push.ready
++      cpuCmd.ready := stageFifo.io.push.ready
+     }
+-    when(io.cpuSide.cmd.valid && io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.READ && pendingRead) {
+-      io.cpuSide.cmd.ready := False
++    when(cpuCmd.valid && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.READ && pendingRead) {
++      cpuCmd.ready := False
+     }
+     when(
+-      io.cpuSide.cmd.valid && io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.READ && !pendingRead &&
+-        !io.regSide.cmd.ready
++      cpuCmd.valid && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.READ && !pendingRead &&
++        !regCmdRaw.ready
+     ) {
+-      io.cpuSide.cmd.ready := False
++      cpuCmd.ready := False
+     }
+   }
+ 
+@@ -453,33 +508,33 @@ case class PciFifo(
+     println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
+ 
+     // Default: unregistered addresses bypass FIFO
+-    fifoBypass := True
+-    switch(io.cpuSide.cmd.address) {
++    decodeInfo.fifoBypass := True
++    switch(cpuCmdIn.payload.address) {
+       for (addr <- fifoQueueCases) {
+         is(U(addr, busAddrWidth bits)) {
+-          fifoBypass := False
++          decodeInfo.fifoBypass := False
+         }
+       }
+     }
+ 
+-    syncRequired := False
+-    switch(io.cpuSide.cmd.address) {
++    decodeInfo.syncRequired := False
++    switch(cpuCmdIn.payload.address) {
+       for (addr <- syncCases) {
+         is(U(addr, busAddrWidth bits)) {
+-          syncRequired := True
++          decodeInfo.syncRequired := True
+         }
+       }
+     }
+ 
+     // Float alias address decode
+-    isFloatAlias := False
+-    floatTargetAddr := 0
+-    floatShiftAmount := 0
++    decodeInfo.isFloatAlias := False
++    decodeInfo.floatTargetAddr := 0
++    decodeInfo.floatShiftAmount := 0
+     for ((floatAddr, config) <- floatAliases) {
+-      when(io.cpuSide.cmd.address === U(floatAddr, busAddrWidth bits)) {
+-        isFloatAlias := True
+-        floatTargetAddr := U(config.targetAddr, busAddrWidth bits)
+-        floatShiftAmount := U(30 - config.fracBits, 5 bits)
++      when(cpuCmdIn.payload.address === U(floatAddr, busAddrWidth bits)) {
++        decodeInfo.isFloatAlias := True
++        decodeInfo.floatTargetAddr := U(config.targetAddr, busAddrWidth bits)
++        decodeInfo.floatShiftAmount := U(30 - config.fracBits, 5 bits)
+       }
+     }
+ 
+@@ -490,50 +545,59 @@ case class PciFifo(
+     if (commandAddresses.nonEmpty) {
+       for ((addr, idx) <- commandAddresses.zipWithIndex) {
+         when(pciFifo.io.pop.address === U(addr, busAddrWidth bits)) {
+-          commandStreamBlocked := !io.commandReady(idx)
++          // commandReady only reflects writes that already reached the regBank; hold a
++          // second write to the same command register while one is still in the
++          // issue / regBank stages so it can't be dropped.
++          val sameInFlight =
++            (issuedWrite.valid && !issuedWrite.isTexture &&
++              issuedWrite.address === U(addr, busAddrWidth bits)) ||
++              (regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE &&
++                regCmdStage.address === U(addr, busAddrWidth bits))
++          commandStreamBlocked := !io.commandReady(idx) || sameInFlight
+         }
+       }
+     }
+   })
+ 
+   GenerationFlags.formal {
+-    assert(io.fifoEmpty === (!pciFifo.io.pop.valid && !issuedWrite.valid))
++    assert(io.fifoEmpty === (!pciFifo.io.pop.valid && !issuedWrite.valid && !cpuCmdWriteHeld &&
++      !(regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE)))
+     assert(isTexDrain === (drainedWrite.valid && drainedWrite.isTexture))
+     assert(isRegDrain === (drainedWrite.valid && !drainedWrite.isTexture))
+     assert(io.texDrain.valid === isTexDrain)
+     assert(
+-      io.floatShadow.valid === (isRegDrain && drainedWrite.fire && drainedWrite.hasFloatShadow)
++      drainRoute.floatShadowNow === (isRegDrain && drainedWrite.fire && drainedWrite.hasFloatShadow)
+     )
+-    assert(io.syncDrained === (isRegDrain && drainedWrite.fire && drainedWrite.syncRequired))
++    
+     assert(
+-      drainedWrite.ready === ((isRegDrain && !cpuPassthrough && io.regSide.cmd.ready) ||
++      drainedWrite.ready === ((isRegDrain && !cpuPassthrough && regCmdRaw.ready) ||
+         (isTexDrain && io.texDrain.ready))
+     )
+-    assert(io.regSide.cmd.valid === (cpuPassthrough || doRegDrain))
++    assert(regCmdRaw.valid === (cpuPassthrough || doRegDrain))
+ 
+     when(doWriteDirect) {
+       assert(cpuPassthrough)
+     }
+ 
+     when(cpuPassthrough) {
+-      assert(io.regSide.cmd.valid)
++      assert(regCmdRaw.valid)
+       assert(!doRegDrain)
+-      assert(io.regSide.cmd.opcode === io.cpuSide.cmd.opcode)
+-      assert(io.regSide.cmd.address === io.cpuSide.cmd.address)
+-      assert(io.regSide.cmd.data === io.cpuSide.cmd.data)
+-      assert(io.regSide.cmd.mask === io.cpuSide.cmd.mask)
+-      assert(io.regSide.cmd.length === io.cpuSide.cmd.length)
+-      assert(io.regSide.cmd.last)
++      assert(regCmdRaw.opcode === cpuCmd.cmd.opcode)
++      assert(regCmdRaw.address === cpuCmd.cmd.address)
++      assert(regCmdRaw.data === cpuCmd.cmd.data)
++      assert(regCmdRaw.mask === cpuCmd.cmd.mask)
++      assert(regCmdRaw.length === cpuCmd.cmd.length)
++      assert(regCmdRaw.last)
+     }
+ 
+     when(doRegDrain) {
+-      assert(io.regSide.cmd.valid)
+-      assert(io.regSide.cmd.opcode === Bmb.Cmd.Opcode.WRITE)
+-      assert(io.regSide.cmd.address === drainedWrite.address)
+-      assert(io.regSide.cmd.data === drainedWrite.data)
+-      assert(io.regSide.cmd.mask === drainedWrite.mask)
+-      assert(io.regSide.cmd.length === 3)
+-      assert(io.regSide.cmd.last)
++      assert(regCmdRaw.valid)
++      assert(regCmdRaw.opcode === Bmb.Cmd.Opcode.WRITE)
++      assert(regCmdRaw.address === drainedWrite.address)
++      assert(regCmdRaw.data === drainedWrite.data)
++      assert(regCmdRaw.mask === drainedWrite.mask)
++      assert(regCmdRaw.length === 3)
++      assert(regCmdRaw.last)
+     }
+ 
+     when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
+@@ -550,8 +614,8 @@ case class PciFifo(
+       assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
+     }
+ 
+-    when(io.cpuSide.cmd.valid && io.cpuSide.cmd.opcode === Bmb.Cmd.Opcode.READ && pendingRead) {
+-      assert(!io.cpuSide.cmd.ready)
++    when(cpuCmd.valid && cpuCmd.cmd.opcode === Bmb.Cmd.Opcode.READ && pendingRead) {
++      assert(!cpuCmd.ready)
+     }
+ 
+     when(floatWriteRequest && !floatConvertInFlight) {
+@@ -581,12 +645,10 @@ case class PciFifo(
+       assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
+     }
+ 
+-    when(io.floatShadow.valid) {
++    when(drainRoute.floatShadowNow) {
+       assert(isRegDrain)
+       assert(drainedWrite.fire)
+       assert(drainedWrite.hasFloatShadow)
+-      assert(io.floatShadow.address === drainedWrite.address)
+-      assert(io.floatShadow.raw === drainedWrite.floatShadowRaw)
+     }
+ 
+     if (formalStrong) {
+diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
+index c23fa0b..00fd9c2 100644
+--- a/src/voodoo/core/FramebufferMemSubsystem.scala
++++ b/src/voodoo/core/FramebufferMemSubsystem.scala
+@@ -95,9 +95,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+   }
+ 
+   if (useCachedReaders) {
+-    io.colorReadReq.s2mPipe() >> colorReaderCached.io.readReq
++    io.colorReadReq.s2mPipe().m2sPipe() >> colorReaderCached.io.readReq
+     io.colorReadRsp << colorReaderCached.io.readRsp
+-    io.auxReadReq.s2mPipe() >> auxReaderCached.io.readReq
++    io.auxReadReq.s2mPipe().m2sPipe() >> auxReaderCached.io.readReq
+     io.auxReadRsp << auxReaderCached.io.readRsp
+     colorReaderCached.io.prefetchReq <> io.prefetchColor
+     auxReaderCached.io.prefetchReq <> io.prefetchAux
+diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
+index 7797711..9b9380f 100644
+--- a/src/voodoo/core/PixelPipeline.scala
++++ b/src/voodoo/core/PixelPipeline.scala
+@@ -367,8 +367,10 @@ case class PixelPipeline(c: Config) extends Component {
+   auxPrefetcher.io.yOriginEnable := yOriginEnable
+   auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
+ 
+-  io.prefetchColor << colorPrefetcher.io.readReq
+-  io.prefetchAux << auxPrefetcher.io.readReq
++  // Timing: register the span prefetch addresses (y-origin swap + row multiply) before
++  // the fb readers' span queues. Pixel reads trail the prefetch by many cycles.
++  io.prefetchColor << colorPrefetcher.io.readReq.m2sPipe()
++  io.prefetchAux << auxPrefetcher.io.readReq.m2sPipe()
+ 
+   val ckBits = colorCombine.io.output.payload.chromaKey
+   val ckR = ckBits(23 downto 16).asUInt
+@@ -653,8 +655,9 @@ case class PixelPipeline(c: Config) extends Component {
+   io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
+   io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
+ 
++  // triangleSetup.busy also covers the multi-cycle setup before o.valid.
+   val pipelineBusySignal =
+-    triangleSetup.o.valid || rasterizer.running || tmuInputValid ||
++    triangleSetup.busy || rasterizer.running || tmuInputValid ||
+       tmuBusy || fbAccess.io.busy ||
+       colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
+       writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
+@@ -666,7 +669,10 @@ case class PixelPipeline(c: Config) extends Component {
+       forColorWrite.valid || forAuxWrite.valid ||
+       colorWriteInput.valid || auxWriteInput.valid ||
+       io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
+-      io.externalBusy.swapbufferCmd || io.externalBusy.swapWaiting || lfb.io.busy
++      io.externalBusy.swapbufferCmd || io.externalBusy.swapWaiting || lfb.io.busy ||
++      // Triangle commands queued ahead of setup, and the raster -> TMU stage,
++      // so a following Sync=Yes register write (color0/1, ...) waits for them.
++      io.triangleCmd.valid || io.ftriangleCmd.valid || rasterYPipe.valid
+ 
+   // Framebuffer writeback can drain to external memory after the ordered draw pipeline is idle.
+   // Status/sync must not wait on writeback-only busy, but LFB reads still must for coherency.
+diff --git a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala b/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
+index bf8fd33..787dc1c 100644
+--- a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
++++ b/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
+@@ -352,10 +352,15 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+     val activePendingWordComplete = activePendingMask.andR
+     val activeNextAddr = addrPlusWords(activeStartAddr, activeCount.resized)
+     val sameWordMerge = activeValid && writeReqPipe.payload.address === activePendingAddr
++    // A run must not cross a 4 KiB page: BMB bursts may not, and the
++    // downstream BmbAligner / BmbLengthFixer only increment the in-page
++    // address bits (on the Gowin board the tail of a page-crossing run
++    // wrapped back to the start of the same page). Start a new run instead.
++    val nextStartsPage = activeNextAddr(11 downto 0) === 0
+     val sequentialAppend = activeValid && activeCount =/= U(
+       runDepth,
+       countWidth bits
+-    ) && writeReqPipe.payload.address === activeNextAddr
++    ) && writeReqPipe.payload.address === activeNextAddr && !nextStartsPage
+     val needsRotate = activeValid && !(sameWordMerge || sequentialAppend)
+     val canRotate = drainState === DrainState.Idle && !slotValid(otherSlot)
+ 
+@@ -385,7 +390,11 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+         }
+ 
+         io.mem.cmd.valid := drainPending || slotPopValid(drainSlot)
+-        io.mem.cmd.fragment.address := drainAddress
++        // BMB carries the burst's start address on every beat. Advancing it per
++        // beat (drainAddress) broke BmbLengthFixer's split of a 1 KiB line
++        // into 256-byte AXI bursts: on the Gowin board only alternate 256-byte
++        // chunks of each line were written. drainIndex starts at 0.
++        io.mem.cmd.fragment.address := slotStartAddr(drainSlot)
+         io.mem.cmd.fragment.opcode := Bmb.Cmd.Opcode.WRITE
+         io.mem.cmd.fragment.length := drainLength
+         io.mem.cmd.fragment.source := 1
+diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
+index 9d1e15f..1371abc 100644
+--- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
++++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
+@@ -216,8 +216,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   // available), fall back to an ordered direct read.
+   val directMissNeeded = !consumeExpectedValid ||
+     (consumeExpectedValid && !consumeAddrMatches && !consumeAddrAhead)
+-  val directMissCmdValid = io.readReq.valid && directMissNeeded && directMissLaneQueue.io.push.ready
+-  val prefetchCmdValid = spanIssueQueue.io.pop.valid && issuedSpanQueue.io.push.ready
++  // Responses share one in-order memory port with the other framebuffer
++  // clients (write buffers, the other plane's reader, scanout).  A response
++  // this reader cannot take blocks everything behind it, and draining it can
++  // depend on those blocked clients (the pixel pipeline consumes lanes only as
++  // its writes retire).  So only issue a read once the space its data will land
++  // in is reserved:
++  //  - prefetch bursts: laneFifo lanes, tracked by laneCredits (lanes issued
++  //    and not yet popped, i.e. in flight + pendingLane + queued);
++  //  - direct misses: readRspFifo slots (cached hits stop while one is
++  //    outstanding, so only direct-miss responses push behind them).
++  val laneCreditWidth = log2Up(lineBufferLanes + 1) + 1
++  val laneCredits = Reg(UInt(laneCreditWidth bits)) init (0)
++  val prefetchLaneCount = spanIssueQueue.io.pop.payload.laneCount.resize(laneCreditWidth bits)
++  val prefetchLanesFit =
++    laneCredits === 0 || (laneCredits + prefetchLaneCount) <= U(lineBufferLanes, laneCreditWidth bits)
++  val directMissRspRoom =
++    readRspFifo.io.availability > directMissLaneQueue.io.occupancy.resize(readRspFifo.io.availability.getWidth bits)
++  val directMissCmdValid =
++    io.readReq.valid && directMissNeeded && directMissLaneQueue.io.push.ready && directMissRspRoom
++  val prefetchCmdValid = spanIssueQueue.io.pop.valid && issuedSpanQueue.io.push.ready && prefetchLanesFit
+   val directMissCmdSelected = directMissCmdValid
+   val prefetchCmdSelected = prefetchCmdValid && !directMissCmdSelected
+ 
+@@ -234,12 +252,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   internalMem.cmd.fragment.data := 0
+   internalMem.cmd.fragment.mask := 0
+   internalMem.cmd.last := True
+-  spanIssueQueue.io.pop.ready := internalMem.cmd.ready && issuedSpanQueue.io.push.ready && !directMissCmdSelected
++  spanIssueQueue.io.pop.ready := internalMem.cmd.ready && prefetchCmdSelected
+   issuedSpanQueue.io.push.valid := internalMem.cmd.fire && prefetchCmdSelected
+   issuedSpanQueue.io.push.payload := spanIssueQueue.io.pop.payload
+   directMissLaneQueue.io.push.valid := internalMem.cmd.fire && directMissCmdSelected
+   directMissLaneQueue.io.push.payload := io.readReq.address(1)
+   issuedSpanQueue.io.pop.ready := False
++  val laneCreditAdd = (internalMem.cmd.fire && prefetchCmdSelected) ? prefetchLaneCount | U(0, laneCreditWidth bits)
++  val laneCreditSub = laneFifo.io.pop.fire ? U(1, laneCreditWidth bits) | U(0, laneCreditWidth bits)
++  laneCredits := laneCredits + laneCreditAdd - laneCreditSub
+   when(internalMem.cmd.fire && prefetchCmdSelected) {
+     fillBurstCount := fillBurstCount + 1
+     fillBurstBeats := fillBurstBeats + spanIssueQueue.io.pop.payload.wordCount.resize(32 bits)
+diff --git a/src/voodoo/frontend/Lfb.scala b/src/voodoo/frontend/Lfb.scala
+index aeba713..06fa63b 100644
+--- a/src/voodoo/frontend/Lfb.scala
++++ b/src/voodoo/frontend/Lfb.scala
+@@ -86,6 +86,11 @@ case class Lfb(c: Config) extends Component {
+   val capturedAddr = Reg(UInt(22 bits))
+   val capturedData = Reg(Bits(32 bits))
+   val capturedMask = Reg(Bits(4 bits)) init (0)
++  // The write can take several cycles. Later FIFO commands must not retarget it.
++  val capturedWriteMode = Reg(LfbMode())
++  when(io.bus.cmd.fire && io.bus.cmd.opcode =/= Bmb.Cmd.Opcode.READ) {
++    capturedWriteMode := io.regs.lfbMode
++  }
+   val capturedIsRead = Reg(Bool()) init (False)
+   val rspPending = Reg(Bool()) init (False)
+ 
+@@ -98,8 +103,8 @@ case class Lfb(c: Config) extends Component {
+ 
+   // Is this a dual-pixel format?
+   val isDualPixel =
+-    io.regs.lfbMode.writeFormat === 0 || io.regs.lfbMode.writeFormat === 1 || io.regs.lfbMode.writeFormat === 2 ||
+-      io.regs.lfbMode.writeFormat === 3 || io.regs.lfbMode.writeFormat === 15
++    capturedWriteMode.writeFormat === 0 || capturedWriteMode.writeFormat === 1 || capturedWriteMode.writeFormat === 2 ||
++      capturedWriteMode.writeFormat === 3 || capturedWriteMode.writeFormat === 15
+ 
+   // State machine: 3 bits to hold 6 states
+   val state = RegInit(U(0, 3 bits))
+@@ -111,8 +116,10 @@ case class Lfb(c: Config) extends Component {
+   val stateRresp = U(5, 3 bits)
+   val stateRwait = U(6, 3 bits)
+ 
+-  // Accept BMB commands only in IDLE and when no pending response
+-  io.bus.cmd.ready := (state === stateIdle) && !rspPending
++  // Accept a command only once earlier PCI-FIFO writes have committed. LFB
++  // accesses are outside the FIFO, so without this gate a depth probe sees
++  // the previous lfbMode and is decoded as color.
++  io.bus.cmd.ready := (state === stateIdle) && !rspPending && io.pciFifoEmpty
+ 
+   // Apply word swap and byte swizzle to incoming write data
+   val afterByteSwizzle =
+@@ -138,7 +145,7 @@ case class Lfb(c: Config) extends Component {
+   }
+ 
+   // Address decode: depends on format stride (for writes)
+-  val is32bitStride = io.regs.lfbMode.writeFormat === 4 || io.regs.lfbMode.writeFormat === 5
++  val is32bitStride = capturedWriteMode.writeFormat === 4 || capturedWriteMode.writeFormat === 5
+   val pixelX = UInt(10 bits)
+   val pixelY = UInt(10 bits)
+   when(is32bitStride) {
+@@ -231,7 +238,7 @@ case class Lfb(c: Config) extends Component {
+   }
+ 
+   // Format decode logic
+-  switch(io.regs.lfbMode.writeFormat) {
++  switch(capturedWriteMode.writeFormat) {
+     is(0) { // RGB565 - dual pixel
+       val rgb = expandRgb565(pixelData16)
+       decodedR := rgb.r; decodedG := rgb.g; decodedB := rgb.b
+@@ -248,12 +255,12 @@ case class Lfb(c: Config) extends Component {
+       decodedRgbWrite := True; decodedAuxWrite := io.regs.fbzMode.enableAlphaPlanes
+     }
+     is(4) { // XRGB8888 - single pixel
+-      val (r, g, b) = decodeArgb8888(pixelData32, io.regs.lfbMode.rgbaLanes)
++      val (r, g, b) = decodeArgb8888(pixelData32, capturedWriteMode.rgbaLanes)
+       decodedR := r; decodedG := g; decodedB := b
+       decodedRgbWrite := True; decodedAuxWrite := io.regs.fbzMode.enableAlphaPlanes
+     }
+     is(5) { // ARGB8888 - single pixel
+-      val (r, g, b) = decodeArgb8888(pixelData32, io.regs.lfbMode.rgbaLanes)
++      val (r, g, b) = decodeArgb8888(pixelData32, capturedWriteMode.rgbaLanes)
+       decodedR := r; decodedG := g; decodedB := b
+       decodedRgbWrite := True; decodedAuxWrite := io.regs.fbzMode.enableAlphaPlanes
+     }
+@@ -284,9 +291,9 @@ case class Lfb(c: Config) extends Component {
+   // Decode alpha for pipeline mode
+   val decodedAlpha = UInt(8 bits)
+   decodedAlpha := U(0xff, 8 bits) // Default: fully opaque
+-  switch(io.regs.lfbMode.writeFormat) {
++  switch(capturedWriteMode.writeFormat) {
+     is(5) { // ARGB8888: extract alpha
+-      decodedAlpha := decodeAlpha8888(pixelData32, io.regs.lfbMode.rgbaLanes)
++      decodedAlpha := decodeAlpha8888(pixelData32, capturedWriteMode.rgbaLanes)
+     }
+     is(2) { // ARGB1555 dual pixel: bit 15
+       decodedAlpha := pixelData16(15) ? U(0xff, 8 bits) | U(0, 8 bits)
+@@ -303,19 +310,19 @@ case class Lfb(c: Config) extends Component {
+   val pixel1X = (isHalfWordWrite && useHiHalfForPixel1) ? pixel2X | pixelX
+   val currentX = (state === statePixel2) ? pixel2X | pixel1X
+ 
+-  io.writeOutput.valid := writePixelActive && !io.regs.lfbMode.pixelPipelineEnable
++  io.writeOutput.valid := writePixelActive && !capturedWriteMode.pixelPipelineEnable
+   io.writeOutput.payload := buildWritePreDither(currentX, pixelY)
+ 
+   // ========================================================================
+   // Pipeline mode: ColorCombine.Output (no dither, no delay)
+   // ========================================================================
+-  io.pipelineOutput.valid := writePixelActive && io.regs.lfbMode.pixelPipelineEnable
++  io.pipelineOutput.valid := writePixelActive && capturedWriteMode.pixelPipelineEnable
+   io.pipelineOutput.payload := buildPipelineOutput(currentX, pixelY)
+ 
+   // Active output fire: bypass fires via downstream Stream handshake, pipeline fires immediately
+   val bypassFire = io.writeOutput.fire
+   val pipelineFire =
+-    writePixelActive && io.regs.lfbMode.pixelPipelineEnable && io.pipelineOutput.ready
++    writePixelActive && capturedWriteMode.pixelPipelineEnable && io.pipelineOutput.ready
+   val activeOutputFire = bypassFire || pipelineFire
+ 
+   // State transitions on active output fire
+diff --git a/src/voodoo/pixel/Fog.scala b/src/voodoo/pixel/Fog.scala
+index 1a3a34c..e46f94b 100644
+--- a/src/voodoo/pixel/Fog.scala
++++ b/src/voodoo/pixel/Fog.scala
+@@ -203,10 +203,12 @@ case class Fog(c: Config) extends Component {
+       val tableIdx = wStage.payload.payload.wDepth(15 downto 10)
+       val tableEntry = io.fogTable(tableIdx)
+       val fogBase = tableEntry(7 downto 0).asUInt
+-      val fogDelta = tableEntry(15 downto 8).asSInt
+-      val wBlend = wStage.payload.payload.wDepth(9 downto 2).resize(8 bits)
+-      val deltaProduct = (fogDelta * wBlend.asSInt.resize(16 bits)) >> 8
+-      val wFogFactorRaw = (fogBase.resize(10 bits).asSInt + deltaProduct.resize(10 bits))
++      // 86Box dfog and the W fraction are both uint8_t. Sign-extending the
++      // fraction turns values >= 128 into a negative blend.
++      val fogDelta = tableEntry(15 downto 8).asUInt
++      val wBlend = wStage.payload.payload.wDepth(9 downto 2)
++      val deltaProduct = ((fogDelta * wBlend).resize(18 bits) |>> 10).resize(10 bits)
++      val wFogFactorRaw = (fogBase.resize(10 bits).asSInt + deltaProduct.asSInt)
+       val wFogFactor = UInt(8 bits)
+       when(wFogFactorRaw < 0) {
+         wFogFactor := 0
+diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
+index c6b2ec5..1b991e1 100644
+--- a/src/voodoo/pixel/FramebufferAccess.scala
++++ b/src/voodoo/pixel/FramebufferAccess.scala
+@@ -165,7 +165,8 @@ case class FramebufferAccess(c: Config) extends Component {
+     val dstScale = Color.u8()
+   }
+ 
+-  val requestStream = io.input.translateWith(request)
++  // Timing: register the plane-address math before the fork (covered by inFlightCount).
++  val requestStream = io.input.translateWith(request).m2sPipe()
+   requestStream.valid.simPublic()
+   requestStream.ready.simPublic()
+ 
+diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
+index cee86c0..0981ff3 100644
+--- a/src/voodoo/raster/Rasterizer.scala
++++ b/src/voodoo/raster/Rasterizer.scala
+@@ -17,15 +17,49 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
+   val clipLowY = in UInt (10 bits)
+   val clipHighY = in UInt (10 bits)
+ 
+-  val queuedInput = i.queue(2)
++  // TriangleSetup holds its finished triangle in registers until the span
++  // walker takes it, so no extra triangle-wide (~2.7 kbit) FIFO / pipe stage
++  // here: those cost ~8k FFs for a couple of triangles of look-ahead.
+   val spanWalker = SpanWalker(c, formalStrong = formalStrong)
+   val spanRasterizer = Rasterizer.SpanRasterizer(c)
+-  val queuedSpan = spanWalker.o.queue(4)
++
++  // Span queue carries only the per-span fields plus a 1-bit triangle tag.
++  // Per-triangle constants (x steps, TMU / pixel config: ~1.1 kbit) are read
++  // at the queue output from the walker's live triangle constants (tag ==
++  // walkTag) or from one shadow copy of the previous triangle's constants
++  // (tag != walkTag). The walker may only start a new triangle once no span
++  // of the shadow triangle is still queued.
++  val walkTag = RegInit(False)
++  val shadowConst = Reg(Rasterizer.SpanConst(c))
++  val liveConst = Rasterizer.SpanConst.fromSpanWalker(c, spanWalker.o.payload)
++  val tagCount = Vec.fill(2)(Reg(UInt(3 bits)) init (0))
++  val shadowBusy = tagCount((!walkTag).asUInt) =/= 0
++
++  spanWalker.i << i.haltWhen(shadowBusy)
++  when(spanWalker.i.fire) {
++    shadowConst := liveConst
++    walkTag := !walkTag
++  }
++
++  val spanVar = spanWalker.o.translateWith(Rasterizer.SpanVar.fromSpanWalker(c, spanWalker.o.payload, walkTag))
++  val queuedVar = spanVar.queue(4)
++  for (t <- 0 until 2) {
++    val inc = spanVar.fire && walkTag === Bool(t == 1)
++    val dec = queuedVar.fire && queuedVar.payload.tag === Bool(t == 1)
++    when(inc && !dec) {
++      tagCount(t) := tagCount(t) + 1
++    }.elsewhen(dec && !inc) {
++      tagCount(t) := tagCount(t) - 1
++    }
++  }
++  val queuedSpan = queuedVar.translateWith {
++    val k = Mux(queuedVar.payload.tag === walkTag, liveConst, shadowConst)
++    Rasterizer.SpanVar.toSpanWalker(c, queuedVar.payload, k)
++  }
+   // Keep prefetch acceptance coupled to span launch so the cached framebuffer reader
+   // always sees span descriptors before the later per-pixel read stream catches up.
+   val spanLaunchFork = StreamFork2(queuedSpan, synchronous = true)
+ 
+-  spanWalker.i <-< queuedInput
+   spanWalker.enableClipping := enableClipping
+   spanWalker.clipLeft := clipLeft
+   spanWalker.clipRight := clipRight
+@@ -38,10 +72,75 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
+   o << spanRasterizer.o
+ 
+   val running = out(Bool())
+-  running := queuedInput.valid || spanWalker.running || queuedSpan.valid || spanRasterizer.running
++  running := i.valid || spanWalker.running || queuedVar.valid || spanRasterizer.i.valid || spanRasterizer.running
+ }
+ 
+ object Rasterizer {
++  /** Per-triangle part of SpanWalker.Output. */
++  case class SpanConst(c: Config) extends Bundle {
++    val stepX = SpanWalker.StepX(c)
++    val tmuConfig = TriangleSetup.TmuConfig(c)
++    val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
++    val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
++  }
++
++  object SpanConst {
++    def fromSpanWalker(c: Config, in: SpanWalker.Output): SpanConst = {
++      val out = SpanConst(c)
++      out.stepX := in.stepX
++      out.tmuConfig := in.tmuConfig
++      out.pixelConfig := in.pixelConfig
++      if (c.trace.enabled) out.trace := in.trace
++      out
++    }
++  }
++
++  /** Per-span part of SpanWalker.Output plus the triangle tag. */
++  case class SpanVar(c: Config) extends Bundle {
++    val xStart = AFix(c.vertexFormat)
++    val xEnd = AFix(c.vertexFormat)
++    val y = AFix(c.vertexFormat)
++    val linear = SpanWalker.LinearState(c)
++    val hiS = AFix(c.texCoordsHiFormat)
++    val hiT = AFix(c.texCoordsHiFormat)
++    val hiAlpha = AFix(c.texCoordsHiFormat)
++    val firstSpan = Bool()
++    val tag = Bool()
++  }
++
++  object SpanVar {
++    def fromSpanWalker(c: Config, in: SpanWalker.Output, tag: Bool): SpanVar = {
++      val out = SpanVar(c)
++      out.xStart := in.xStart
++      out.xEnd := in.xEnd
++      out.y := in.y
++      out.linear := in.linear
++      out.hiS := in.hiS
++      out.hiT := in.hiT
++      out.hiAlpha := in.hiAlpha
++      out.firstSpan := in.firstSpan
++      out.tag := tag
++      out
++    }
++
++    def toSpanWalker(c: Config, in: SpanVar, k: SpanConst): SpanWalker.Output = {
++      val out = SpanWalker.Output(c)
++      out.xStart := in.xStart
++      out.xEnd := in.xEnd
++      out.y := in.y
++      out.linear := in.linear
++      out.hiS := in.hiS
++      out.hiT := in.hiT
++      out.hiAlpha := in.hiAlpha
++      out.firstSpan := in.firstSpan
++      out.stepX := k.stepX
++      out.tmuConfig := k.tmuConfig
++      out.pixelConfig := k.pixelConfig
++      if (c.trace.enabled) out.trace := k.trace
++      out
++    }
++  }
++
+   case class InputGradient(fmt: QFormat) extends Bundle {
+     val start = AFix(fmt)
+     val d = vertex2d(fmt)
+diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
+index 59df4ba..16aeebc 100644
+--- a/src/voodoo/raster/SpanWalker.scala
++++ b/src/voodoo/raster/SpanWalker.scala
+@@ -17,7 +17,7 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+ 
+   object WalkerState extends SpinalEnum {
+     val Idle, Decide, RecoverLeft, SearchRightToEnter, SearchLeftToExit, SearchRightToExit,
+-        EmitSpan, AdvanceRow =
++        EmitSpan, AdvanceRow, RowPrep =
+       newElement()
+   }
+ 
+@@ -28,11 +28,13 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+   val bookmark = Reg(SpanWalker.Cursor(c))
+   val leftEdge = Reg(SpanWalker.Cursor(c))
+   val nextRowBase = Reg(SpanWalker.Cursor(c))
++  val rowBase = Reg(SpanWalker.Cursor(c))
+   val nextRowLeftBiased = Reg(Bool()) init (False)
+   val emitRight = Reg(AFix(c.vertexFormat))
+   val emitFirstSpan = Reg(Bool()) init (False)
+   val firstSpanPending = Reg(Bool()) init (False)
+   val recoverFoundInside = Reg(Bool()) init (False)
++  val rowPrepToRecover = Reg(Bool()) init (False)
+ 
+   running := state =/= WalkerState.Idle
+   i.ready := state === WalkerState.Idle
+@@ -75,6 +77,9 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     dst.clipRight := input.config.clipRight
+     dst.clipLowY := input.config.clipLowY
+     dst.clipHighY := input.config.clipHighY
++    dst.scanDx := input.scanDx
++    dst.vertexBy := input.vertexBy
++    dst.xdirPos := input.xdirPos
+     if (c.trace.enabled) {
+       dst.trace := input.trace
+     }
+@@ -84,6 +89,7 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     dst.coords(0) := input.xrange(0)
+     dst.coords(1) := input.yrange(0)
+     dst.edge := input.edgeStart
++    dst.scanX := input.scanX
+     dst.linear.all.zip(input.grads.all.take(6)).foreach { case (out, in) =>
+       out := in.start
+     }
+@@ -92,8 +98,35 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     dst.hiAlpha := input.hiAlpha.start
+   }
+ 
+-  def insideTriangle(cursor: SpanWalker.Cursor): Bool =
+-    (cursor.edge(0) >= zero) && (cursor.edge(1) >= zero) && (cursor.edge(2) >= zero)
++  // Row edge bounds (xi, x2i) of a cursor. They depend only on the row (y, scanX), so
++  // they are computed once per row in RowPrep and the per-pixel test is two compares.
++  def rowEdgeBounds(cursor: SpanWalker.Cursor): (SInt, SInt) = {
++    val realY = cursor.coords(1).raw.asSInt.resize(32 bits) + 8
++    val xRight = Mux(realY < triangleConst.vertexBy.resize(32 bits), cursor.scanX(0), cursor.scanX(1))
++    val rawL = SInt(32 bits)
++    val rawR = SInt(32 bits)
++    when(triangleConst.xdirPos) {
++      rawL := cursor.scanX(2)
++      rawR := xRight - S(1 << 16, 32 bits)
++    }.otherwise {
++      rawL := cursor.scanX(2) - S(1 << 16, 32 bits)
++      rawR := xRight
++    }
++    val xi = (rawL + S(0x7000, 32 bits)) >> 16
++    val x2i = (rawR + S(0x7000, 32 bits)) >> 16
++    (xi, x2i)
++  }
++
++  val rowXi = Reg(SInt(16 bits))
++  val rowX2i = Reg(SInt(16 bits))
++
++  def insideTriangle(cursor: SpanWalker.Cursor): Bool = {
++    val px = xPix(cursor).resize(32 bits)
++    val xi = rowXi
++    val x2i = rowX2i
++    (triangleConst.xdirPos && px >= xi && px <= x2i) ||
++    (!triangleConst.xdirPos && px <= xi && px >= x2i)
++  }
+ 
+   def xPix(cursor: SpanWalker.Cursor): SInt = cursor.coords(0).floor(0).asSInt
+ 
+@@ -109,16 +142,24 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+   val clipRightPix = triangleConst.clipRight.resize(c.vertexFormat.nonFraction bits).asSInt
+   val clipLowYPix = triangleConst.clipLowY.resize(c.vertexFormat.nonFraction bits).asSInt
+   val clipHighYPix = triangleConst.clipHighY.resize(c.vertexFormat.nonFraction bits).asSInt
+-  val effectiveClipLeftPix = Mux(triangleConst.enableClipping, clipLeftPix, triangleXStartPix)
+-  val effectiveClipRightPix = Mux(triangleConst.enableClipping, clipRightPix, triangleXEndPix)
+-  val effectiveClipLowYPix =
++  val effectiveClipLeftPixComb = Mux(triangleConst.enableClipping, clipLeftPix, triangleXStartPix)
++  val effectiveClipRightPixComb = Mux(triangleConst.enableClipping, clipRightPix, triangleXEndPix)
++  val effectiveClipLowYPixComb =
+     Mux(triangleConst.enableClipping, clipLowYPix, triangleConst.yrange(0).floor(0).asSInt)
+-  val effectiveClipHighYPix =
++  val effectiveClipHighYPixComb =
+     Mux(triangleConst.enableClipping, clipHighYPix, triangleConst.yrange(1).floor(0).asSInt)
+-  val visibleStartPix =
+-    Mux(effectiveClipLeftPix > triangleXStartPix, effectiveClipLeftPix, triangleXStartPix)
+-  val visibleEndPix =
+-    Mux(effectiveClipRightPix < triangleXEndPix, effectiveClipRightPix, triangleXEndPix)
++  val visibleStartPixComb =
++    Mux(effectiveClipLeftPixComb > triangleXStartPix, effectiveClipLeftPixComb, triangleXStartPix)
++  val visibleEndPixComb =
++    Mux(effectiveClipRightPixComb < triangleXEndPix, effectiveClipRightPixComb, triangleXEndPix)
++  // Timing: these only depend on triangleConst; RowPrep registers them (every row,
++  // before any state that reads them).
++  val visibleStartPix = Reg(cloneOf(visibleStartPixComb))
++  val visibleEndPix = Reg(cloneOf(visibleEndPixComb))
++  val effectiveClipLeftPix = Reg(cloneOf(effectiveClipLeftPixComb))
++  val effectiveClipRightPix = Reg(cloneOf(effectiveClipRightPixComb))
++  val effectiveClipLowYPix = Reg(cloneOf(effectiveClipLowYPixComb))
++  val effectiveClipHighYPix = Reg(cloneOf(effectiveClipHighYPixComb))
+   val emitStartPix = leftEdge.coords(0).floor(0).asSInt
+   val emitEndPix = emitRight.floor(0).asSInt
+   val emitVisibleX =
+@@ -139,6 +180,7 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+       val delta = if (moveRight) coeff.a else (-coeff.a).fixTo(c.coefficientFormat)
+       nxt := (cur + delta).fixTo(c.coefficientFormat)
+     }
++    dst.scanX := src.scanX
+     dst.linear.all
+       .zip(src.linear.all)
+       .zip(triangleConst.linearDx.all)
+@@ -161,6 +203,9 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     dst.edge.zip(src.edge).zip(triangleConst.coeffs).foreach { case ((nxt, cur), coeff) =>
+       nxt := (cur + coeff.b).fixTo(c.coefficientFormat)
+     }
++    dst.scanX := Vec(src.scanX.zip(triangleConst.scanDx).map { case (x, dx) =>
++      (x + dx).resize(32 bits)
++    })
+     dst.linear.all
+       .zip(src.linear.all)
+       .zip(triangleConst.linearDy.all)
+@@ -179,6 +224,9 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     dst.edge.zip(src.edge).zip(triangleConst.coeffs).foreach { case ((nxt, cur), coeff) =>
+       nxt := (cur + coeff.b - coeff.a).fixTo(c.coefficientFormat)
+     }
++    dst.scanX := Vec(src.scanX.zip(triangleConst.scanDx).map { case (x, dx) =>
++      (x + dx).resize(32 bits)
++    })
+     dst.linear.all
+       .zip(src.linear.all)
+       .zip(triangleConst.linearDy.all.zip(triangleConst.linearDx.all))
+@@ -235,8 +283,37 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     initCursor(rowGuess, i.payload)
+     initCursor(probe, i.payload)
+     initCursor(bookmark, i.payload)
++    initCursor(rowBase, i.payload)
+     firstSpanPending := True
++    rowPrepToRecover := False
++    state := WalkerState.RowPrep
++  }
++
++  when(state === WalkerState.RowPrep) {
++    // A horizontal step keeps y / scanX, so the bounds come from rowBase.
++    val bounds = rowEdgeBounds(rowBase)
++    val downLeft = SpanWalker.Cursor(c)
++    val next = SpanWalker.Cursor(c)
++    stepHorizontal(downLeft, rowBase, moveRight = false)
++    next := rowBase
++    when(rowPrepToRecover) {
++      next := downLeft
++    }
++    rowGuess := next
++    probe := next
++    bookmark := next
++    rowXi := bounds._1.resized
++    rowX2i := bounds._2.resized
++    visibleStartPix := visibleStartPixComb
++    visibleEndPix := visibleEndPixComb
++    effectiveClipLeftPix := effectiveClipLeftPixComb
++    effectiveClipRightPix := effectiveClipRightPixComb
++    effectiveClipLowYPix := effectiveClipLowYPixComb
++    effectiveClipHighYPix := effectiveClipHighYPixComb
+     state := WalkerState.Decide
++    when(rowPrepToRecover) {
++      state := WalkerState.RecoverLeft
++    }
+   }
+ 
+   when(state === WalkerState.Decide) {
+@@ -345,23 +422,12 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+       firstSpanPending := False
+       recoverFoundInside := False
+     }.otherwise {
+-      val vertical = SpanWalker.Cursor(c)
+-      val downLeft = SpanWalker.Cursor(c)
+-      val next = SpanWalker.Cursor(c)
+-      stepVertical(vertical, nextRowBase)
+-      stepHorizontal(downLeft, vertical, moveRight = false)
+-      next := vertical
+-      when(nextRowLeftBiased) {
+-        next := downLeft
+-      }
+-      rowGuess := next
+-      probe := next
+-      bookmark := next
++      // Timing: the vertical step is registered here; RowPrep does the optional
++      // left step (same result as stepVertical then stepHorizontal in one cycle).
++      stepVertical(rowBase, nextRowBase)
+       recoverFoundInside := False
+-      state := WalkerState.Decide
+-      when(nextRowLeftBiased) {
+-        state := WalkerState.RecoverLeft
+-      }
++      rowPrepToRecover := nextRowLeftBiased
++      state := WalkerState.RowPrep
+     }
+   }
+ 
+@@ -416,6 +482,9 @@ object SpanWalker {
+     val clipRight = UInt(10 bits)
+     val clipLowY = UInt(10 bits)
+     val clipHighY = UInt(10 bits)
++    val scanDx = Vec.fill(3)(SInt(32 bits))
++    val vertexBy = SInt(16 bits)
++    val xdirPos = Bool()
+     val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
+   }
+ 
+@@ -426,6 +495,7 @@ object SpanWalker {
+     val hiT = AFix(c.texCoordsHiFormat)
+     val hiAlpha = AFix(c.texCoordsHiFormat)
+     val edge = Vec.fill(3)(AFix(c.coefficientFormat))
++    val scanX = Vec.fill(3)(SInt(32 bits))
+   }
+ 
+   case class Output(c: Config) extends Bundle {
+diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
+index fb95365..fbb5f3a 100644
+--- a/src/voodoo/raster/TriangleSetup.scala
++++ b/src/voodoo/raster/TriangleSetup.scala
+@@ -8,17 +8,37 @@ import spinal.lib._
+ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Component {
+   val i = slave(Stream(TriangleSetup.Input(c)))
+   val o = master(Stream(TriangleSetup.Output(c)))
+-
++  // Holding a triangle anywhere between input fire and output fire.
++  val busy = out(Bool())
++
++  // Area-reduced setup (Gowin port). Bit-exact with the previous
++  // single-cycle Prep + 8-step parallel iteration:
++  //  * The three edge slopes (dx << 16) / dy use three small sequential
++  //    radix-4 dividers (16 cycles) instead of three combinational
++  //    48 / 32-bit dividers.
++  //  * The 11 parameter start corrections share one pipelined
++  //    multiply-add, one channel per cycle, instead of 11 parallel
++  //    66-bit bit-serial accumulators. Per channel of width w:
++  //      start' = start + ((dx * mx + dy * my) >> 4)  (mod 2^w)
++  //    with mx = dxPix * 16 + (paramAdjust ? dxSub : 0), which equals the
++  //    old "paramAdjust correction, then + dx*dxPix + dy*dyPix" modulo 2^w.
++  //  * Pass-through fields come straight from `pending` (held until the
++  //    output fires) instead of a second copy in an output register.
+   object SetupState extends SpinalEnum {
+-    val Idle, Prep, Iterate, Done = newElement()
++    val Idle, Prep, Work, ScanMul, Done = newElement()
+   }
+ 
+   val state = RegInit(SetupState.Idle)
+   val pending = Reg(TriangleSetup.Input(c))
+-  val outputReg = Reg(TriangleSetup.Output(c))
+-  val iterIndex = Reg(UInt(3 bits)) init (0)
+-  val dxMagWork = Reg(UInt(16 bits)) init (0)
+-  val dyMagWork = Reg(UInt(16 bits)) init (0)
++
++  val coeffsReg = Reg(Vec.fill(3)(Coefficients(c)))
++  val edgeStartReg = Reg(Vec.fill(3)(AFix(c.coefficientFormat)))
++  val xrangeReg = Reg(vertex2d(c.vertexFormat))
++  val yrangeReg = Reg(vertex2d(c.vertexFormat))
++  val scanXReg = Reg(Vec.fill(3)(SInt(32 bits)))
++  val scanDxReg = Reg(Vec.fill(3)(SInt(32 bits)))
++  val vertexByReg = Reg(SInt(16 bits))
++  val xdirPosReg = Reg(Bool())
+ 
+   def copyTrace[T <: Data](dst: T, src: T): Unit = dst := src
+ 
+@@ -41,183 +61,171 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+     if (c.trace.enabled) copyTrace(dst.trace, src.trace)
+   }
+ 
+-  def copySetupOutput(dst: TriangleSetup.Output, src: TriangleSetup.Output): Unit = {
+-    dst.coeffs := src.coeffs
+-    dst.edgeStart := src.edgeStart
+-    dst.xrange := src.xrange
+-    dst.yrange := src.yrange
+-    dst.grads.all.zip(src.grads.all).foreach { case (d, s) =>
+-      d.d := s.d
+-    }
+-    dst.texHi.dSdX := src.texHi.dSdX
+-    dst.texHi.dTdX := src.texHi.dTdX
+-    dst.texHi.dSdY := src.texHi.dSdY
+-    dst.texHi.dTdY := src.texHi.dTdY
+-    dst.hiAlpha.dAdX := src.hiAlpha.dAdX
+-    dst.hiAlpha.dAdY := src.hiAlpha.dAdY
+-    dst.config := src.config
+-    if (c.trace.enabled) copyTrace(dst.trace, src.trace)
++  // ---------------------------------------------------------------------
++  // Shared start-correction datapath
++  // ---------------------------------------------------------------------
++  class Channel(val start: AFix, val dx: AFix, val dy: AFix) {
++    val width = start.raw.getWidth
++    val result = Reg(Bits(width bits)) init (0)
+   }
+ 
+-  def mulBySubpixel(value: SInt, coeff: UInt): SInt = {
+-    val width = value.getWidth + coeff.getWidth
+-    val zero = S(0, width bits)
+-    val terms = (0 until coeff.getWidth).map { bit =>
+-      val shifted = (value.resize(width bits) |<< bit).resize(width bits)
+-      Mux(coeff(bit), shifted, zero)
++  val channels = Seq(
++    new Channel(pending.grads.redGrad.start, pending.grads.redGrad.d(0), pending.grads.redGrad.d(1)),
++    new Channel(pending.grads.greenGrad.start, pending.grads.greenGrad.d(0), pending.grads.greenGrad.d(1)),
++    new Channel(pending.grads.blueGrad.start, pending.grads.blueGrad.d(0), pending.grads.blueGrad.d(1)),
++    new Channel(pending.grads.depthGrad.start, pending.grads.depthGrad.d(0), pending.grads.depthGrad.d(1)),
++    new Channel(pending.grads.alphaGrad.start, pending.grads.alphaGrad.d(0), pending.grads.alphaGrad.d(1)),
++    new Channel(pending.grads.wGrad.start, pending.grads.wGrad.d(0), pending.grads.wGrad.d(1)),
++    new Channel(pending.grads.sGrad.start, pending.grads.sGrad.d(0), pending.grads.sGrad.d(1)),
++    new Channel(pending.grads.tGrad.start, pending.grads.tGrad.d(0), pending.grads.tGrad.d(1)),
++    new Channel(pending.texHi.sStart, pending.texHi.dSdX, pending.texHi.dSdY),
++    new Channel(pending.texHi.tStart, pending.texHi.dTdX, pending.texHi.dTdY),
++    new Channel(pending.hiAlpha.start, pending.hiAlpha.dAdX, pending.hiAlpha.dAdY)
++  )
++  val opWidth = channels.map(_.width).max
++  val prodWidth = opWidth + 4
++  val mulWidth = 20 // 16-bit signed pixel delta, 4 subpixel bits
++
++  def chanSelect(idx: UInt, f: Channel => AFix): SInt =
++    idx.muxListDc(channels.zipWithIndex.map { case (ch, n) =>
++      n -> f(ch).raw.asSInt.resize(opWidth bits)
++    })
++
++  val mxReg = Reg(SInt(mulWidth bits)) init (0)
++  val myReg = Reg(SInt(mulWidth bits)) init (0)
++  val chIssue = RegInit(False)
++  val chIdx = Reg(UInt(4 bits)) init (0)
++
++  // Stage 0: operand select.
++  val s0Valid = RegNext(chIssue) init (False)
++  val s0Idx = RegNext(chIdx)
++  val s0Dx = RegNext(chanSelect(chIdx, _.dx))
++  val s0Dy = RegNext(chanSelect(chIdx, _.dy))
++  when(chIssue) {
++    chIdx := chIdx + 1
++    when(chIdx === channels.size - 1) {
++      chIssue := False
+     }
+-    terms.reduce(_ + _).resize(width bits)
+   }
+ 
+-  def signedMagnitude(value: SInt): UInt = {
+-    val wide = value.resize(value.getWidth + 1 bits)
+-    Mux(
+-      wide.msb,
+-      (-wide).asUInt.resize(value.getWidth bits),
+-      wide.asUInt.resize(value.getWidth bits)
+-    )
+-  }
+-
+-  def signAdjust(value: SInt, negate: Bool, width: Int): SInt = {
+-    val resized = value.resize(width bits)
+-    Mux(negate, (-resized).resize(width bits), resized)
+-  }
+-
+-  def scaleByChunk(term: SInt, chunk: UInt): SInt = {
+-    val scaled = SInt(term.getWidth bits)
+-    scaled := 0
+-    switch(chunk) {
+-      is(U"2'b01") {
+-        scaled := term
+-      }
+-      is(U"2'b10") {
+-        scaled := (term |<< 1).resize(term.getWidth bits)
+-      }
+-      is(U"2'b11") {
+-        scaled := (term + (term |<< 1)).resize(term.getWidth bits)
+-      }
++  // Stage 1: products (mod 2^prodWidth; only bits [w+3:4] are used).
++  val s1Valid = RegNext(s0Valid) init (False)
++  val s1Idx = RegNext(s0Idx)
++  val s1Px = RegNext((s0Dx * mxReg).resize(prodWidth bits))
++  val s1Py = RegNext((s0Dy * myReg).resize(prodWidth bits))
++
++  // Stage 2: start + (sum >> 4), written into the channel's result.
++  val s2Corr = (s1Px + s1Py)(prodWidth - 1 downto 4)
++  val s2Sum = (chanSelect(s1Idx, _.start) + s2Corr).asBits
++  channels.zipWithIndex.foreach { case (ch, n) =>
++    when(s1Valid && s1Idx === n) {
++      ch.result := s2Sum(ch.width - 1 downto 0)
+     }
+-    scaled
+   }
++  val chBusy = chIssue || s0Valid || s1Valid
++
++  // ---------------------------------------------------------------------
++  // Edge slope dividers: q = ((x1 - x0) << 16) / (y1 - y0), truncated
++  // toward zero and wrapped to 32 bits, 0 when y1 == y0.
++  // |x1 - x0|, |y1 - y0| <= 0xffff (16-bit vertex raws).
++  // ---------------------------------------------------------------------
++  class SlopeDiv {
++    val neg = Reg(Bool())
++    val denZero = Reg(Bool())
++    val den = Reg(UInt(16 bits))
++    val rem = Reg(UInt(16 bits))
++    val work = Reg(UInt(32 bits)) // dividend bits shifting out, quotient bits shifting in
++
++    def load(x0: SInt, y0: SInt, x1: SInt, y1: SInt): Unit = {
++      val dxs = x1.resize(17 bits) - x0.resize(17 bits)
++      val dys = y1.resize(17 bits) - y0.resize(17 bits)
++      neg := dxs.msb ^ dys.msb
++      denZero := dys === 0
++      den := dys.abs.resize(16 bits)
++      rem := 0
++      work := (dxs.abs.resize(16 bits) ## U(0, 16 bits)).asUInt
++    }
+ 
+-  case class IterChannel(inStart: AFix, dxRaw: SInt, dyRaw: SInt) extends Area {
+-    val startWidth = inStart.raw.getWidth
+-    val accWidth = startWidth + 18
+-    val acc = Reg(SInt(accWidth bits)) init (0)
+-    val dxTerm = Reg(SInt(accWidth bits)) init (0)
+-    val dyTerm = Reg(SInt(accWidth bits)) init (0)
+-
+-    def load(dxSubRaw: UInt, dySubRaw: UInt, paramAdjust: Bool, dxNeg: Bool, dyNeg: Bool): Unit = {
+-      val corrRaw = (mulBySubpixel(dxRaw, dxSubRaw) + mulBySubpixel(dyRaw, dySubRaw)) >> 4
+-      val startRaw = inStart.raw.asSInt
+-      val correctedRaw = (startRaw + corrRaw.resize(startWidth bits))(startWidth - 1 downto 0)
+-      val adjustedBits = Mux(paramAdjust, correctedRaw.asBits, inStart.raw)
+-      acc := adjustedBits.asSInt.resize(accWidth bits)
+-      dxTerm := signAdjust(dxRaw, dxNeg, accWidth)
+-      dyTerm := signAdjust(dyRaw, dyNeg, accWidth)
++    private def stepOnce(r: UInt, bit: Bool): (UInt, Bool) = {
++      val sh = (r ## bit).asUInt // < 2 * den <= 2^17
++      val diff = sh.resize(18 bits).asSInt - den.resize(18 bits).asSInt
++      val ge = !diff.msb
++      (Mux(ge, diff.asUInt.resize(16 bits), sh.resize(16 bits)), ge)
+     }
+ 
+-    def step(dxChunk: UInt, dyChunk: UInt): Unit = {
+-      val sumWidth = accWidth + 2
+-      val nextAcc =
+-        (acc.resize(sumWidth bits) + scaleByChunk(dxTerm, dxChunk).resize(
+-          sumWidth bits
+-        ) + scaleByChunk(
+-          dyTerm,
+-          dyChunk
+-        ).resize(sumWidth bits)).resize(accWidth bits)
+-      acc := nextAcc
+-      dxTerm := (dxTerm |<< 2).resize(accWidth bits)
+-      dyTerm := (dyTerm |<< 2).resize(accWidth bits)
++    def step(): Unit = {
++      val (r1, q1) = stepOnce(rem, work(31))
++      val (r2, q2) = stepOnce(r1, work(30))
++      rem := r2
++      work := (work(29 downto 0) ## q1 ## q2).asUInt
+     }
+ 
+-    def resultBits: Bits = acc(startWidth - 1 downto 0).asBits
++    def quotient: SInt = {
++      val q = work.asSInt
++      Mux(denZero, S(0, 32 bits), Mux(neg, (S(0, 32 bits) - q), q))
++    }
++  }
++  val divs = Seq.fill(3)(new SlopeDiv)
++  val divIter = Reg(UInt(4 bits)) init (0)
++  val divBusy = RegInit(False)
++  when(divBusy) {
++    divs.foreach(_.step())
++    divIter := divIter + 1
++    when(divIter === 15) {
++      divBusy := False
++    }
+   }
+ 
+-  val redStart =
+-    IterChannel(
+-      pending.grads.redGrad.start,
+-      pending.grads.redGrad.d(0).raw.asSInt,
+-      pending.grads.redGrad.d(1).raw.asSInt
+-    )
+-  val greenStart = IterChannel(
+-    pending.grads.greenGrad.start,
+-    pending.grads.greenGrad.d(0).raw.asSInt,
+-    pending.grads.greenGrad.d(1).raw.asSInt
+-  )
+-  val blueStart = IterChannel(
+-    pending.grads.blueGrad.start,
+-    pending.grads.blueGrad.d(0).raw.asSInt,
+-    pending.grads.blueGrad.d(1).raw.asSInt
+-  )
+-  val depthStart = IterChannel(
+-    pending.grads.depthGrad.start,
+-    pending.grads.depthGrad.d(0).raw.asSInt,
+-    pending.grads.depthGrad.d(1).raw.asSInt
+-  )
+-  val alphaStart = IterChannel(
+-    pending.grads.alphaGrad.start,
+-    pending.grads.alphaGrad.d(0).raw.asSInt,
+-    pending.grads.alphaGrad.d(1).raw.asSInt
+-  )
+-  val wStart = IterChannel(
+-    pending.grads.wGrad.start,
+-    pending.grads.wGrad.d(0).raw.asSInt,
+-    pending.grads.wGrad.d(1).raw.asSInt
+-  )
+-  val sStart = IterChannel(
+-    pending.grads.sGrad.start,
+-    pending.grads.sGrad.d(0).raw.asSInt,
+-    pending.grads.sGrad.d(1).raw.asSInt
+-  )
+-  val tStart = IterChannel(
+-    pending.grads.tGrad.start,
+-    pending.grads.tGrad.d(0).raw.asSInt,
+-    pending.grads.tGrad.d(1).raw.asSInt
+-  )
+-  val hiSStart =
+-    IterChannel(pending.texHi.sStart, pending.texHi.dSdX.raw.asSInt, pending.texHi.dSdY.raw.asSInt)
+-  val hiTStart =
+-    IterChannel(pending.texHi.tStart, pending.texHi.dTdX.raw.asSInt, pending.texHi.dTdY.raw.asSInt)
+-  val hiAlphaStart = IterChannel(
+-    pending.hiAlpha.start,
+-    pending.hiAlpha.dAdX.raw.asSInt,
+-    pending.hiAlpha.dAdY.raw.asSInt
+-  )
+-  val allStarts = Seq(
+-    redStart,
+-    greenStart,
+-    blueStart,
+-    depthStart,
+-    alphaStart,
+-    wStart,
+-    sStart,
+-    tStart,
+-    hiSStart,
+-    hiTStart,
+-    hiAlphaStart
+-  )
+-
++  // ---------------------------------------------------------------------
+   i.ready := state === SetupState.Idle
++  busy := state =/= SetupState.Idle
+   o.valid := state === SetupState.Done
+-  copySetupOutput(o.payload, outputReg)
+-  o.payload.grads.redGrad.start.raw := redStart.resultBits
+-  o.payload.grads.greenGrad.start.raw := greenStart.resultBits
+-  o.payload.grads.blueGrad.start.raw := blueStart.resultBits
+-  o.payload.grads.depthGrad.start.raw := depthStart.resultBits
+-  o.payload.grads.alphaGrad.start.raw := alphaStart.resultBits
+-  o.payload.grads.wGrad.start.raw := wStart.resultBits
+-  o.payload.grads.sGrad.start.raw := sStart.resultBits
+-  o.payload.grads.tGrad.start.raw := tStart.resultBits
+-  o.payload.texHi.sStart.raw := hiSStart.resultBits
+-  o.payload.texHi.tStart.raw := hiTStart.resultBits
+-  o.payload.hiAlpha.start.raw := hiAlphaStart.resultBits
++  o.payload.coeffs := coeffsReg
++  o.payload.edgeStart := edgeStartReg
++  o.payload.xrange := xrangeReg
++  o.payload.yrange := yrangeReg
++  o.payload.scanX := scanXReg
++  o.payload.scanDx := scanDxReg
++  o.payload.vertexBy := vertexByReg
++  o.payload.xdirPos := xdirPosReg
++  o.payload.grads.all.zip(pending.grads.all).foreach { case (d, s) =>
++    d.d := s.d
++  }
++  o.payload.texHi.dSdX := pending.texHi.dSdX
++  o.payload.texHi.dTdX := pending.texHi.dTdX
++  o.payload.texHi.dSdY := pending.texHi.dSdY
++  o.payload.texHi.dTdY := pending.texHi.dTdY
++  o.payload.hiAlpha.dAdX := pending.hiAlpha.dAdX
++  o.payload.hiAlpha.dAdY := pending.hiAlpha.dAdY
++  o.payload.config := pending.config
++  if (c.trace.enabled) copyTrace(o.payload.trace, pending.trace)
++  val outStarts = Seq(
++    o.payload.grads.redGrad.start,
++    o.payload.grads.greenGrad.start,
++    o.payload.grads.blueGrad.start,
++    o.payload.grads.depthGrad.start,
++    o.payload.grads.alphaGrad.start,
++    o.payload.grads.wGrad.start,
++    o.payload.grads.sGrad.start,
++    o.payload.grads.tGrad.start,
++    o.payload.texHi.sStart,
++    o.payload.texHi.tStart,
++    o.payload.hiAlpha.start
++  )
++  outStarts.zip(channels).foreach { case (dst, ch) => dst.raw := ch.result }
+ 
+   when(state === SetupState.Idle && i.fire) {
+     copySetupInput(pending, i.payload)
+     state := SetupState.Prep
+   }
+ 
++  val ax = pending.triWithSign.tri(0)(0).raw.asSInt.resize(32 bits)
++  val ay = pending.triWithSign.tri(0)(1).raw.asSInt.resize(32 bits)
++  val bx = pending.triWithSign.tri(1)(0).raw.asSInt.resize(32 bits)
++  val by = pending.triWithSign.tri(1)(1).raw.asSInt.resize(32 bits)
++  val cx = pending.triWithSign.tri(2)(0).raw.asSInt.resize(32 bits)
++  val cy = pending.triWithSign.tri(2)(1).raw.asSInt.resize(32 bits)
++
+   when(state === SetupState.Prep) {
+     val input = pending
+     val tri = input.triWithSign.tri
+@@ -282,47 +290,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+     val dxPix = (startXPix - aXPix).resize(16 bits)
+     val dyPix = (startYPix - aYPix).resize(16 bits)
+ 
+-    outputReg.coeffs := coeffsVec
+-    outputReg.xrange(0) := xrange0
+-    outputReg.xrange(1) := xrange1
+-    outputReg.yrange(0) := yrange0
+-    outputReg.yrange(1) := yrange1
+-    outputReg.grads.all.zip(input.grads.all).foreach { case (outG, inG) =>
+-      outG.start.raw := inG.start.raw
+-      outG.d := inG.d
+-    }
+-    outputReg.texHi := input.texHi
+-    outputReg.hiAlpha := input.hiAlpha
+-    outputReg.edgeStart := edgeStartVec
+-    outputReg.config := input.config
+-    if (c.trace.enabled) copyTrace(outputReg.trace, input.trace)
+-
+-    val dxNeg = dxPix.msb
+-    val dyNeg = dyPix.msb
+-    dxMagWork := signedMagnitude(dxPix)
+-    dyMagWork := signedMagnitude(dyPix)
+-    allStarts.foreach(_.load(dxSubRaw, dySubRaw, paramAdjust, dxNeg, dyNeg))
+-    iterIndex := 0
+-    state := SetupState.Iterate
++    coeffsReg := coeffsVec
++    edgeStartReg := edgeStartVec
++    xrangeReg(0) := xrange0
++    xrangeReg(1) := xrange1
++    yrangeReg(0) := yrange0
++    yrangeReg(1) := yrange1
++    vertexByReg := by.resize(16 bits)
++    xdirPosReg := !signBit
++
++    mxReg := (dxPix ## Mux(paramAdjust, dxSubRaw, U(0, 4 bits))).asSInt
++    myReg := (dyPix ## Mux(paramAdjust, dySubRaw, U(0, 4 bits))).asSInt
++    chIdx := 0
++    chIssue := True
++
++    divs(0).load(ax, ay, bx, by)
++    divs(1).load(bx, by, cx, cy)
++    divs(2).load(ax, ay, cx, cy)
++    divIter := 0
++    divBusy := True
++    state := SetupState.Work
++  }
++
++  when(state === SetupState.Work && !divBusy && !chBusy) {
++    state := SetupState.ScanMul
+   }
+ 
+-  when(state === SetupState.Iterate) {
+-    val dxChunk = dxMagWork(1 downto 0)
+-    val dyChunk = dyMagWork(1 downto 0)
+-    allStarts.foreach(_.step(dxChunk, dyChunk))
+-    dxMagWork := (dxMagWork >> 2).resize(16 bits)
+-    dyMagWork := (dyMagWork >> 2).resize(16 bits)
+-    when(iterIndex === 7) {
+-      state := SetupState.Done
+-    }.otherwise {
+-      iterIndex := iterIndex + 1
++  when(state === SetupState.ScanMul) {
++    val dxAB = divs(0).quotient
++    val dxBC = divs(1).quotient
++    val dxAC = divs(2).quotient
++    val realY0 = yrangeReg(0).raw.asSInt.resize(32 bits) + 8
++    def scanAt(x0: SInt, y0: SInt, dx: SInt): SInt = {
++      // dy fits 18 bits (16-bit vertex raws); bits [35:4] of dx * dy.
++      val dy = (realY0 - y0).resize(18 bits)
++      val prod = (dx * dy) >> 4
++      ((x0 << 12) + prod.resize(32 bits)).resize(32 bits)
+     }
++    scanDxReg(0) := dxAB
++    scanDxReg(1) := dxBC
++    scanDxReg(2) := dxAC
++    scanXReg(0) := scanAt(ax, ay, dxAB)
++    scanXReg(1) := scanAt(bx, by, dxBC)
++    scanXReg(2) := scanAt(ax, ay, dxAC)
++    state := SetupState.Done
+   }
+ 
+   when(state === SetupState.Done && o.ready) {
+     state := SetupState.Idle
+   }
+-
+   GenerationFlags.formal {
+     when(o.valid) {
+       val tri = pending.triWithSign.tri
+@@ -489,6 +505,11 @@ object TriangleSetup {
+     val xrange = vertex2d(c.vertexFormat)
+     val yrange = vertex2d(c.vertexFormat)
+     val edgeStart = Vec.fill(3)(AFix(c.coefficientFormat))
++    // 86Box span ends: 16.16 edge X and its per-scanline step. Index 0=AB, 1=BC, 2=AC.
++    val scanX = Vec.fill(3)(SInt(32 bits))
++    val scanDx = Vec.fill(3)(SInt(32 bits))
++    val vertexBy = SInt(16 bits)
++    val xdirPos = Bool()
+     val grads = Rasterizer.GradientBundle(Rasterizer.InputGradient(_), c)
+     val hiAlpha = HiAlpha(c)
+     val texHi = HiTexCoords(c)
+diff --git a/src/voodoo/texture/TexLayoutTables.scala b/src/voodoo/texture/TexLayoutTables.scala
+index fbf774f..6f372f1 100644
+--- a/src/voodoo/texture/TexLayoutTables.scala
++++ b/src/voodoo/texture/TexLayoutTables.scala
+@@ -46,59 +46,78 @@ object TexLayoutTables {
+     val base2 = (cfg.texBaseAddr2 << 3).resize(22 bits)
+     val base38 = (cfg.texBaseAddr38 << 3).resize(22 bits)
+ 
+-    // Unrolled loop: compute per-LOD base and shift
+-    // We track offset as a UInt and accumulate (1 << (wBits + hBits + is16bit))
+-    var offsetExpr: UInt = U(0, 22 bits)
+-    var multibaseTailOffset: UInt = U(0, 22 bits)
++    // Timing: the per-LOD offsets are prefix sums of power-of-two LOD sizes that only
++    // depend on (aspect, is16bit), so they are constant tables: one 22-bit add per entry
++    // instead of a 9-deep adder chain. Same values (mod 2^22) as the original
++    // accumulation (see ~86Box voodoo_recalc_tex12).
++    def narrowBitsOf(lod: Int, aspect: Int): Int = scala.math.max(8 - aspect - lod, 0)
++    def wideBitsOf(lod: Int): Int = scala.math.max(8 - lod, 0)
++    def sizeOf(lod: Int, aspect: Int, is16: Int): BigInt =
++      BigInt(1) << (wideBitsOf(lod) + narrowBitsOf(lod, aspect) + is16)
++    val mask22 = (BigInt(1) << 22) - 1
++    val sel = (cfg.tLOD_aspect ## is16bit.asBits).asUInt
++    def constTable(f: (Int, Int) => BigInt): UInt = {
++      val out = UInt(22 bits)
++      out := 0
++      switch(sel) {
++        for (aspect <- 0 until 4; is16 <- 0 until 2) {
++          is(U(aspect * 2 + is16, 3 bits)) {
++            out := U(f(aspect, is16) & mask22, 22 bits)
++          }
++        }
++      }
++      out
++    }
++    def offsetOf(lod: Int, aspect: Int, is16: Int): BigInt =
++      (0 until lod).map(k => sizeOf(k, aspect, is16)).foldLeft(BigInt(0))(_ + _)
++    def tailOf(lod: Int, aspect: Int, is16: Int): BigInt =
++      (3 until lod).map(k => sizeOf(k, aspect, is16)).foldLeft(BigInt(0))(_ + _)
++
+     for (lod <- 0 until 9) {
+-      // Dimensions are powers of two. Aspect selects the narrower side reduction,
+-      // while tLOD_sIsWider chooses whether S or T is the wider dimension.
+-      val wideBits = U(scala.math.max(8 - lod, 0), 4 bits)
++      val wideBits = U(wideBitsOf(lod), 4 bits)
+       val narrowBits = UInt(4 bits)
+       switch(cfg.tLOD_aspect) {
+-        is(U(0, 2 bits)) {
+-          narrowBits := wideBits
+-        }
+-        is(U(1, 2 bits)) {
+-          narrowBits := U(scala.math.max(7 - lod, 0), 4 bits)
+-        }
+-        is(U(2, 2 bits)) {
+-          narrowBits := U(scala.math.max(6 - lod, 0), 4 bits)
++        for (aspect <- 0 until 3) {
++          is(U(aspect, 2 bits)) {
++            narrowBits := U(narrowBitsOf(lod, aspect), 4 bits)
++          }
+         }
+         default {
+-          narrowBits := U(scala.math.max(5 - lod, 0), 4 bits)
++          narrowBits := U(narrowBitsOf(lod, 3), 4 bits)
+         }
+       }
++      tables.texShift(lod) := cfg.tLOD_sIsWider ? wideBits | narrowBits
++
++      val off = constTable((a, h) => offsetOf(lod, a, h))
++      val offEnd = constTable((a, h) => offsetOf(lod, a, h) + sizeOf(lod, a, h))
++      val size = constTable((a, h) => sizeOf(lod, a, h))
+ 
+       val lodBase = UInt(22 bits)
+-      lodBase := base0 + offsetExpr
++      val lodEnd = UInt(22 bits)
++      lodBase := (base0 + off).resize(22 bits)
++      lodEnd := (base0 + offEnd).resize(22 bits)
+       if (lod == 1) {
+         when(cfg.tLOD_multibase) {
+           lodBase := base1
++          lodEnd := (base1 + size).resize(22 bits)
+         }
+       }
+       if (lod == 2) {
+         when(cfg.tLOD_multibase) {
+           lodBase := base2
++          lodEnd := (base2 + size).resize(22 bits)
+         }
+       }
+       if (lod >= 3) {
++        val tail = constTable((a, h) => tailOf(lod, a, h))
++        val tailEnd = constTable((a, h) => tailOf(lod, a, h) + sizeOf(lod, a, h))
+         when(cfg.tLOD_multibase) {
+-          lodBase := base38 + multibaseTailOffset
++          lodBase := (base38 + tail).resize(22 bits)
++          lodEnd := (base38 + tailEnd).resize(22 bits)
+         }
+       }
+       tables.texBase(lod) := lodBase
+-      tables.texShift(lod) := cfg.tLOD_sIsWider ? wideBits | narrowBits
+-
+-      // LOD area in bytes = 1 << (wBits + hBits + is16bit)
+-      // We compute this as a shift amount and add to offset for next LOD
+-      val shiftAmount = (wideBits +^ narrowBits +^ is16bit.asUInt.resize(5 bits)).resize(5 bits)
+-      val lodSize = (U(1, 22 bits) |<< shiftAmount).resize(22 bits)
+-      tables.texEnd(lod) := (lodBase + lodSize).resize(22 bits)
+-      offsetExpr = (offsetExpr + lodSize).resize(22 bits)
+-      if (lod >= 3) {
+-        multibaseTailOffset = (multibaseTailOffset + lodSize).resize(22 bits)
+-      }
++      tables.texEnd(lod) := lodEnd
+     }
+ 
+     tables
+diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
+index 8b06179..47dee9a 100644
+--- a/src/voodoo/texture/Tmu.scala
++++ b/src/voodoo/texture/Tmu.scala
+@@ -89,11 +89,39 @@ case class Tmu(c: voodoo.Config) extends Component {
+   val tow = inputForStage.payload.t // T/W in 14.18 format (wider internal accumulator)
+ 
+   val frontEnd = new Area {
+-    val stageRecipPrep = inputForStage
++    // Timing: abs + count-leading-zeros get their own stage before normalize + ROM lookup.
++    val stageClz = inputForStage
+       .translateWith {
+         val oowRaw = oow.raw.asSInt
+         val absOow = oowRaw.abs.resize(64 bits)
+-        val clz = clz64(absOow)
++        val out = Tmu.FrontClz(c)
++        out.absOow := absOow
++        out.clz := clz64(absOow)
++        out.pre.s := sow
++        out.pre.t := tow
++        out.pre.tLOD := inputForStage.payload.config.tLOD
++        out.pre.base := 0
++        out.pre.diff := 0
++        out.pre.frac := 0
++        out.pre.logFrac := 0
++        out.pre.msbPos := 0
++        out.pre.validOow := !oowRaw.msb && (absOow =/= 0)
++        out.pre.perspectiveEnable := texMode.perspectiveEnable
++        out.pre.clampToZero := texMode.clampW && oowRaw.msb
++        out.pre.dSdX := inputForStage.payload.dSdX
++        out.pre.dTdX := inputForStage.payload.dTdX
++        out.pre.dSdY := inputForStage.payload.dSdY
++        out.pre.dTdY := inputForStage.payload.dTdY
++        out.pre.meta.config := inputForStage.payload.config
++        if (c.trace.enabled) out.pre.meta.trace := inputForStage.payload.trace
++        out
++      }
++      .stage()
++
++    val stageRecipPrep = stageClz
++      .translateWith {
++        val absOow = stageClz.payload.absOow
++        val clz = stageClz.payload.clz
+         val msbPos = U(63, 7 bits) - clz
+         val norm = (absOow |<< clz).resize(64 bits)
+         val index = norm(62 downto 55)
+@@ -101,23 +129,23 @@ case class Tmu(c: voodoo.Config) extends Component {
+         val base = recipTable.readAsync(index.resize(9 bits))
+         val next = recipTable.readAsync((index +^ U(1)).resize(9 bits))
+         val out = Tmu.FrontRecipPrep(c)
+-        out.s := sow
+-        out.t := tow
+-        out.tLOD := inputForStage.payload.config.tLOD
++        val pre = stageClz.payload.pre
++        out.s := pre.s
++        out.t := pre.t
++        out.tLOD := pre.tLOD
++        out.validOow := pre.validOow
++        out.perspectiveEnable := pre.perspectiveEnable
++        out.clampToZero := pre.clampToZero
++        out.dSdX := pre.dSdX
++        out.dTdX := pre.dTdX
++        out.dSdY := pre.dSdY
++        out.dTdY := pre.dTdY
++        out.meta := pre.meta
+         out.base := base
+         out.diff := base - next
+         out.frac := frac
+         out.logFrac := logTable.readAsync(index)
+         out.msbPos := msbPos
+-        out.validOow := !oowRaw.msb && (absOow =/= 0)
+-        out.perspectiveEnable := texMode.perspectiveEnable
+-        out.clampToZero := texMode.clampW && oowRaw.msb
+-        out.dSdX := inputForStage.payload.dSdX
+-        out.dTdX := inputForStage.payload.dTdX
+-        out.dSdY := inputForStage.payload.dSdY
+-        out.dTdY := inputForStage.payload.dTdY
+-        out.meta.config := inputForStage.payload.config
+-        if (c.trace.enabled) out.meta.trace := inputForStage.payload.trace
+         out
+       }
+       .stage()
+@@ -153,34 +181,48 @@ case class Tmu(c: voodoo.Config) extends Component {
+       }
+       .stage()
+ 
+-    val stageA = stageRecip
++    // Timing: the two 48x18 perspective multiplies get their own stage; stageA then
++    // only does the rounding add and the normalizing shift.
++    val stageMul = stageRecip
+       .translateWith {
++        val out = Tmu.FrontMul(c)
++        val interpSigned = (False ## stageRecip.payload.interp).asSInt
++        out.r := stageRecip.payload
++        out.productS := (stageRecip.payload.s.raw.asSInt * interpSigned).resized
++        out.productT := (stageRecip.payload.t.raw.asSInt * interpSigned).resized
++        out
++      }
++      .stage()
++      .s2mPipe() // timing: cut the long ready chain through the TMU stages
++
++    val stageA = stageMul
++      .translateWith {
++        val r = stageMul.payload.r
+         val texS = SInt(18 bits)
+         val texT = SInt(18 bits)
+-        when(!stageRecip.payload.perspectiveEnable) {
+-          texS := (stageRecip.payload.s.raw.asSInt >> 14).resized
+-          texT := (stageRecip.payload.t.raw.asSInt >> 14).resized
++        when(!r.perspectiveEnable) {
++          texS := (r.s.raw.asSInt >> 14).resized
++          texT := (r.t.raw.asSInt >> 14).resized
+         } otherwise {
+-          val interpSigned = (False ## stageRecip.payload.interp).asSInt
+-          val productS = stageRecip.payload.s.raw.asSInt * interpSigned
+-          val productT = stageRecip.payload.t.raw.asSInt * interpSigned
+-          val roundBias = (S(1, productS.getWidth bits) |<< (stageRecip.payload.msbPos - 1).resize(
++          val productS = stageMul.payload.productS
++          val productT = stageMul.payload.productT
++          val roundBias = (S(1, productS.getWidth bits) |<< (r.msbPos - 1).resize(
+             log2Up(productS.getWidth) bits
+           ))
+-          texS := ((productS + roundBias) >> stageRecip.payload.msbPos).resized
+-          texT := ((productT + roundBias) >> stageRecip.payload.msbPos).resized
++          texS := ((productS + roundBias) >> r.msbPos).resized
++          texT := ((productT + roundBias) >> r.msbPos).resized
+         }
+         val out = Tmu.FrontA(c)
+         out.texS := texS
+         out.texT := texT
+-        out.tLOD := stageRecip.payload.tLOD
+-        out.perspLodAdjust := stageRecip.payload.perspLodAdjust
+-        out.clampToZero := stageRecip.payload.clampToZero
+-        out.dSdX := stageRecip.payload.dSdX
+-        out.dTdX := stageRecip.payload.dTdX
+-        out.dSdY := stageRecip.payload.dSdY
+-        out.dTdY := stageRecip.payload.dTdY
+-        out.meta := stageRecip.payload.meta
++        out.tLOD := r.tLOD
++        out.perspLodAdjust := r.perspLodAdjust
++        out.clampToZero := r.clampToZero
++        out.dSdX := r.dSdX
++        out.dTdX := r.dTdX
++        out.dSdY := r.dSdY
++        out.dTdY := r.dTdY
++        out.meta := r.meta
+         out
+       }
+       .m2sPipe()
+@@ -315,6 +357,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+         out
+       }
+       .stage()
++      .s2mPipe() // timing: cut the long ready chain through the TMU stages
+   }
+   val stageGrad = lodPipeline.stageGrad
+   val stageLodPrep = lodPipeline.stageLodPrep
+@@ -513,15 +556,14 @@ case class Tmu(c: voodoo.Config) extends Component {
+       req
+     }
+     .stage()
+-  val sampleRequestBase = sampleRequestPrep
++  // Timing: split the packed-layout location decode in two registered steps.
++  // Step 1 (here): corrected texEnd + per-LOD range match -> selected base/shift.
++  // Step 2 (sampleRequestBase): 10-bit offset subtract + bank bit select.
++  val sampleRequestMid = sampleRequestPrep
+     .translateWith {
+-      val req = Tmu.SampleRequest(c)
++      val mid = Tmu.SampleRequestMid(c)
+       val startupTexBase = (0 until 9).map(sampleRequestPrep.payload.texTables.texBase(_))
+-      val startupTexEnd = Tmu.correctedTexEnd(
+-        startupTexBase,
+-        (0 until 9).map(sampleRequestPrep.payload.texTables.texEnd(_)),
+-        sampleRequestPrep.payload.is16Bit
+-      )
++      val startupTexEndRaw = (0 until 9).map(sampleRequestPrep.payload.texTables.texEnd(_))
+       val startupTexShift = (0 until 9).map(sampleRequestPrep.payload.texTables.texShift(_))
+       val tapAddr = Vec(UInt(c.addressWidth.value bits), 4)
+       tapAddr(
+@@ -530,41 +572,61 @@ case class Tmu(c: voodoo.Config) extends Component {
+       tapAddr(1) := sampleRequestPrep.payload.biAddr1
+       tapAddr(2) := sampleRequestPrep.payload.biAddr2
+       tapAddr(3) := sampleRequestPrep.payload.biAddr3
+-      req.pointAddr := sampleRequestPrep.payload.pointAddr
+-      req.biAddr0 := sampleRequestPrep.payload.biAddr0
+-      req.biAddr1 := sampleRequestPrep.payload.biAddr1
+-      req.biAddr2 := sampleRequestPrep.payload.biAddr2
+-      req.biAddr3 := sampleRequestPrep.payload.biAddr3
+-      req.lodBase := sampleRequestPrep.payload.lodBase
+-      req.lodShift := sampleRequestPrep.payload.lodShift
+-      req.is16Bit := sampleRequestPrep.payload.is16Bit
+-      if (c.packedTexLayout) {
+-        req.texTables := sampleRequestPrep.payload.texTables
+-      }
++      mid.prep := sampleRequestPrep.payload
+       for (i <- 0 until 4) {
+-        req.tapStartupDecode(i) := Tmu.packedStartupDecode4(
+-          sampleRequestPrep.payload.tapLineBase(i),
+-          sampleRequestPrep.payload.is16Bit,
+-          sampleRequestPrep.payload.lodBase,
+-          sampleRequestPrep.payload.lodShift,
+-          startupTexBase,
+-          startupTexEnd,
+-          startupTexShift
+-        )
+-        val loc = Tmu.packedLocation22(
++        for (byteIdx <- 0 until 4) {
++          mid.startupSel(i)(byteIdx) := Tmu.packedLocationSelect22(
++            // tapLineBase is line aligned (low bits zero), so + byteIdx is a concat.
++            (sampleRequestPrep.payload.tapLineBase(i)(21 downto 2) ## U(byteIdx, 2 bits)).asUInt,
++            sampleRequestPrep.payload.lodBase,
++            sampleRequestPrep.payload.lodShift,
++            startupTexBase,
++            startupTexEndRaw,
++            startupTexShift,
++            sampleRequestPrep.payload.is16Bit
++          )
++        }
++        mid.locSel(i) := Tmu.packedLocationSelect22(
+           tapAddr(i).resize(22 bits),
+-          sampleRequestPrep.payload.is16Bit,
+           sampleRequestPrep.payload.lodBase.resize(22 bits),
+           sampleRequestPrep.payload.lodShift,
+           startupTexBase,
+-          startupTexEnd,
+-          startupTexShift
++          startupTexEndRaw,
++          startupTexShift,
++          sampleRequestPrep.payload.is16Bit
+         )
++      }
++      mid
++    }
++    .m2sPipe()
++  val sampleRequestBase = sampleRequestMid
++    .translateWith {
++      val req = Tmu.SampleRequest(c)
++      val prep = sampleRequestMid.payload.prep
++      req.pointAddr := prep.pointAddr
++      req.biAddr0 := prep.biAddr0
++      req.biAddr1 := prep.biAddr1
++      req.biAddr2 := prep.biAddr2
++      req.biAddr3 := prep.biAddr3
++      req.lodBase := prep.lodBase
++      req.lodShift := prep.lodShift
++      req.is16Bit := prep.is16Bit
++      if (c.packedTexLayout) {
++        req.texTables := prep.texTables
++      }
++      for (i <- 0 until 4) {
++        for (byteIdx <- 0 until 4) {
++          val loc = Tmu.packedLocationFinish(sampleRequestMid.payload.startupSel(i)(byteIdx), prep.is16Bit)
++          req.tapStartupDecode(i).valid(byteIdx) := loc._1
++          req.tapStartupDecode(i).bank(byteIdx) := loc._2
++          req.tapStartupDecode(i).pair(byteIdx) := loc._3
++        }
++        val loc = Tmu.packedLocationFinish(sampleRequestMid.payload.locSel(i), prep.is16Bit)
+         req.tapPackedBank(i) := loc._2
+         req.tapPackedPair(i) := loc._3
+       }
+-      req.bilinear := sampleRequestPrep.payload.bilinear
+-      req.passthrough := sampleRequestPrep.payload.passthrough
++      req.bilinear := prep.bilinear
++      req.passthrough := prep.passthrough
+       req
+     }
+     .m2sPipe()
+@@ -621,7 +683,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+   }.elsewhen(!(sampleRequest.fire || bypassOutput.fire) && io.output.fire) {
+     inFlightCount := inFlightCount - 1
+   }
+-  io.busy := inFlightCount =/= 0 || stageRecipPrep.valid || stageRecip.valid || stageA.valid || stageGrad.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestBase.valid
++  io.busy := inFlightCount =/= 0 || frontEnd.stageClz.valid || stageRecipPrep.valid || stageRecip.valid || frontEnd.stageMul.valid || stageA.valid || stageGrad.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestPrep.valid || sampleRequestMid.valid || sampleRequestBase.valid
+ 
+   /** BMB parameters for texture memory access */
+   def bmbParams(c: voodoo.Config) = BmbParameter(
+@@ -694,12 +756,82 @@ object Tmu {
+     bankMsb := byteOffsLow(shift)
+     bankLsb := byteOffsLow(0)
+     when(is16Bit) {
+-      bankMsb := byteOffsLow(shift) | byteOffsLow((shift + 1).resized)
++      // A 16-bit texel is two adjacent bytes, so the low bank bit covers
++      // both. The row starts at bit shift+1. ORing that with bit shift
++      // (the top column bit) makes y and y+1 share a bank once x >= width/2,
++      // and the bilinear pair then reads one row for both taps.
++      bankMsb := byteOffsLow((shift + 1).resized)
+       bankLsb := byteOffsLow(0) | byteOffsLow(1)
+     }
+     (in, (bankMsb ## bankLsb).asUInt, !is16Bit && byteOffsLow(1))
+   }
+ 
++  case class PackedLocSel() extends Bundle {
++    val in = Bool()
++    val addrLow = UInt(packedStartupOffsetLowWidth bits)
++    val baseLow = UInt(packedStartupOffsetLowWidth bits)
++    val shift = UInt(4 bits)
++  }
++
++  /** First half of packedLocation22: LOD range match and base/shift select.
++    *
++    * Same result as packedLocation22 with texEnd = correctedTexEnd(texBase, texEndRaw, is16Bit),
++    * but both candidate end compares run in parallel and the "last matching LOD wins"
++    * priority is a flat one-hot select instead of a 9-deep mux chain.
++    */
++  def packedLocationSelect22(
++      addr: UInt,
++      lodBase: UInt,
++      lodShift: UInt,
++      texBase: Seq[UInt],
++      texEndRaw: Seq[UInt],
++      texShift: Seq[UInt],
++      is16Bit: Bool
++  ): PackedLocSel = {
++    val addr22 = addr.resize(22 bits)
++    val n = texBase.length
++    val m = Bits(n bits)
++    for (lod <- 0 until n) {
++      val base = texBase(lod)
++      val rawEnd = texEndRaw(lod)
++      val belowFallback =
++        if (lod < n - 1) addr22 < texBase(lod + 1)
++        else addr22 < (base + (is16Bit ? U(2, 22 bits) | U(1, 22 bits))).resize(22 bits)
++      val belowEnd = (rawEnd > base) ? (addr22 < rawEnd) | belowFallback
++      m(lod) := addr22 >= base && belowEnd
++    }
++    // Highest matching LOD wins (the original when-chain assigns in LOD order).
++    val sel = Bits(n bits)
++    for (lod <- 0 until n) {
++      sel(lod) := (if (lod < n - 1) m(lod) && !m(n - 1 downto lod + 1).orR else m(lod))
++    }
++    val out = PackedLocSel()
++    val anyHit = m.orR
++    out.in := anyHit
++    val baseSel = MuxOH(sel, texBase.map(_.resize(22 bits)))
++    val shiftSel = MuxOH(sel, texShift)
++    val base = anyHit ? baseSel | lodBase.resize(22 bits)
++    out.shift := anyHit ? shiftSel | lodShift
++    out.addrLow := addr22(packedStartupOffsetLowWidth - 1 downto 0)
++    out.baseLow := base(packedStartupOffsetLowWidth - 1 downto 0)
++    out
++  }
++
++  /** Second half of packedLocation22 (same result as packedLocation22). */
++  def packedLocationFinish(sel: PackedLocSel, is16Bit: Bool): (Bool, UInt, Bool) = {
++    val byteOffsLow = UInt(packedStartupOffsetLowWidth bits)
++    val bankMsb = Bool()
++    val bankLsb = Bool()
++    byteOffsLow := (sel.addrLow - sel.baseLow).resized
++    bankMsb := byteOffsLow(sel.shift)
++    bankLsb := byteOffsLow(0)
++    when(is16Bit) {
++      bankMsb := byteOffsLow((sel.shift + 1).resized)
++      bankLsb := byteOffsLow(0) | byteOffsLow(1)
++    }
++    (sel.in, (bankMsb ## bankLsb).asUInt, !is16Bit && byteOffsLow(1))
++  }
++
+   def packedStartupDecode4(
+       lineBase: UInt,
+       is16Bit: Bool,
+@@ -866,6 +998,12 @@ object Tmu {
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+   }
+ 
++  case class FrontClz(c: voodoo.Config) extends Bundle {
++    val pre = FrontRecipPrep(c)
++    val absOow = UInt(64 bits)
++    val clz = UInt(7 bits)
++  }
++
+   case class FrontRecipPrep(c: voodoo.Config) extends Bundle {
+     val s = AFix(c.texCoordsAccumFormat)
+     val t = AFix(c.texCoordsAccumFormat)
+@@ -885,6 +1023,12 @@ object Tmu {
+     val meta = FrontMeta(c)
+   }
+ 
++  case class FrontMul(c: voodoo.Config) extends Bundle {
++    val r = FrontRecip(c)
++    val productS = SInt(c.texCoordsAccumFormat.width + 18 bits)
++    val productT = SInt(c.texCoordsAccumFormat.width + 18 bits)
++  }
++
+   case class FrontA(c: voodoo.Config) extends Bundle {
+     val texS = SInt(18 bits)
+     val texT = SInt(18 bits)
+@@ -979,6 +1123,12 @@ object Tmu {
+     val passthrough = TmuPassthrough(c)
+   }
+ 
++  case class SampleRequestMid(c: voodoo.Config) extends Bundle {
++    val prep = SampleRequestPrep(c)
++    val startupSel = Vec(Vec(PackedLocSel(), 4), 4)
++    val locSel = Vec(PackedLocSel(), 4)
++  }
++
+   case class SampleRequestPrep(c: voodoo.Config) extends Bundle {
+     val pointAddr = UInt(c.addressWidth.value bits)
+     val biAddr0 = UInt(c.addressWidth.value bits)
+diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
+index 465ea78..a1f3191 100644
+--- a/src/voodoo/texture/TmuTextureCache.scala
++++ b/src/voodoo/texture/TmuTextureCache.scala
+@@ -762,7 +762,10 @@ case class TmuTextureCache(
+ 
+   fillRsp.ready := !fillFetchEmit || fillFetchRaw.ready
+   fillFetchRaw.valid := fillRsp.valid && fillFetchEmit
+-  fillFetchRaw.payload := ownerRspCommitted
++  // ownerRsp includes the texel in the word that completes the fill.
++  // ownerRspCommitted is that word's register, which updates on this
++  // fire, so the completing tap would otherwise be returned as zero.
++  fillFetchRaw.payload := ownerRsp
+ 
+   when(fillRsp.fire) {
+     val nextWordAddr =
