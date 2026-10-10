@@ -21,7 +21,7 @@ from ddr3_jtag import Jtag  # noqa: E402  (openocd Tcl-port transport)
 # Gowin PCIe LTSSM encodings are vendor-specific; 0x11 (L0) is the one that
 # matters. Anything else while the slot is powered means training failed.
 PAGES = ["status", "clk_core", "ddr_clk", "tlp_clk", "pix_clk",
-         "rx_tlps", "die_temp", "hdmi_frames"]
+         "rx_tlps", "tx_tlps", "hdmi_frames"]
 NOMINAL_MHZ = {"clk_core": 46.15, "ddr_clk": 100.0, "tlp_clk": 75.0, "pix_clk": 25.0}
 
 
@@ -44,9 +44,8 @@ def show(prev: tuple[float, list[int]] | None, now: tuple[float, list[int]]) -> 
           f"perst_n={(s >> 7) & 1} linkup={(s >> 6) & 1} calib={(s >> 5) & 1} "
           f"ddr_rst={(s >> 4) & 1} pll_sys={(s >> 3) & 1} pll_hdmi={(s >> 2) & 1} "
           f"core_rst={(s >> 1) & 1} wedged={s & 1}")
-    t = v[6] & 0x3FFF
-    t = t - 0x4000 if t & 0x2000 else t
-    print(f"tlps rx={v[5]}  hdmi frames={v[7]}  die temp={t / 4:.2f} C (samples {v[6] >> 16})")
+    # No die temperature: the GW5AST-138B (ES) on the Pro dock has no ADC block.
+    print(f"tlps rx={v[5]} tx={v[6]}  hdmi frames={v[7]}")
     if prev:
         dt = t - prev[0]
         rates = []

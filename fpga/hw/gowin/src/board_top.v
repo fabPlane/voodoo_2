@@ -299,36 +299,6 @@ module board_top (
         ~led_wedge                // [0]  host bridge wedged
     };
 
-    // On-die temperature (GW5A ADC hard block, temperature mode): ADCVALUE is
-    // signed degrees C * 4. A new measurement is requested every ~42 ms.
-    reg  [20:0] adc_tick = 0;
-    reg         adc_req = 1'b0;
-    wire        adc_rdy;
-    wire [13:0] adc_val;
-    reg  [2:0]  adc_rdy_s = 3'b0;
-    reg  [13:0] die_temp = 14'd0;
-    reg  [15:0] die_temp_n = 16'd0;
-    always @(posedge clk50) begin
-        adc_tick <= adc_tick + 1'b1;
-        adc_req <= adc_tick[20];
-        adc_rdy_s <= {adc_rdy_s[1:0], adc_rdy};
-        if (adc_rdy_s[1] && !adc_rdy_s[2]) begin
-            die_temp <= adc_val;
-            die_temp_n <= die_temp_n + 1'b1;
-        end
-    end
-    ADC #(
-        .CLK_SEL(1'b0), .DIV_CTL(2'd0),
-        .CSR_ADC_MODE(1'b0), .CSR_VSEN_CTRL(3'd0),
-        .CSR_SAMPLE_CNT_SEL(3'd4), .CSR_RATE_CHANGE_CTRL(3'd4),
-        .CSR_FSCAL(10'd730), .CSR_OFFSET(-12'd1180)
-    ) u_adc (
-        .CLK(clk50), .VSENCTL(3'd0), .ADCMODE(1'b0), .DRSTN(pll_sys_lock),
-        .ADCREQI(adc_req), .ADCRDY(adc_rdy), .ADCVALUE(adc_val),
-        .MDRP_CLK(1'b0), .MDRP_WDATA(8'd0), .MDRP_A_INC(1'b0), .MDRP_OPCODE(2'd0),
-        .MDRP_RDATA(), .ADCEN(1'b1)
-    );
-
     jtag_diag u_diag (
         .tck_pad_i (tck_pad_i),
         .tms_pad_i (tms_pad_i),
@@ -340,7 +310,7 @@ module board_top (
         .page3     (cnt_tlp),
         .page4     (cnt_pix),
         .page5     (rx_tlps),
-        .page6     ({die_temp_n, 2'b00, die_temp}),  // temp: signed C*4
+        .page6     (tx_tlps),
         .page7     (hdmi_frames)
     );
 
