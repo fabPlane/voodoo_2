@@ -627,3 +627,28 @@ pinwheel runs at 18.5 frames/s; at 42-46 MHz it ran at 27.8 frames/s.
 **Flashed: B23** (`~/tang-mega-138k-pro-backup/voodoo_b23_28mhz_stable.fs`, build dir `hw/gowin-l`, PLL
 ODIV1=42). B24 (33.3 MHz, `hw/gowin-m`) and B25 (35.3 MHz, `hw/gowin-n`) are building, to find the highest
 stable clock.
+
+### 2026-10-10 night: Quake and Tomb Raider traces render on the board (B26b)
+
+Board trace replay had never worked. `pci-trace-replay` wrote the saved fb/texture state and read frames back
+through the LFB as if it were linear memory, but the LFB is pixel-addressed (row << 11), so both state and
+readback were scrambled. The "logo replays in ~1 s" result above produced garbage.
+
+Fix (commit a98a39e): **raw DDR window**. The BAR window register is now 5 bits. Windows 16-31 (address bit 24)
+bypass the Voodoo and reach DDR 0-16 MiB (fb at 0, textures at 4 MiB) via `RawDdrWindow.scala`, merged into the
+fb AXI port. While a raw window is selected, the core drains its fb write buffer and drops the TMU texture caches
+(ext `Core.invalidateTexCaches`). Sim: `RawDdrWindowTest` (4 tests). Board: 4096-word random write/readback clean.
+
+**B26b** (`hw/gowin-p`, RTL `~/.cache/gowin-builds/rtl_b26`, place_option 1, core 35.3 MHz) is the first build
+with **all clocks timing-clean** (core, TLP 75 MHz, DDR). Flashed; backup
+`~/tang-mega-138k-pro-backup/voodoo_b26b_35mhz_rawwin.fs`. (B26, the same RTL with place_option 3, sat in
+routing phase 1 for 80+ min and was killed.)
+
+| trace (state) | replay | pixels off by >16 vs 86Box (after undoing the PNG sRGB curve) |
+|---|---|---|
+| quake | 15.3 s | 1 156 / 307 200 |
+| tomb | 7.9 s | 621 / 307 200 |
+
+The remaining differences are short horizontal runs (CoreSim also differs from 86Box on these traces).
+`--frames-dir DIR --frame-every N` saves the frame being drawn every N entries; videos and captures are in
+`~/voodoo-screens/` (`*_drawing.mp4`, `4x_*_board_vs_86box.png`).
