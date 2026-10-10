@@ -581,3 +581,26 @@ must hold the board lock; builds don't need it and can run in parallel:
 The lock is an flock on `~/.cache/tang-board/lock` (holder info in `lock.holder`); it is released
 automatically if the holder dies. `run_detached.sh` also flocks each build directory, so two agents
 can't build in the same `hw/<dir>` at once (use separate dirs).
+
+### 2026-10-10 evening: rendering clean (B19)
+
+The stray/shifted pixel runs had two causes, both in the framebuffer write buffer
+(`FramebufferPlaneBuffer`, in the ext patch). CoreSim missed both because its memory model accepts any BMB
+address:
+
+1. The drain moved the BMB command address forward on every beat. Fix: hold the burst start address
+   (`slotStartAddr`).
+2. Sequential runs could cross a 4 KiB page. `BmbToAxi4Mem` (BmbAligner/LengthFixer/Axi4SharedBridge)
+   increments only the in-page address bits, so the tail of the run wrapped to the start of the same
+   page (0x67000 instead of 0x68000), which showed up as rows shifted left. Fix: never append when the next
+   address starts a page (`nextStartsPage`). `BmbAlignedSpliter` wraps the same way, so it isn't a fix here.
+   Regression: `fpga/test/voodoo/gowin/FbMemPathTest.scala` (BMB → AXI → Axi4CC → adapter → DDR model).
+
+**B19** (build dir `hw/gowin-i`, RTL `~/.cache/gowin-builds/rtl_b19`) has both fixes. It is flashed and
+runs every `hb01`–`hb09` demo cleanly over PCIe (`~/voodoo-screens/30_contact_sheet_b19.png`), with the
+pinwheel at 27.8 frames/s. Timing is **not** clean: core Fmax 43.5 MHz vs 46.15 (55 endpoints), and
+clk100/TLP 68.6 vs 75 (vendor upar placement). It works on this board anyway, but needs a clean rerun:
+B19b (`hw/gowin-i2`, place_option 1) and B19c (`hw/gowin-i3`, core 42.86 MHz) are building.
+
+Temperature: the GW5AST-138B ES has no ADC block, so there is no die-temperature readout (the B20 attempt
+failed in PnR with "no ADC resource"). Instead we watch for reloads with `board_diag.py` during long runs.
