@@ -177,7 +177,30 @@ public:
     return readLocal32(windowOffset(voodooAddr));
   }
 
+  // Flow control (on by default). Every read must finish inside the host root
+  // port's completion timeout and waits behind earlier posted writes, so
+  // writes into the Voodoo map are only issued while the SST status says the
+  // core's 64-entry PCI FIFO has room. Without this a write can stall behind a
+  // busy core for milliseconds: B28+ then wedges the BAR (writes dropped,
+  // reads all-ones) rather than let the AMD host shut down. Raw-window writes
+  // go straight to DDR and don't count.
+  void setFlowControl(bool on) { flow_ = on; budget_ = 0; }
+  uint64_t flowPolls() const { return flowPolls_; }
+
+  void waitForRoom(uint32_t voodooAddr) {
+    if (!flow_ || voodooAddr >= kRawBase) return;
+    while (budget_ == 0) {
+      flowPolls_++;
+      uint32_t s = read32(0);
+      if (s == 0xffffffffu) return;  // wedged / gone: don't spin, let the caller see it
+      uint32_t freeEntries = s & 0x3fu;
+      budget_ = freeEntries > 4 ? freeEntries - 4 : 0;
+    }
+    budget_--;
+  }
+
   void write32(uint32_t voodooAddr, uint32_t value) {
+    waitForRoom(voodooAddr);
     selectWindow(windowIndex(voodooAddr));
     writeLocal32(windowOffset(voodooAddr), value);
   }
@@ -188,6 +211,7 @@ public:
   }
 
   void write16(uint32_t voodooAddr, uint16_t value) {
+    waitForRoom(voodooAddr);
     selectWindow(windowIndex(voodooAddr));
     writeLocal16(windowOffset(voodooAddr), value);
   }
@@ -216,6 +240,9 @@ private:
   int fd_ = -1;
   volatile uint8_t *base_ = nullptr;
   uint32_t window_ = 0xffffffffu;
+  bool flow_ = true;
+  uint32_t budget_ = 0;
+  uint64_t flowPolls_ = 0;
 };
 
 inline const char *statusText(uint32_t status) {

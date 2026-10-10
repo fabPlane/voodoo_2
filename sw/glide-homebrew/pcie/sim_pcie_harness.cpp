@@ -12,7 +12,9 @@
  *   VOODOO_PCI_STATS=1            print MMIO counts at shutdown
  *   VOODOO_PCI_LOG=file           log slow reads (fdatasync'd); with
  *   VOODOO_PCI_LOG_ALL=1          every access, written before it is issued
- *                                 (finds the access that takes the host down)
+ *   VOODOO_PCI_LOG_SYNC=1         fdatasync each line (survives a host power
+ *                                 loss; slow - without it the page cache
+ *                                 keeps the log if only the process dies)
  *   VOODOO_PCI_DRYRUN=1           don't touch the board; reads return idle
  *   VOODOO_PCI_NOFLOW=1           disable the flow control below
  *
@@ -46,6 +48,7 @@ uint64_t g_writes = 0, g_reads = 0, g_idle_polls = 0;
 int g_logFd = -1;
 bool g_dry = false;
 bool g_logAll = false;
+bool g_logSync = false;
 bool g_flow = true;
 uint32_t g_budget = 0;  // writes the PCI FIFO can take without stalling
 uint64_t g_budgetPolls = 0, g_slowReads = 0, g_maxReadNs = 0;
@@ -58,7 +61,7 @@ void logOp(const char *fmt, ...) {
   va_start(ap, fmt);
   int n = vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
-  if (write(g_logFd, buf, n) == n) fdatasync(g_logFd);
+  if (write(g_logFd, buf, n) == n && g_logSync) fdatasync(g_logFd);
 }
 
 // SST-1 status register (Voodoo address 0x000).
@@ -108,6 +111,7 @@ extern "C" int sim_init(void) {
   g_dry = getenv("VOODOO_PCI_DRYRUN") != nullptr;
   g_flow = getenv("VOODOO_PCI_NOFLOW") == nullptr;
   g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
+  g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   logOp("init dry=%d\n", g_dry);
   if (g_dry) {
     g_open = true;
@@ -123,6 +127,7 @@ extern "C" int sim_init(void) {
     fprintf(stderr, "[pcie] cannot map %s/resource0 (run as root)\n", g_dev.sysfs.c_str());
     return -1;
   }
+  g_bar.setFlowControl(false);  // the harness does its own flow control (above)
   g_open = true;
   fprintf(stderr, "[pcie] Voodoo on %s (%04x:%04x), bridge %s\n", g_dev.bdf.c_str(),
           g_dev.vendor, g_dev.device, pci_bar::statusText(g_bar.status()));
