@@ -81,11 +81,24 @@ static volatile sig_atomic_t hb_stop;
 static void hb_on_sigint(int sig) { (void)sig; hb_stop = 1; }
 static void hb_live_begin(void) { signal(SIGINT, hb_on_sigint); }
 
-/* Call once per frame; prints frames/s to stderr about once a second. */
+/* Call once per frame; prints frames/s to stderr about once a second.
+ * HB_MAX_FPS=<n> caps the frame rate (paces the board's load for soak tests). */
 static void hb_fps_tick(void) {
-    static struct timespec t0;
+    static struct timespec t0, next;
     static int n;
+    static double period = -1.0;
     struct timespec t;
+    if (period < 0.0) {
+        const char *cap = getenv("HB_MAX_FPS");
+        period = (cap && atof(cap) > 0.0) ? 1.0 / atof(cap) : 0.0;
+        clock_gettime(CLOCK_MONOTONIC, &next);
+    }
+    if (period > 0.0) {
+        long ns = next.tv_nsec + (long)(period * 1e9);
+        next.tv_sec += ns / 1000000000L;
+        next.tv_nsec = ns % 1000000000L;
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+    }
     clock_gettime(CLOCK_MONOTONIC, &t);
     if (!n++) { t0 = t; return; }
     double dt = (t.tv_sec - t0.tv_sec) + (t.tv_nsec - t0.tv_nsec) * 1e-9;

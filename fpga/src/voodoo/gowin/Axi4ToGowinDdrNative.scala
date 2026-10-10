@@ -126,6 +126,8 @@ case class Axi4ToGowinDdrNative(
   // hw/gowin/ddr3_test/README.md: gap >= 8 UI cycles was clean); keep at
   // least cmdGapCycles idle cycles after every command.
   // 16 was tried against the board resets: no effect on them, 7x slower.
+  // 8 (B21, 12 V) didn't stop the render-load reloads at 46 MHz either; the
+  // core clock did (STATUS.md, 2026-10-10 evening).
   val cmdGapCycles = 0
   val cmdGapOk = Bool()
   if (cmdGapCycles == 0) cmdGapOk := True
