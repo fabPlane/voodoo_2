@@ -10,12 +10,17 @@
  * Environment:
  *   VOODOO_PCI_BDF=0000:05:00.0   pick a device (default: first match)
  *   VOODOO_PCI_STATS=1            print MMIO counts at shutdown
+ *   VOODOO_PCI_LOG=file           log every access (written + fdatasync'd
+ *                                 before it is issued: finds the access that
+ *                                 takes the host down)
+ *   VOODOO_PCI_DRYRUN=1           don't touch the board; reads return idle
  *
  * SPDX-License-Identifier: MIT
  */
 #include "../../pcie/pci_bar.h"
 
 #include <chrono>
+#include <cstdarg>
 #include <cstdlib>
 
 extern "C" {
@@ -27,12 +32,25 @@ pci_bar::Device g_dev;
 pci_bar::Bar g_bar;
 bool g_open = false;
 uint64_t g_writes = 0, g_reads = 0, g_idle_polls = 0;
+int g_logFd = -1;
+bool g_dry = false;
+
+void logOp(const char *fmt, ...) {
+  if (g_logFd < 0) return;
+  char buf[160];
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(buf, sizeof buf, fmt, ap);
+  va_end(ap);
+  if (write(g_logFd, buf, n) == n) fdatasync(g_logFd);
+}
 
 // SST-1 status register (Voodoo address 0x000).
 constexpr uint32_t kSstBusy = 1u << 9;
 constexpr uint32_t kPciFifoFreeMask = 0x3fu;
 
 bool checkBridge(const char *where) {
+  if (g_dry) return true;
   // All-ones = read timed out while the core was busy; Bar::wedged() retries.
   if (g_bar.wedged()) {
     uint32_t s = g_bar.status();
@@ -45,6 +63,14 @@ bool checkBridge(const char *where) {
 
 extern "C" int sim_init(void) {
   if (g_open) return 0;
+  if (const char *log = getenv("VOODOO_PCI_LOG"))
+    g_logFd = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  g_dry = getenv("VOODOO_PCI_DRYRUN") != nullptr;
+  logOp("init dry=%d\n", g_dry);
+  if (g_dry) {
+    g_open = true;
+    return 0;
+  }
   const char *bdf = getenv("VOODOO_PCI_BDF");
   if (!pci_bar::findDevice(pci_bar::kDefaultVendor, pci_bar::kDefaultDevice, bdf, &g_dev)) {
     fprintf(stderr, "[pcie] no Voodoo PCIe device found (set VOODOO_PCI_BDF?)\n");
@@ -66,24 +92,31 @@ extern "C" void sim_shutdown(void) {
   if (getenv("VOODOO_PCI_STATS"))
     fprintf(stderr, "[pcie] %llu writes, %llu reads, %llu idle polls; bridge %s\n",
             (unsigned long long)g_writes, (unsigned long long)g_reads,
-            (unsigned long long)g_idle_polls, pci_bar::statusText(g_bar.status()));
-  g_bar.close();
+            (unsigned long long)g_idle_polls, g_dry ? "dry-run" : pci_bar::statusText(g_bar.status()));
+  logOp("shutdown\n");
+  if (!g_dry) g_bar.close();
   g_open = false;
 }
 
 extern "C" void sim_write(uint32_t addr, uint32_t data) {
   g_writes++;
-  g_bar.write32(addr & 0xfffffcu, data);
+  logOp("w32 %06x %08x\n", addr, data);
+  if (!g_dry) g_bar.write32(addr & 0xfffffcu, data);
 }
 
 extern "C" void sim_write16(uint32_t addr, uint16_t data) {
   g_writes++;
-  g_bar.write16(addr & 0xfffffeu, data);
+  logOp("w16 %06x %04x\n", addr, data);
+  if (!g_dry) g_bar.write16(addr & 0xfffffeu, data);
 }
 
 extern "C" uint32_t sim_read(uint32_t addr) {
   g_reads++;
-  return g_bar.read32(addr & 0xfffffcu);
+  logOp("r32 %06x\n", addr);
+  if (g_dry) return (addr & 0xfffffcu) == 0 ? kPciFifoFreeMask : 0;
+  uint32_t v = g_bar.read32(addr & 0xfffffcu);
+  logOp("  = %08x\n", v);
+  return v;
 }
 
 extern "C" uint32_t sim_idle_wait(void) {
@@ -91,7 +124,7 @@ extern "C" uint32_t sim_idle_wait(void) {
   auto start = std::chrono::steady_clock::now();
   for (;;) {
     g_idle_polls++;
-    uint32_t s = g_bar.read32(0);
+    uint32_t s = g_dry ? kPciFifoFreeMask : g_bar.read32(0);
     if (!(s & kSstBusy) && (s & kPciFifoFreeMask) == kPciFifoFreeMask) return s;
     if ((g_idle_polls & 0x3ff) == 0) {
       if (!checkBridge("idle_wait")) return s;
