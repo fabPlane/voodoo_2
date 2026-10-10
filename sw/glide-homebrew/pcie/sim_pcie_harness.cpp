@@ -10,10 +10,20 @@
  * Environment:
  *   VOODOO_PCI_BDF=0000:05:00.0   pick a device (default: first match)
  *   VOODOO_PCI_STATS=1            print MMIO counts at shutdown
- *   VOODOO_PCI_LOG=file           log every access (written + fdatasync'd
- *                                 before it is issued: finds the access that
- *                                 takes the host down)
+ *   VOODOO_PCI_LOG=file           log slow reads (fdatasync'd); with
+ *   VOODOO_PCI_LOG_ALL=1          every access, written before it is issued
+ *                                 (finds the access that takes the host down)
  *   VOODOO_PCI_DRYRUN=1           don't touch the board; reads return idle
+ *   VOODOO_PCI_NOFLOW=1           disable the flow control below
+ *
+ * Flow control: a PCIe read must complete within the root port's completion
+ * timeout (50 us - 50 ms, not configurable on the AMD root port), and PCIe
+ * ordering makes a read wait behind every earlier posted write. If writes
+ * back up because the core's 64-entry PCI FIFO is full, a following read can
+ * take milliseconds and the host platform shuts down (seen with GLQuake at
+ * full speed). So writes are only issued while the last status read says the
+ * FIFO has room, and non-status reads wait for the core to be idle first.
+ * Reads slower than 20 us are logged to stderr (and VOODOO_PCI_LOG).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -21,6 +31,7 @@
 
 #include <chrono>
 #include <cstdarg>
+#include <ctime>
 #include <cstdlib>
 
 extern "C" {
@@ -34,6 +45,11 @@ bool g_open = false;
 uint64_t g_writes = 0, g_reads = 0, g_idle_polls = 0;
 int g_logFd = -1;
 bool g_dry = false;
+bool g_logAll = false;
+bool g_flow = true;
+uint32_t g_budget = 0;  // writes the PCI FIFO can take without stalling
+uint64_t g_budgetPolls = 0, g_slowReads = 0, g_maxReadNs = 0;
+uint32_t g_maxReadAddr = 0;
 
 void logOp(const char *fmt, ...) {
   if (g_logFd < 0) return;
@@ -48,6 +64,30 @@ void logOp(const char *fmt, ...) {
 // SST-1 status register (Voodoo address 0x000).
 constexpr uint32_t kSstBusy = 1u << 9;
 constexpr uint32_t kPciFifoFreeMask = 0x3fu;
+
+uint64_t nowNs() {
+  timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return uint64_t(t.tv_sec) * 1000000000ull + t.tv_nsec;
+}
+
+void logOp(const char *fmt, ...);
+
+uint32_t timedRead(uint32_t addr) {
+  uint64_t t0 = nowNs();
+  uint32_t v = g_bar.read32(addr);
+  uint64_t dt = nowNs() - t0;
+  if (dt > g_maxReadNs) {
+    g_maxReadNs = dt;
+    g_maxReadAddr = addr;
+  }
+  if (dt > 20000) {
+    g_slowReads++;
+    if (g_slowReads <= 50) fprintf(stderr, "[pcie] slow read %06x: %llu us\n", addr, (unsigned long long)(dt / 1000));
+    logOp("slow r32 %06x %llu us\n", addr, (unsigned long long)(dt / 1000));
+  }
+  return v;
+}
 
 bool checkBridge(const char *where) {
   if (g_dry) return true;
@@ -66,6 +106,8 @@ extern "C" int sim_init(void) {
   if (const char *log = getenv("VOODOO_PCI_LOG"))
     g_logFd = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
   g_dry = getenv("VOODOO_PCI_DRYRUN") != nullptr;
+  g_flow = getenv("VOODOO_PCI_NOFLOW") == nullptr;
+  g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
   logOp("init dry=%d\n", g_dry);
   if (g_dry) {
     g_open = true;
@@ -93,29 +135,62 @@ extern "C" void sim_shutdown(void) {
     fprintf(stderr, "[pcie] %llu writes, %llu reads, %llu idle polls; bridge %s\n",
             (unsigned long long)g_writes, (unsigned long long)g_reads,
             (unsigned long long)g_idle_polls, g_dry ? "dry-run" : pci_bar::statusText(g_bar.status()));
+  if (getenv("VOODOO_PCI_STATS"))
+    fprintf(stderr, "[pcie] flow %s: %llu budget polls; reads: max %llu us at %06x, %llu over 20 us\n",
+            g_flow ? "on" : "off", (unsigned long long)g_budgetPolls,
+            (unsigned long long)(g_maxReadNs / 1000), g_maxReadAddr, (unsigned long long)g_slowReads);
   logOp("shutdown\n");
   if (!g_dry) g_bar.close();
   g_open = false;
 }
 
+// Block until the PCI FIFO has room for at least one more write.
+void waitForRoom() {
+  if (!g_flow || g_dry) return;
+  while (g_budget == 0) {
+    g_budgetPolls++;
+    g_budget = timedRead(0) & kPciFifoFreeMask;
+    // Leave a little slack for anything in flight between BAR and core.
+    g_budget = g_budget > 4 ? g_budget - 4 : 0;
+  }
+  g_budget--;
+}
+
+// Non-status reads wait for the core to drain first so they answer quickly.
+void idleBeforeRead(uint32_t addr) {
+  if (!g_flow || g_dry || (addr & 0xfffffcu) == 0) return;
+  for (int i = 0;; i++) {
+    uint32_t s = timedRead(0);
+    if (!(s & kSstBusy) && (s & kPciFifoFreeMask) == kPciFifoFreeMask) {
+      g_budget = kPciFifoFreeMask - 4;
+      return;
+    }
+    if (i > 200000) return;  // give up after a while: the read is still bounded by the BAR timeout
+  }
+}
+
 extern "C" void sim_write(uint32_t addr, uint32_t data) {
+  waitForRoom();
   g_writes++;
-  logOp("w32 %06x %08x\n", addr, data);
+  if (g_logAll) logOp("w32 %06x %08x\n", addr, data);
   if (!g_dry) g_bar.write32(addr & 0xfffffcu, data);
 }
 
 extern "C" void sim_write16(uint32_t addr, uint16_t data) {
+  waitForRoom();
   g_writes++;
-  logOp("w16 %06x %04x\n", addr, data);
+  if (g_logAll) logOp("w16 %06x %04x\n", addr, data);
   if (!g_dry) g_bar.write16(addr & 0xfffffeu, data);
 }
 
 extern "C" uint32_t sim_read(uint32_t addr) {
   g_reads++;
-  logOp("r32 %06x\n", addr);
+  if (g_logAll) logOp("r32 %06x\n", addr);
   if (g_dry) return (addr & 0xfffffcu) == 0 ? kPciFifoFreeMask : 0;
-  uint32_t v = g_bar.read32(addr & 0xfffffcu);
-  logOp("  = %08x\n", v);
+  idleBeforeRead(addr);
+  uint32_t v = timedRead(addr & 0xfffffcu);
+  if ((addr & 0xfffffcu) == 0) g_budget = (v & kPciFifoFreeMask) > 4 ? (v & kPciFifoFreeMask) - 4 : 0;
+  if (g_logAll) logOp("  = %08x\n", v);
   return v;
 }
 
@@ -124,7 +199,7 @@ extern "C" uint32_t sim_idle_wait(void) {
   auto start = std::chrono::steady_clock::now();
   for (;;) {
     g_idle_polls++;
-    uint32_t s = g_dry ? kPciFifoFreeMask : g_bar.read32(0);
+    uint32_t s = g_dry ? kPciFifoFreeMask : timedRead(0);
     if (!(s & kSstBusy) && (s & kPciFifoFreeMask) == kPciFifoFreeMask) return s;
     if ((g_idle_polls & 0x3ff) == 0) {
       if (!checkBridge("idle_wait")) return s;
