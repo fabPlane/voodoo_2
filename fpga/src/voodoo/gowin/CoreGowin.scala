@@ -37,6 +37,9 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     val memTex = master(Axi4(CoreGowin.texAxiConfig(c, axiBurstLog2)))
     val hdmi = master(HdmiScanoutPort(c))
     val hostWedged = out Bool ()
+    // Host has a raw-DDR window selected: drain the fb write buffer and drop
+    // texture caches so raw reads see, and rendering uses, current memory.
+    val rawActive = in Bool ()
   }
 
   val core = Core(c)
@@ -96,7 +99,8 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   io.hdmi.fifoLevel := core.io.hdmi.fifoLevel
 
   core.io.fbBaseAddr := GowinAddressMap.fbMemBase
-  core.io.flushFbCaches := False
+  core.io.flushFbCaches := io.rawActive
+  core.io.invalidateTexCaches := io.rawActive
 }
 
 /** Adds a constant to AXI4 AW/AR addresses. Used to park textures above the

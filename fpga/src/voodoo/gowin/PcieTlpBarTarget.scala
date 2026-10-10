@@ -11,6 +11,9 @@ object PcieTlpBarTarget {
   val windowAddress = 0x250
   val windowAddressWidth = 20
   val voodooAddressWidth = 24
+  // Windows 16-31 reach raw DDR (bit 24 set): see TangMega138kPro / RawDdrWindow.
+  val rawAddressWidth = 25
+  val windowBits = 5
 
   def axiConfig(addressWidth: Int = voodooAddressWidth) =
     AxiLite4Config(addressWidth = addressWidth, dataWidth = 32)
@@ -21,6 +24,8 @@ object PcieTlpBarTarget {
   * Turns 32-bit Memory Read/Write TLPs on BAR0 into AXI4-Lite. Gowin BAR
   * windows top out at 1 MiB, so a host-visible window register at byte 0x250
   * selects which megabyte of the 16 MiB Voodoo map the TLP offset lands in.
+  * Windows 16-31 set address bit 24; the top level sends those to raw DDR
+  * (host state load / framebuffer readback for trace replay).
   * It decodes as a byte write (first BE 0001) at 0x250 in any window - the
   * Voodoo never takes 8-bit writes - or as any access to 0x250 while the
   * window is in register space (0-3). Offset 0x250 of the LFB / texture
@@ -52,7 +57,7 @@ case class PcieTlpBarTarget(
     val tlCfgBusdev = in UInt (13 bits)
 
     val axi = master(AxiLite4(axiConfig(addressWidth)))
-    val window = out UInt (4 bits)
+    val window = out UInt (windowBits bits)
   }
 
   def dword(data: Bits, index: Int): Bits =
@@ -63,7 +68,7 @@ case class PcieTlpBarTarget(
   }
 
   val state = RegInit(State.idle)
-  val window = Reg(UInt(4 bits)) init (0)
+  val window = Reg(UInt(windowBits bits)) init (0)
   val reqId = Reg(Bits(16 bits)) init (0)
   val reqTag = Reg(Bits(8 bits)) init (0)
   val firstBe = Reg(Bits(4 bits)) init (0)
@@ -199,7 +204,7 @@ case class PcieTlpBarTarget(
         lowerAddr := capturedAddr.asBits(6 downto 0)
         when(isWindowReg) {
           when(hasData) {
-            window := capturedData(3 downto 0).asUInt
+            window := capturedData(windowBits - 1 downto 0).asUInt
             when(!io.tlRxEop) {
               state := State.drop
             }

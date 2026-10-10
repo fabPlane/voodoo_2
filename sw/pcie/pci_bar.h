@@ -24,6 +24,10 @@ constexpr uint32_t kWindowMask = kBarBytes - 1u;
 constexpr uint32_t kVoodooBytes = 16u << 20;
 constexpr uint32_t kLfbBase = 4u << 20;
 constexpr uint32_t kTexBase = 8u << 20;
+// Windows 16-31: raw DDR (needs a bitstream with the raw window, B26+). Framebuffer memory at
+// raw 0, texture memory at raw 4 MiB; for trace state load and framebuffer readback.
+constexpr uint32_t kRawBase = 16u << 20;
+constexpr uint32_t kRawTexOffset = 4u << 20;
 
 constexpr uint32_t kStatusWedged = 1u << 0;
 constexpr uint32_t kStatusReqTimeout = 1u << 1;

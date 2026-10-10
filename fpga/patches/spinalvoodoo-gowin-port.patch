@@ -108,7 +108,7 @@ index d163ab7..7bea856 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..53be16e 100644
+index 100f1c6..b881552 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -139,7 +139,27 @@ index 100f1c6..53be16e 100644
    def texMemBmbParams(c: Config) = BmbParameter(
      addressWidth = c.addressWidth.value,
      dataWidth = 32,
-@@ -173,8 +194,11 @@ case class Core(c: Config) extends Component {
+@@ -92,6 +113,10 @@ case class Core(c: Config) extends Component {
+     // Simulation-only framebuffer cache flush request
+     val flushFbCaches = in Bool ()
+ 
++    // Texture memory was written behind the core's back (board raw-DDR window):
++    // drop the TMU's texture caches. Unconnected = never.
++    val invalidateTexCaches = in(Bool()) default (False)
++
+     // Integrated scanout path. Board wrappers provide the physical HDMI transmitter/clocking.
+     val hdmi = master(HdmiScanoutPort(c))
+ 
+@@ -164,7 +189,7 @@ case class Core(c: Config) extends Component {
+   pixelPipeline.io.ftriangleCmd << regBank.commands.ftriangleCmd
+   pixelPipeline.io.fastfillCmd << regBank.commands.fastfillCmd
+   pixelPipeline.io.paletteWrite << regBank.io.paletteWrite
+-  pixelPipeline.io.tmuInvalidate := frontdoor.io.invalidate
++  pixelPipeline.io.tmuInvalidate := frontdoor.io.invalidate || io.invalidateTexCaches
+   pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
+   pixelPipeline.io.fbStatus := framebufferMem.io.status
+   pixelPipeline.io.fbStats := framebufferMem.io.stats
+@@ -173,8 +198,11 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp

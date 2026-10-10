@@ -20,3 +20,5 @@ submodule commit (`git -C ext/SpinalVoodoo rev-parse HEAD`).
   TmuTextureCache, sim harness / trace_test tweaks).
 
 Regenerate after editing the submodule: `git -C ext/SpinalVoodoo diff > fpga/patches/spinalvoodoo-gowin-port.patch`.
+- Board raw-DDR window: `Core.io.invalidateTexCaches` (defaults low) drops the TMU texture caches
+  while the host writes texture memory directly (trace state load).

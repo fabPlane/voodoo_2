@@ -70,7 +70,7 @@ case class TangMega138kPro(c: Config) extends Component {
   )
 
   val pcie = new ClockingArea(pcieCd) {
-    val bar = PcieTlpBarTarget()
+    val bar = PcieTlpBarTarget(addressWidth = PcieTlpBarTarget.rawAddressWidth)
     bar.io.tlRxSop := io.tlRxSop
     bar.io.tlRxEop := io.tlRxEop
     bar.io.tlRxValid := io.tlRxValid
@@ -87,21 +87,35 @@ case class TangMega138kPro(c: Config) extends Component {
   }
 
   val barCc = AxiLite4ClockCrossing(
-    PcieTlpBarTarget.axiConfig(),
+    PcieTlpBarTarget.axiConfig(PcieTlpBarTarget.rawAddressWidth),
     pcieCd,
     coreCd
   )
-  val ddr = Axi4ToGowinDdrNative(CoreGowin.fbAxiConfig(c), CoreGowin.texAxiConfig(c))
+  // BAR windows 16-31 (address bit 24) bypass the Voodoo and reach DDR
+  // 0x000000-0xffffff directly (fb at 0, textures at 4 MiB): trace replay
+  // loads saved fb/texture state and reads frames back through it.
+  val raw = new ClockingArea(coreCd) {
+    val split = AxiLite4RawSplit(PcieTlpBarTarget.rawAddressWidth)
+    val toAxi = AxiLite4ToAxi4Single(split.outConfig, CoreGowin.fbAxiConfig(c))
+    val merge = Axi4TwoToOne(CoreGowin.fbAxiConfig(c))
+    split.io.raw <> toAxi.io.input
+    merge.io.inputs(1) << toAxi.io.output
+    core.io.rawActive := BufferCC(pcie.bar.io.window.msb, init = False)
+  }
+  val fbDdrConfig = raw.merge.outConfig
+  val ddr = Axi4ToGowinDdrNative(fbDdrConfig, CoreGowin.texAxiConfig(c))
   // One full burst (2^axiBurstLog2 beats) of W / R buffering per direction.
   private val burstBeats = 1 << CoreGowin.axiBurstLog2
-  val fbCc = Axi4CC(CoreGowin.fbAxiConfig(c), coreCd, ClockDomain.current,
+  val fbCc = Axi4CC(fbDdrConfig, coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
   val texCc = Axi4CC(CoreGowin.texAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
 
   pcie.bar.io.axi <> barCc.io.input
-  core.io.bar <> barCc.io.output
-  fbCc.io.input << core.io.memFb
+  raw.split.io.input <> barCc.io.output
+  core.io.bar <> raw.split.io.core
+  raw.merge.io.inputs(0) << core.io.memFb
+  fbCc.io.input << raw.merge.io.output
   texCc.io.input << core.io.memTex
   // Register the channels between the CDC FIFOs and the adapter: the
   // request pop-side valid and the R push-side ready otherwise fed the

@@ -29,6 +29,8 @@ struct Options {
   bool skipState = false;
   bool skipFbState = false;
   uint32_t maxEntries = 0;
+  std::string framesDir;
+  uint32_t frameEvery = 0;
 };
 
 class PciReplayBackend : public TraceReplayBackend {
@@ -58,15 +60,16 @@ public:
     return !wedged();
   }
   bool writeFbBulk(uint32_t byteOffset, const uint8_t *data, uint32_t size) override {
-    return writeBulk(pci_bar::kLfbBase + byteOffset, data, size);
+    // Saved state is a raw memory image: write it to DDR, not through the LFB.
+    return writeBulk(pci_bar::kRawBase + byteOffset, data, size);
   }
   bool writeTexBulk(uint32_t byteOffset, const uint8_t *data, uint32_t size) override {
-    return writeBulk(pci_bar::kTexBase + byteOffset, data, size);
+    return writeBulk(pci_bar::kRawBase + pci_bar::kRawTexOffset + byteOffset, data, size);
   }
   bool readFbWords(uint32_t byteOffset, uint32_t *dst, uint32_t wordCount) override {
     for (uint32_t i = 0; i < wordCount; ++i) {
-      dst[i] = bar_->read32(pci_bar::kLfbBase + byteOffset + i * 4u);
-      if (wedged()) return false;
+      dst[i] = bar_->read32(pci_bar::kRawBase + byteOffset + i * 4u);
+      if ((i & 0x3fffu) == 0x3fffu && wedged()) return false;
     }
     return true;
   }
@@ -122,7 +125,9 @@ private:
       uint32_t word;
       memcpy(&word, data + off, 4);
       bar_->write32(voodooAddr + off, word);
-      if (wedged()) return false;
+      // Raw-DDR writes don't go through the Voodoo bridge; checking it per word
+      // would also bounce the window back to 0 every time.
+      if ((off & 0xffffu) == 0xfffcu && wedged()) return false;
       off += 4;
     }
     if (off < size) {
@@ -145,7 +150,8 @@ double elapsedMs(Clock::time_point start) {
 void usage(const char *argv0) {
   fprintf(stderr,
           "Usage: %s <trace.bin|trace-dir> [--bdf BDF] [--vid HEX] [--did HEX] "
-          "[--skip-state] [--skip-fb-state] [--max-entries N]\n",
+          "[--skip-state] [--skip-fb-state] [--max-entries N]\n"
+          "       [--frames-dir DIR --frame-every N]  also save the draw buffer every N entries\n",
           argv0);
 }
 
@@ -166,6 +172,10 @@ bool parseArgs(int argc, char **argv, Options *opts) {
       opts->skipState = true;
     } else if (strcmp(argv[i], "--skip-fb-state") == 0) {
       opts->skipFbState = true;
+    } else if (strcmp(argv[i], "--frames-dir") == 0 && i + 1 < argc) {
+      opts->framesDir = argv[++i];
+    } else if (strcmp(argv[i], "--frame-every") == 0 && i + 1 < argc) {
+      opts->frameEvery = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 0));
     } else if (strcmp(argv[i], "--max-entries") == 0 && i + 1 < argc) {
       opts->maxEntries = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 0));
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -238,8 +248,45 @@ int main(int argc, char **argv) {
       opts.maxEntries && opts.maxEntries < trace.entryCount ? opts.maxEntries : trace.entryCount;
   auto replayStart = Clock::now();
   TraceReplayRunResult replayResult;
+  // --frames-dir: after every N entries, drain the core and save the buffer being drawn,
+  // so the frame can be watched building up (frame_00000.png, ...).
+  const uint32_t capW = stateInfo.hDisp ? stateInfo.hDisp : 640;
+  const uint32_t capH = stateInfo.vDisp ? stateInfo.vDisp : 480;
+  const uint32_t capStride = stateInfo.rowWidth ? stateInfo.rowWidth / 2 : capW;
+  uint8_t capLut[256];
+  traceReplayInitSrgbLut(capLut);
+  uint32_t framesSaved = 0;
+  auto saveFrame = [&](uint32_t drawOffset) {
+    std::vector<uint16_t> fb565;
+    if (!traceReplayFinish(backend) ||
+        !traceReplayCaptureRgb565(backend, drawOffset, capStride, capW, capH, &fb565))
+      return false;
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/frame_%05u.png", opts.framesDir.c_str(), framesSaved++);
+    return traceReplayWriteRgb565Png(path, fb565.data(), static_cast<int>(capW), static_cast<int>(capH),
+                                     static_cast<int>(capStride), capLut, stbi_write_png) != 0;
+  };
+  const bool capture = !opts.framesDir.empty() && opts.frameEvery > 0;
+  if (capture && !saveFrame(stateInfo.drawOffset)) {
+    fprintf(stderr, "[pci-trace] ERROR: cannot save frames to %s\n", opts.framesDir.c_str());
+    free(trace.traceData);
+    return 1;
+  }
+  bool captureOk = true;
+  int64_t lastCalled = -1;
+  auto onEntry = [&](uint32_t i, const voodoo_trace_entry_t &, uint32_t,
+                     const TraceReplayRunResult &r, bool sawSwap) {
+    // Called before (return value: run it?) and after each entry; the second call has the same i.
+    const bool after = static_cast<int64_t>(i) == lastCalled;
+    lastCalled = i;
+    // A swap flips the draw buffer; keep showing the one that was just finished.
+    if (after && capture && captureOk && ((i + 1) % opts.frameEvery == 0 || i + 1 == replayEntries))
+      captureOk = saveFrame(sawSwap ? r.presentedOffset : r.currentDrawOffset);
+    return true;
+  };
   if (!traceReplayRunEntries(backend, trace.entries, replayEntries, stateInfo.drawOffset,
-                             stateInfo.bufferOffset, &replayResult)) {
+                             stateInfo.bufferOffset, &replayResult, onEntry) ||
+      !captureOk) {
     fprintf(stderr, "[pci-trace] ERROR: replay failed at entry %u bar=%s\n",
             replayResult.replayedEntries, pci_bar::statusText(bar.status()));
     free(trace.traceData);
