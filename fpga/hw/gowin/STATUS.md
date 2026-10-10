@@ -604,3 +604,26 @@ B19b (`hw/gowin-i2`, place_option 1) and B19c (`hw/gowin-i3`, core 42.86 MHz) ar
 
 Temperature: the GW5AST-138B ES has no ADC block, so there is no die-temperature readout (the B20 attempt
 failed in PnR with "no ADC resource"). Instead we watch for reloads with `board_diag.py` during long runs.
+
+### 2026-10-10 evening: render-load reloads track the core clock
+
+The 20 min soak on B19 (46 MHz) ended with an FPGA reload after ~2.5 min of pinwheel. The `hdmi_frames`
+diag counter has no reset, so a drop means a real reconfiguration. A reload also clears the PCI COMMAND
+register, which `~/.cache/soak/ttf_nojtag.sh` polls, so no JTAG traffic is needed to detect one. Results on
+12 V, same evening, same board:
+
+| Build | Core clock | Result under `hb04_pinwheel 0` |
+|---|---|---|
+| B19 / B18b / B21 (DDR gap 8) | 46.15 MHz | reload after 2 s – 2.5 min |
+| B19c | 42.86 MHz | reload after 6 s – 2.4 min (also at `HB_MAX_FPS=14`) |
+| B16 (old RTL) | 28.57 MHz | survived 10 + 15 min |
+| **B23** (B19 RTL) | **28.57 MHz** | **survived 15 min**, demos pixel-identical to B19 |
+
+Ruled out: heat build-up (it fails within seconds after a 15 min idle cool-down), DDR3 command spacing
+(B21), JTAG polling, and frame rate. The board idles without reloading at any clock. The best guess is
+that the core supply can't carry the current the core draws while rendering above ~30 MHz. At 28.57 MHz the
+pinwheel runs at 18.5 frames/s; at 42-46 MHz it ran at 27.8 frames/s.
+
+**Flashed: B23** (`~/tang-mega-138k-pro-backup/voodoo_b23_28mhz_stable.fs`, build dir `hw/gowin-l`, PLL
+ODIV1=42). B24 (33.3 MHz, `hw/gowin-m`) and B25 (35.3 MHz, `hw/gowin-n`) are building, to find the highest
+stable clock.
