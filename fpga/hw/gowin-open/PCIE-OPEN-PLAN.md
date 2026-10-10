@@ -25,8 +25,13 @@ so the package can be added by rebuilding the 138C database against that
 tree instead of starting a 138B database (70 device-name checks in apicula
 are keyed on `GW5AST-138C`).
 
-Nothing from the open flow has been confirmed on hardware yet. The Console
-demos build; no `-open.fs` has a recorded board test.
+Step 1 is done on hardware (10 Oct 2026): `build-pro/blinky_pro-open.fs`
+was SRAM-loaded on the Pro Dock through `board-lock`, openFPGALoader
+reported DONE, the idcode read back 0x1081b, and the previously running
+vendor PCIe design disappeared from the bus, so the fabric really took
+the open-flow bitstream. The chipdb came from `gen-fpg676-chipdb.sh`
+(138C database plus the FCPBGA676A package; see its header for the exact
+apicula/nextpnr/data combination, which is the only one that routes).
 
 ## Steps, in order
 
@@ -34,8 +39,7 @@ demos build; no `-open.fs` has a recorded board test.
    with `GOWINHOME=/home/hyper/gowin/standard-1.9.12.04` (apicula branch
    `gw5ast-138c-fpg676`), regenerate the nextpnr chipdb from it with
    `gowin_arch_gen.py` + `bbasm`, then `make BOARD=pro CHIPDB=... blinky_pro`
-   here. Flash and watch the four LEDs. This is the first hardware proof
-   for the open flow on this board.
+   here. **Done**, see above. LED blinking still needs a visual check.
 2. **Core without PCIe or DDR.** Build `TangConsole138k`-style fabric
    (demo AXI-Lite player, no DDR, HDMI out) for the Pro Dock. Exercises
    BSRAM, DSP, PLLA, OSER10 at the Voodoo core's size. Expect routing and
@@ -90,3 +94,8 @@ for the routing phase and the GW5AST database is large (64 MB).
   are untouched.
 - `gowin_pack` must run with the fork's apycula on `PYTHONPATH`, not the
   oss-cad-suite copy, or the Console-only database is used.
+- Any JTAG/SRAM load knocks the vendor PCIe endpoint (08:00.0) off the
+  bus and it does not come back by rescan, link retrain, or a bridge
+  secondary-bus reset; the host must reboot with the PCIe design in the
+  dock's SPI flash. Reloading B18b into SRAM is not enough. So open-flow
+  board tests cost the other agents a reboot; batch them.
