@@ -13,13 +13,16 @@ INCLUDES := -I. -I$(TRACE) -I$(STB)
 
 .PHONY: all test clean
 
-all: pci-bar pci-trace-replay pci_window_test
+all: pci-bar pci-trace-replay pci_window_test voodoo-stream
 
 pci-bar: pci-bar.cpp pci_bar.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ pci-bar.cpp
 
 pci-trace-replay: pci-trace-replay.cpp pci_bar.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ pci-trace-replay.cpp
+
+voodoo-stream: voodoo-stream.cpp pci_bar.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ voodoo-stream.cpp
 
 pci_window_test: pci_window_test.cpp pci_bar.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ pci_window_test.cpp
@@ -28,4 +31,4 @@ test: pci_window_test
 	./pci_window_test
 
 clean:
-	rm -f pci-bar pci-trace-replay pci_window_test
+	rm -f pci-bar pci-trace-replay pci_window_test voodoo-stream
