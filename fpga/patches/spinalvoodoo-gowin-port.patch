@@ -89,10 +89,67 @@ index eda5bba..e888df0 100644
      if (cycle_limit && (sim_time / 2) >= cycle_limit) {
          fprintf(stderr, "[sim_harness] Cycle limit reached (%lu ticks), shutting down.\n",
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
-index d163ab7..7bea856 100644
+index d163ab7..4a8a8ed 100644
 --- a/emu/test/trace_test.cpp
 +++ b/emu/test/trace_test.cpp
-@@ -680,6 +680,14 @@ int main(int argc, char **argv) {
+@@ -275,6 +275,7 @@ int main(int argc, char **argv) {
+     const char *ref_trace_jsonl = nullptr;
+     bool ref_only = false;
+     bool sim_replay_only = false;
++    bool no_ref = false; /* --no-ref: don't feed the 86Box model (sim-replay-only runs) */
+     int max_mismatches = 0;
+     int max_sim_black_mismatches = -1;
+     int max_parity_mismatch_skew = -1;
+@@ -287,6 +288,8 @@ int main(int argc, char **argv) {
+             ref_only = true;
+         } else if (strcmp(argv[i], "--sim-replay-only") == 0) {
+             sim_replay_only = true;
++        } else if (strcmp(argv[i], "--no-ref") == 0) {
++            no_ref = true;
+         } else if (strcmp(argv[i], "--output-dir") == 0 && i + 1 < argc) {
+             output_dir = argv[++i];
+         } else if (strcmp(argv[i], "--profile-json") == 0 && i + 1 < argc) {
+@@ -556,7 +559,8 @@ int main(int argc, char **argv) {
+                     if (reg == 0x128)
+                         pre_swap_draw_offset = ref_get_draw_offset();
+ 
+-                    ref_write_reg(addr, e->data);
++                    if (!no_ref)
++                        ref_write_reg(addr, e->data);
+ 
+                     if (!ref_only) {
+                         if (reg == 0x128)
+@@ -621,7 +625,8 @@ int main(int argc, char **argv) {
+ 
+                 case VOODOO_TRACE_WRITE_TEX_L: {
+                     uint32_t offset = e->addr & 0x7FFFFF;
+-                    ref_write_tex(offset, e->data);
++                    if (!no_ref)
++                        ref_write_tex(offset, e->data);
+                     if (!ref_only)
+                         sim_write(0x800000 | offset, e->data);
+                     tex_write_count++;
+@@ -630,7 +635,8 @@ int main(int argc, char **argv) {
+ 
+                 case VOODOO_TRACE_WRITE_FB_L: {
+                     uint32_t offset = e->addr & 0x3FFFFF;
+-                    ref_write_fb(offset, e->data);
++                    if (!no_ref)
++                        ref_write_fb(offset, e->data);
+                     if (!ref_only)
+                         sim_write(0x400000 | offset, e->data);
+                     fb_write_count++;
+@@ -646,7 +652,8 @@ int main(int argc, char **argv) {
+ 
+                 case VOODOO_TRACE_WRITE_FB_W: {
+                     uint32_t offset = e->addr & 0x3FFFFF;
+-                    ref_write_fb_w(offset, (uint16_t)e->data);
++                    if (!no_ref)
++                        ref_write_fb_w(offset, (uint16_t)e->data);
+                     if (!ref_only)
+                         sim_write16(0x400000 | offset, (uint16_t)e->data);
+                     fb_write_count++;
+@@ -680,6 +687,14 @@ int main(int argc, char **argv) {
              break;
      }
  
@@ -108,7 +165,7 @@ index d163ab7..7bea856 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..b881552 100644
+index 100f1c6..bb27457 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -150,16 +207,18 @@ index 100f1c6..b881552 100644
      // Integrated scanout path. Board wrappers provide the physical HDMI transmitter/clocking.
      val hdmi = master(HdmiScanoutPort(c))
  
-@@ -164,7 +189,7 @@ case class Core(c: Config) extends Component {
+@@ -164,7 +189,9 @@ case class Core(c: Config) extends Component {
    pixelPipeline.io.ftriangleCmd << regBank.commands.ftriangleCmd
    pixelPipeline.io.fastfillCmd << regBank.commands.fastfillCmd
    pixelPipeline.io.paletteWrite << regBank.io.paletteWrite
 -  pixelPipeline.io.tmuInvalidate := frontdoor.io.invalidate
-+  pixelPipeline.io.tmuInvalidate := frontdoor.io.invalidate || io.invalidateTexCaches
++  // Invalidate when a texture write is issued to texture memory, not when it
++  // enters the PCI FIFO: a fill between the two would cache the old texels.
++  pixelPipeline.io.tmuInvalidate := textureMem.io.cpuTexWriteIssued || io.invalidateTexCaches
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,8 +198,11 @@ case class Core(c: Config) extends Component {
+@@ -173,8 +200,11 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -194,7 +253,7 @@ index 9effb48..2e25087 100644
    )
  
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..1c4285f 100644
+index 226d60e..b09f29d 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
 @@ -97,20 +97,57 @@ case class PciFifo(
@@ -291,7 +350,7 @@ index 226d60e..1c4285f 100644
    private val drainControl = new Area {
      val canDrain = Bool()
      canDrain := True
-@@ -294,6 +338,15 @@ case class PciFifo(
+@@ -294,6 +338,25 @@ case class PciFifo(
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
        canDrain := False
      }
@@ -304,10 +363,20 @@ index 226d60e..1c4285f 100644
 +    when(pciFifo.io.pop.syncRequired && regCmdStage.valid) {
 +      canDrain := False
 +    }
++    // Texture writes keep FIFO order with drawing: one must not reach texture
++    // memory while a triangle drained before it may still sample the old
++    // texels. Same wait as Sync=Yes, but a texture write directly behind
++    // another texture write need not wait for it.
++    when(
++      pciFifo.io.pop.isTexture &&
++        (io.pipelineBusy || (issuedWrite.valid && !issuedWrite.isTexture) || regCmdStage.valid)
++    ) {
++      canDrain := False
++    }
  
      val commandStreamBlocked = Bool()
      commandStreamBlocked := False
-@@ -303,7 +356,8 @@ case class PciFifo(
+@@ -303,7 +366,8 @@ case class PciFifo(
  
      val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
      fifoEmpty.simPublic()
@@ -317,7 +386,7 @@ index 226d60e..1c4285f 100644
      io.fifoEmpty := fifoEmpty
    }
    private val canDrain = drainControl.canDrain
-@@ -324,11 +378,12 @@ case class PciFifo(
+@@ -324,11 +388,12 @@ case class PciFifo(
      io.texDrain.pciAddr := drainedWrite.texPciAddr
      io.texDrain.data := drainedWrite.data
      io.texDrain.mask := drainedWrite.mask
@@ -334,7 +403,7 @@ index 226d60e..1c4285f 100644
    }
    val isTexDrain = drainRoute.isTexDrain
    val isRegDrain = drainRoute.isRegDrain
-@@ -341,31 +396,31 @@ case class PciFifo(
+@@ -341,31 +406,31 @@ case class PciFifo(
      // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
      // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
      val doWriteDirect = isWriteCmd && fifoBypass
@@ -383,7 +452,7 @@ index 226d60e..1c4285f 100644
        (isTexDrain && io.texDrain.ready)
    }
    private val doWriteDirect = regSideMux.doWriteDirect
-@@ -383,16 +438,16 @@ case class PciFifo(
+@@ -383,16 +448,16 @@ case class PciFifo(
      io.regSide.rsp.ready := True
  
      io.cpuSide.rsp.valid := RegNext(
@@ -404,7 +473,7 @@ index 226d60e..1c4285f 100644
        pendingRead := True
      }
      when(pendingRead && io.regSide.rsp.valid) {
-@@ -414,18 +469,18 @@ case class PciFifo(
+@@ -414,18 +479,18 @@ case class PciFifo(
    // Stall logic
    // ========================================================================
    private val cpuReady = new Area {
@@ -430,7 +499,7 @@ index 226d60e..1c4285f 100644
      }
    }
  
-@@ -453,33 +508,33 @@ case class PciFifo(
+@@ -453,33 +518,33 @@ case class PciFifo(
      println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
  
      // Default: unregistered addresses bypass FIFO
@@ -477,7 +546,7 @@ index 226d60e..1c4285f 100644
        }
      }
  
-@@ -490,50 +545,59 @@ case class PciFifo(
+@@ -490,50 +555,59 @@ case class PciFifo(
      if (commandAddresses.nonEmpty) {
        for ((addr, idx) <- commandAddresses.zipWithIndex) {
          when(pciFifo.io.pop.address === U(addr, busAddrWidth bits)) {
@@ -557,7 +626,7 @@ index 226d60e..1c4285f 100644
      }
  
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
-@@ -550,8 +614,8 @@ case class PciFifo(
+@@ -550,8 +624,8 @@ case class PciFifo(
        assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
      }
  
@@ -568,7 +637,7 @@ index 226d60e..1c4285f 100644
      }
  
      when(floatWriteRequest && !floatConvertInFlight) {
-@@ -581,12 +645,10 @@ case class PciFifo(
+@@ -581,12 +655,10 @@ case class PciFifo(
        assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
      }
  
@@ -638,6 +707,41 @@ index 7797711..9b9380f 100644
  
    // Framebuffer writeback can drain to external memory after the ordered draw pipeline is idle.
    // Status/sync must not wait on writeback-only busy, but LFB reads still must for coherency.
+diff --git a/src/voodoo/core/TextureMemSubsystem.scala b/src/voodoo/core/TextureMemSubsystem.scala
+index 4831d83..0eacc56 100644
+--- a/src/voodoo/core/TextureMemSubsystem.scala
++++ b/src/voodoo/core/TextureMemSubsystem.scala
+@@ -14,6 +14,8 @@ case class TextureMemSubsystem(c: Config) extends Component {
+     val tmuTexRead = slave(Bmb(Tmu.bmbParams(c)))
+     val downloadConfig = in(TextureMem.DownloadConfig(c))
+     val texMem = master(Bmb(voodoo.Core.texMemBmbParams(c)))
++    // A CPU texture write was issued to texture memory this cycle.
++    val cpuTexWriteIssued = out Bool ()
+   }
+ 
+   val cpuTexWriteCmd = TextureMem.WriteCmd.fromPciDrain(c, io.cpuTexDrain, io.downloadConfig)
+@@ -29,8 +31,11 @@ case class TextureMemSubsystem(c: Config) extends Component {
+     (cmd.source
+       .resize(texMemSourceWidth - cmdRouteWidth bits) ## U(route, cmdRouteWidth bits)).asUInt
+ 
+-  private val useTmuTex = tmuTexCmd.valid
+-  private val useCpuTexWrite = !useTmuTex && cpuTexWriteBus.cmd.valid
++  // CPU texture writes first: the PCI FIFO only drains them once earlier
++  // drawing is done, so a TMU read pending next to one belongs to a later
++  // triangle and must see the new texels.
++  private val useCpuTexWrite = cpuTexWriteBus.cmd.valid
++  private val useTmuTex = !useCpuTexWrite && tmuTexCmd.valid
+   private val useCpuTexRead = !useTmuTex && !useCpuTexWrite && cpuTexReadCmd.valid
+ 
+   io.texMem.cmd.valid := False
+@@ -81,6 +86,7 @@ case class TextureMemSubsystem(c: Config) extends Component {
+   tmuTexCmd.ready := useTmuTex && io.texMem.cmd.ready
+   cpuTexWriteBus.cmd.ready := useCpuTexWrite && io.texMem.cmd.ready
+   cpuTexReadCmd.ready := useCpuTexRead && io.texMem.cmd.ready
++  io.cpuTexWriteIssued := cpuTexWriteBus.cmd.fire
+ 
+   val rspRoute = io.texMem.rsp.source(cmdRouteWidth - 1 downto 0)
+   val rspSource = (io.texMem.rsp.source >> cmdRouteWidth).resized
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala b/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
 index bf8fd33..787dc1c 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
@@ -2216,7 +2320,7 @@ index 8b06179..47dee9a 100644
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..a1f3191 100644
+index 465ea78..b7b7cc0 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -762,7 +762,10 @@ case class TmuTextureCache(
@@ -2231,3 +2335,265 @@ index 465ea78..a1f3191 100644
  
    when(fillRsp.fire) {
      val nextWordAddr =
+@@ -803,10 +806,6 @@ case class TmuTextureCache(
+     }
+   }
+ 
+-  when(io.invalidate) {
+-    currentEpoch := currentEpoch + 1
+-  }
+-
+   when(!formalHotInitDone) {
+     metaWriteEnable := True
+     metaWriteSet := 0
+@@ -831,6 +830,18 @@ case class TmuTextureCache(
+     }
+   }
+ 
++  when(io.invalidate) {
++    currentEpoch := currentEpoch + 1
++    // The 8-bit epoch alone is not enough: a 4 KiB texture upload is 1024
++    // writes, which brings the epoch back to the same value, so lines cached
++    // before the upload would hit again. Also clear the tags (setCount
++    // cycles; lookups wait for it). This sits after the sweep logic so a
++    // restart wins. The epoch still covers a fill that was already in flight
++    // and writes its tag after the sweep has passed.
++    initSweepActive := True
++    initSweepSet := 0
++  }
++
+   hitRsp.bilinear := compareStage.sample.bilinear
+   hitRsp.passthrough := compareStage.sample.passthrough
+   for (i <- 0 until tapCount) {
+diff --git a/test/FramebufferPlaneReaderTest.scala b/test/FramebufferPlaneReaderTest.scala
+index 0295f4c..7a24417 100644
+--- a/test/FramebufferPlaneReaderTest.scala
++++ b/test/FramebufferPlaneReaderTest.scala
+@@ -258,4 +258,86 @@ class FramebufferPlaneReaderTest extends AnyFunSuite {
+       assert(dut.io.readRsp.data.toLong == 0x9abcL)
+     }
+   }
++  // Regression: GLQuake trace hang (status 0x0ffff3bf, SST/FBI/TMU busy forever).
++  // The colour and aux readers share one in-order framebuffer memory port. A
++  // reader that issues prefetch bursts whose lanes it cannot buffer leaves a
++  // response it will not accept at the head of that port. Draining it needs
++  // the pixel pipeline to consume lanes, which needs the other plane's read,
++  // which cannot be issued behind the blocked response: deadlock. Here the
++  // consumer stays idle while three 8-lane spans (24 lanes) are queued against a
++  // 17-lane buffer. Every burst the reader issues must be accepted in full;
++  // the third may only be issued once lanes have been consumed.
++  test("prefetch never issues a burst whose lanes cannot be buffered") {
++    SimConfig.withIVerilog.compile(FramebufferPlaneReader(mkConfig)).doSim { dut =>
++      initDut(dut)
++      assert(dut.lineBufferLanes == 17)
++
++      // In-order, one-burst-at-a-time memory: lane at byte address a holds a.
++      val bursts = scala.collection.mutable.Queue.empty[(Long, Int)] // (word address, beats)
++      var beat = 0
++      var stalled = 0
++      var maxStalled = 0
++      var issued = 0
++      dut.io.mem.cmd.ready #= true
++      dut.io.mem.rsp.fragment.source #= 0
++      fork {
++        while (true) {
++          dut.clockDomain.waitSampling()
++          if (dut.io.mem.rsp.valid.toBoolean) {
++            if (dut.io.mem.rsp.ready.toBoolean) {
++              stalled = 0
++              beat += 1
++              if (beat == bursts.head._2) {
++                bursts.dequeue()
++                beat = 0
++              }
++            } else {
++              stalled += 1
++              maxStalled = maxStalled max stalled
++            }
++          }
++          if (dut.io.mem.cmd.valid.toBoolean && dut.io.mem.cmd.ready.toBoolean) {
++            assert(dut.io.mem.cmd.fragment.source.toInt == 0, "unexpected direct miss")
++            bursts.enqueue(
++              (dut.io.mem.cmd.fragment.address.toLong, (dut.io.mem.cmd.fragment.length.toInt + 1) / 4)
++            )
++            issued += 1
++          }
++          if (bursts.nonEmpty) {
++            val word = bursts.head._1 + 4 * beat
++            dut.io.mem.rsp.valid #= true
++            dut.io.mem.rsp.fragment.data #= ((word + 2) << 16) | word
++            dut.io.mem.rsp.last #= beat == bursts.head._2 - 1
++          } else {
++            dut.io.mem.rsp.valid #= false
++          }
++        }
++      }
++
++      for (span <- 0 until 3) {
++        dut.io.prefetchReq.valid #= true
++        dut.io.prefetchReq.startAddress #= span * 0x10
++        dut.io.prefetchReq.endAddress #= span * 0x10 + 0x0e
++        dut.clockDomain.waitSamplingWhere(dut.io.prefetchReq.ready.toBoolean)
++      }
++      dut.io.prefetchReq.valid #= false
++
++      dut.clockDomain.waitSampling(300)
++      assert(maxStalled < 32, s"memory response left unaccepted for $maxStalled cycles")
++      assert(bursts.isEmpty, "an issued prefetch burst was not fully accepted")
++      assert(issued == 2, s"expected 2 bursts before any lane is consumed, saw $issued")
++
++      for (lane <- 0 until 24) {
++        val addr = (lane / 8) * 0x10 + (lane % 8) * 2
++        dut.io.readReq.valid #= true
++        dut.io.readReq.address #= addr
++        dut.clockDomain.waitSamplingWhere(dut.io.readReq.ready.toBoolean)
++        dut.io.readReq.valid #= false
++        dut.clockDomain.waitSamplingWhere(dut.io.readRsp.valid.toBoolean)
++        assert(dut.io.readRsp.data.toLong == addr, f"lane 0x$addr%x")
++      }
++      assert(issued == 3)
++      assert(maxStalled < 32, s"memory response left unaccepted for $maxStalled cycles")
++    }
++  }
+ }
+diff --git a/test/PciFifoTextureOrderTest.scala b/test/PciFifoTextureOrderTest.scala
+new file mode 100644
+index 0000000..22d0579
+--- /dev/null
++++ b/test/PciFifoTextureOrderTest.scala
+@@ -0,0 +1,135 @@
++//> using target.scope test
++
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import voodoo.bus.{PciFifo, RegisterCategory}
++
++/** Texture writes go through the PCI FIFO in order with register writes. A texture write queued
++  * behind a triangle command must not reach texture memory while that triangle may still sample
++  * the old texels (GLQuake draws a console glyph, then immediately re-uploads the glyph texture).
++  */
++class PciFifoTextureOrderTest extends AnyFunSuite {
++  private val triangleCmdAddr = 0x100
++  private val renderCycles = 200
++
++  private def mkDut() = {
++    val c = Config.voodoo1()
++    PciFifo(
++      busParams = RegisterBank.bmbParams(c),
++      categories = Map(
++        BigInt(triangleCmdAddr) -> RegisterCategory.fifoNoSync,
++        BigInt(0x104) -> RegisterCategory.fifoNoSync
++      ),
++      floatAliases = Map.empty,
++      commandAddresses = Seq(BigInt(triangleCmdAddr))
++    )
++  }
++
++  private def run(withTriangle: Boolean): Unit =
++    SimConfig.withIVerilog.compile(mkDut()).doSim { dut =>
++      dut.clockDomain.forkStimulus(10)
++      dut.io.cpuSide.cmd.valid #= false
++      dut.io.cpuSide.cmd.last #= true
++      dut.io.cpuSide.cmd.opcode #= 1
++      dut.io.cpuSide.cmd.address #= 0
++      dut.io.cpuSide.cmd.data #= 0
++      dut.io.cpuSide.cmd.mask #= 0xf
++      dut.io.cpuSide.cmd.length #= 3
++      dut.io.cpuSide.cmd.source #= 0
++      dut.io.cpuSide.rsp.ready #= true
++      dut.io.regSide.cmd.ready #= true
++      dut.io.regSide.rsp.valid #= false
++      dut.io.regSide.rsp.last #= true
++      dut.io.regSide.rsp.opcode #= 0
++      dut.io.regSide.rsp.data #= 0
++      dut.io.regSide.rsp.source #= 0
++      dut.io.texWrite.valid #= false
++      dut.io.texWrite.pciAddr #= 0
++      dut.io.texWrite.data #= 0
++      dut.io.texWrite.mask #= 0xf
++      dut.io.texDrain.ready #= true
++      dut.io.pipelineBusy #= false
++      dut.io.commandReady.foreach(_ #= true)
++      dut.io.wasEnqueuedAddr #= 0
++      dut.clockDomain.waitSampling(4)
++
++      // Pixel pipeline model: a triangle command reaching the register bank at cycle T
++      // makes the pipeline busy from T+1 (the regBank command stream is registered)
++      // for renderCycles cycles.
++      var cycle = 0L
++      var triangleDrained = -1L
++      var triangleDone = -1L
++      var busyLeft = 0
++      val texDrains = scala.collection.mutable.ArrayBuffer.empty[(Long, Long)] // (cycle, pciAddr)
++      fork {
++        while (true) {
++          dut.clockDomain.waitSampling()
++          cycle += 1
++          if (dut.io.texDrain.valid.toBoolean && dut.io.texDrain.ready.toBoolean) {
++            texDrains += ((cycle, dut.io.texDrain.pciAddr.toLong))
++          }
++          if (busyLeft > 0) {
++            busyLeft -= 1
++            if (busyLeft == 0) triangleDone = cycle
++          }
++          if (
++            dut.io.regSide.cmd.valid.toBoolean && dut.io.regSide.cmd.ready.toBoolean &&
++            dut.io.regSide.cmd.opcode.toInt == 1 &&
++            dut.io.regSide.cmd.address.toInt == triangleCmdAddr
++          ) {
++            triangleDrained = cycle
++            busyLeft = renderCycles
++          }
++          dut.io.pipelineBusy #= busyLeft > 0
++        }
++      }
++
++      if (withTriangle) {
++        dut.io.cpuSide.cmd.valid #= true
++        dut.io.cpuSide.cmd.address #= triangleCmdAddr
++        dut.io.cpuSide.cmd.data #= 0x42800000L
++        dut.clockDomain.waitSamplingWhere(dut.io.cpuSide.cmd.ready.toBoolean)
++        dut.io.cpuSide.cmd.valid #= false
++      }
++      // Back-to-back texture writes, as the host issues them right after the triangle.
++      val texCount = 8
++      for (i <- 0 until texCount) {
++        dut.io.texWrite.valid #= true
++        dut.io.texWrite.pciAddr #= 0x20000 + 4 * i
++        dut.io.texWrite.data #= i
++        dut.clockDomain.waitSamplingWhere(dut.io.texWrite.ready.toBoolean)
++      }
++      dut.io.texWrite.valid #= false
++
++      dut.clockDomain.waitSamplingWhere(
++        (texDrains.size == texCount && (!withTriangle || triangleDone >= 0)) ||
++          cycle > 10 * renderCycles
++      )
++      assert(texDrains.size == texCount, s"only ${texDrains.size} of $texCount texture writes drained")
++      assert(texDrains.map(_._2) == (0 until texCount).map(i => 0x20000L + 4 * i), "texture writes out of order")
++      if (withTriangle) {
++        assert(triangleDrained >= 0, "triangle command never reached the register bank")
++        assert(triangleDone >= 0, "triangle never finished")
++        for ((at, addr) <- texDrains) {
++          assert(
++            at > triangleDone,
++            f"texture write 0x$addr%x drained at cycle $at, while the triangle drained at " +
++              s"$triangleDrained was still drawing (done at $triangleDone)"
++          )
++        }
++      } else {
++        assert(texDrains.head._1 < renderCycles / 4, "texture writes stalled with an idle pipeline")
++      }
++    }
++
++  test("texture write waits for the triangle queued before it") {
++    run(withTriangle = true)
++  }
++
++  test("texture writes drain without a preceding triangle") {
++    run(withTriangle = false)
++  }
++}

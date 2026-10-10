@@ -22,3 +22,11 @@ submodule commit (`git -C ext/SpinalVoodoo rev-parse HEAD`).
 Regenerate after editing the submodule: `git -C ext/SpinalVoodoo diff > fpga/patches/spinalvoodoo-gowin-port.patch`.
 - Board raw-DDR window: `Core.io.invalidateTexCaches` (defaults low) drops the TMU texture caches
   while the host writes texture memory directly (trace state load).
+- Texture write ordering (GLQuake glyph re-uploads): PciFifo holds a texture write until drawing
+  queued before it is done (`pipelineBusy`, like Sync=Yes); TextureMemSubsystem issues CPU texture
+  writes ahead of TMU reads; the TMU cache is invalidated when the write is issued to texture memory
+  (not when it enters the FIFO) and the invalidate also clears the cache tags, because 1024 writes
+  wrap the 8-bit epoch back to its old value. Tests: `test/PciFifoTextureOrderTest.scala`, and
+  `FramebufferPlaneReaderTest` "prefetch never issues a burst whose lanes cannot be buffered", the
+  regression for the lane-credit deadlock above (it is the hang the unpatched core shows on the
+  GLQuake console trace, status 0x0ffff3bf).
