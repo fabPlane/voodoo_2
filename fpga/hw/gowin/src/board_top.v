@@ -216,6 +216,7 @@ module board_top (
         .tlTxData            (tl_tx_data),
         .tlTxWait            (tl_tx_wait),
         .tlTxCreditsCpl      (tl_tx_cpl_credits),
+        .tlTxCreditsP        (tl_tx_p_credits),
         .tlCfgBusdev         (tl_cfg_busdev),
         .ddr_cmdReady        (cmd_ready),
         .ddr_cmd             (cmd),

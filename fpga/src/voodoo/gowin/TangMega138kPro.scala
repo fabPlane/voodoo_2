@@ -38,6 +38,7 @@ case class TangMega138kPro(c: Config) extends Component {
     val tlTxData = out Bits (PcieTlpBarTarget.tlpDataWidth bits)
     val tlTxWait = in Bool ()
     val tlTxCreditsCpl = in Bits (32 bits)
+    val tlTxCreditsP = in Bits (32 bits)
     val tlCfgBusdev = in UInt (13 bits)
 
     val ddr = master(GowinDdrNative())
@@ -77,14 +78,53 @@ case class TangMega138kPro(c: Config) extends Component {
     bar.io.tlRxData := io.tlRxData
     bar.io.tlRxBardec := io.tlRxBardec
     io.tlRxWait := bar.io.tlRxWait
-    io.tlTxSop := bar.io.tlTxSop
-    io.tlTxEop := bar.io.tlTxEop
-    io.tlTxValid := bar.io.tlTxValid
-    io.tlTxData := bar.io.tlTxData
-    bar.io.tlTxWait := io.tlTxWait
     bar.io.tlTxCreditsCpl := io.tlTxCreditsCpl
     bar.io.tlCfgBusdev := io.tlCfgBusdev
+
+    // TX port shared by BAR read completions (priority) and frame DMA writes.
+    val txArb = TlTxArbiter()
+    txArb.io.inputs(0).sop := bar.io.tlTxSop
+    txArb.io.inputs(0).eop := bar.io.tlTxEop
+    txArb.io.inputs(0).valid := bar.io.tlTxValid
+    txArb.io.inputs(0).data := bar.io.tlTxData
+    bar.io.tlTxWait := txArb.io.inputs(0).waitReq
+    io.tlTxSop := txArb.io.output.sop
+    io.tlTxEop := txArb.io.output.eop
+    io.tlTxValid := txArb.io.output.valid
+    io.tlTxData := txArb.io.output.data
+    txArb.io.output.waitReq := io.tlTxWait
+
+    val dma = FrameDmaWriter()
+    dma.io.tx <> txArb.io.inputs(1)
+    dma.io.postedCreditOk := io.tlTxCreditsP(31)
+    dma.io.busdev := io.tlCfgBusdev
+    dma.io.regWrite := bar.io.localWrite
+    dma.io.regAddr := bar.io.localAddr
+    dma.io.regWdata := bar.io.localWdata
+    bar.io.localRdata := dma.io.regRdata
   }
+
+  // HDMI scanout -> RGB565 words -> TLP clock (see FrameDma).
+  val hdmiCd = ClockDomain(
+    clock = io.hdmiClk,
+    reset = io.hdmiReset,
+    config = ClockDomainConfig(resetKind = SYNC, resetActiveLevel = HIGH)
+  )
+  val videoTap = new ClockingArea(hdmiCd) {
+    val tap = ScanoutTap()
+    tap.io.r := core.io.hdmi.video.rgb.r
+    tap.io.g := core.io.hdmi.video.rgb.g
+    tap.io.b := core.io.hdmi.video.rgb.b
+    tap.io.de := core.io.hdmi.video.de
+    tap.io.vs := core.io.hdmi.video.vSync
+    tap.io.enable := BufferCC(pcie.dma.io.enable, init = False)
+    tap.io.decimate := BufferCC(pcie.dma.io.decimate, init = U(0, 8 bits))
+  }
+  val videoFifo = StreamFifoCC(FrameDma.fifoWord, 128, hdmiCd, pcieCd)
+  videoFifo.io.push << videoTap.tap.io.push
+  pcie.dma.io.words << videoFifo.io.pop
+  pcie.dma.io.wordsAvailable := videoFifo.io.popOccupancy.resized
+  pcie.dma.io.overflowPulse := PulseCCByToggle(videoTap.tap.io.overflow, hdmiCd, pcieCd)
 
   val barCc = AxiLite4ClockCrossing(
     PcieTlpBarTarget.axiConfig(PcieTlpBarTarget.rawAddressWidth),

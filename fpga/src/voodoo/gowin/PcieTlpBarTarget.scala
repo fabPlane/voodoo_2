@@ -11,9 +11,11 @@ object PcieTlpBarTarget {
   val windowAddress = 0x250
   val windowAddressWidth = 20
   val voodooAddressWidth = 24
-  // Windows 16-31 reach raw DDR (bit 24 set): see TangMega138kPro / RawDdrWindow.
+  // Windows 16-30 reach raw DDR (bit 24 set): see TangMega138kPro / RawDdrWindow.
   val rawAddressWidth = 25
   val windowBits = 5
+  // Window 31 is local registers (FrameDmaWriter), answered here without AXI.
+  val localWindow = 31
 
   def axiConfig(addressWidth: Int = voodooAddressWidth) =
     AxiLite4Config(addressWidth = addressWidth, dataWidth = 32)
@@ -58,6 +60,11 @@ case class PcieTlpBarTarget(
 
     val axi = master(AxiLite4(axiConfig(addressWidth)))
     val window = out UInt (windowBits bits)
+    // Window 31 register port: write pulse, combinational read.
+    val localWrite = out Bool ()
+    val localAddr = out UInt (8 bits)
+    val localWdata = out Bits (32 bits)
+    val localRdata = in Bits (32 bits)
   }
 
   def dword(data: Bits, index: Int): Bits =
@@ -140,6 +147,10 @@ case class PcieTlpBarTarget(
   val mappedAddr = (window @@ offset20).resized
 
   io.window := window
+  val isLocal = window === localWindow && !isWindowReg
+  io.localWrite := False
+  io.localAddr := offset20(7 downto 0)
+  io.localWdata := capturedData
   io.tlRxWait := False
   io.tlTxSop := False
   io.tlTxEop := False
@@ -210,6 +221,17 @@ case class PcieTlpBarTarget(
             }
           } otherwise {
             readData := window.resize(32 bits).asBits
+            tlpAddr := 0
+            state := State.cpl
+          }
+        } elsewhen (isLocal) {
+          when(hasData) {
+            io.localWrite := True
+            when(!io.tlRxEop) {
+              state := State.drop
+            }
+          } otherwise {
+            readData := io.localRdata
             tlpAddr := 0
             state := State.cpl
           }
