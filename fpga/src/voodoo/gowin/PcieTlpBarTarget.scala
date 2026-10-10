@@ -83,14 +83,18 @@ case class PcieTlpBarTarget(
   val writeData = Reg(Bits(32 bits)) init (0)
   val readData = Reg(Bits(32 bits)) init (0)
   val lowerAddr = Reg(Bits(7 bits)) init (0)
-  // Timeouts. A read must complete before the host's completion timeout, so
-  // it gives up after ~2^(timeoutLog2-1) cycles and returns all-ones. Writes
-  // are posted: holding the link (backpressure) is legal and correct, so they
-  // only give up after ~2^(timeoutLog2+7) cycles (~1.8 s at 75 MHz), as a
-  // last resort against a dead core. Gowin maps a wide increment to a LUT
-  // ripple chain, so count ticks of a free-running prescaler instead.
-  private val readTimeoutLog2 = timeoutLog2 - 1
-  private val writeTimeoutLog2 = timeoutLog2 + 7
+  // Timeouts. Every read must complete inside the host root port's
+  // completion timeout (50 us - 50 ms, not configurable on the AMD dock
+  // slot), and PCIe ordering makes a read wait behind every posted write
+  // before it. A stalled link there doesn't just fail the read: the AMD
+  // platform shuts down on the spot (seen with a hung core under GLQuake).
+  // So reads give up after ~2^(timeoutLog2-4) cycles (0.87 ms at 75 MHz) and
+  // writes after ~2^(timeoutLog2-3) (1.75 ms), well above normal latencies
+  // (LFB read ~61 us, status < 0.2 us idle). Either timeout enters wedged
+  // mode, below. Gowin maps a wide increment to a LUT ripple chain, so count
+  // ticks of a free-running prescaler instead.
+  private val readTimeoutLog2 = timeoutLog2 - 4
+  private val writeTimeoutLog2 = timeoutLog2 - 3
   private val prescaleBits = 8.min(readTimeoutLog2 - 1)
   val prescale = Reg(UInt(prescaleBits bits)) init (0)
   prescale := prescale + 1
@@ -110,6 +114,18 @@ case class PcieTlpBarTarget(
   val dropB = Reg(UInt(4 bits)) init (0)
   val dropR = Reg(UInt(4 bits)) init (0)
   val axiIdle = !awPend && !wPend && !arPend
+
+  // Wedged mode: after a timeout the core side is presumed stuck. TLPs keep
+  // flowing - writes are dropped, reads answer all-ones at once - so the link
+  // never stalls. It ends by itself once every abandoned AXI transaction has
+  // completed (the core recovered). Window 31 offset 0x40 reports it:
+  // [0] wedged now, [1] write timeout seen, [2] read timeout seen,
+  // [31:16] TLPs dropped; a write there clears bits 1-2 and the count.
+  val wedged = RegInit(False)
+  val writeTimeoutSeen = RegInit(False)
+  val readTimeoutSeen = RegInit(False)
+  val droppedTlps = Reg(UInt(16 bits)) init (0)
+  val wedgeStatus = droppedTlps.asBits ## B(0, 13 bits) ## readTimeoutSeen ## writeTimeoutSeen ## wedged
 
   val rxBeat = io.tlRxValid.orR
   val bar0 = io.tlRxBardec(0)
@@ -148,6 +164,7 @@ case class PcieTlpBarTarget(
 
   io.window := window
   val isLocal = window === localWindow && !isWindowReg
+  val isWedgeReg = isLocal && offset20(7 downto 0) === 0x40
   io.localWrite := False
   io.localAddr := offset20(7 downto 0)
   io.localWdata := capturedData
@@ -181,6 +198,12 @@ case class PcieTlpBarTarget(
 
   val cplCreditOk = io.tlTxCreditsCpl(31)
 
+  val unwedge = wedged && axiIdle && dropB === 0 && dropR === 0
+  when(unwedge) { wedged := False }
+  def dropTlp(): Unit = {
+    when(!droppedTlps.andR) { droppedTlps := droppedTlps + 1 }
+  }
+
   def driveCpl(data: Bits, withData: Boolean): Unit = {
     val dw0 = Bits(32 bits)
     val dw1 = Bits(32 bits)
@@ -206,9 +229,11 @@ case class PcieTlpBarTarget(
     is(State.idle) {
       stall := 0
       // Don't take a new TLP while an abandoned request still waits for its
-      // AXI handshake (tlpAddr / writeData drive the pending channels).
-      io.tlRxWait := !axiIdle
-      when(axiIdle && rxBeat && io.tlRxSop && bar0 && isMem) {
+      // AXI handshake (tlpAddr / writeData drive the pending channels) -
+      // unless wedged, when TLPs never reach AXI.
+      val canTake = axiIdle || wedged
+      io.tlRxWait := !canTake
+      when(canTake && rxBeat && io.tlRxSop && bar0 && isMem) {
         reqId := header1(31 downto 16)
         reqTag := header1(15 downto 8)
         firstBe := header1(3 downto 0)
@@ -227,12 +252,26 @@ case class PcieTlpBarTarget(
         } elsewhen (isLocal) {
           when(hasData) {
             io.localWrite := True
+            when(isWedgeReg) {
+              writeTimeoutSeen := False
+              readTimeoutSeen := False
+              droppedTlps := 0
+            }
             when(!io.tlRxEop) {
               state := State.drop
             }
           } otherwise {
-            readData := io.localRdata
-            tlpAddr := 0
+            readData := Mux(isWedgeReg, wedgeStatus, io.localRdata)
+            state := State.cpl
+          }
+        } elsewhen (wedged) {
+          dropTlp()
+          when(hasData) {
+            when(!io.tlRxEop) {
+              state := State.drop
+            }
+          } otherwise {
+            readData := B(0xffffffffL, 32 bits)
             state := State.cpl
           }
         } otherwise {
@@ -247,7 +286,7 @@ case class PcieTlpBarTarget(
             state := State.axiRead
           }
         }
-      } elsewhen (axiIdle && rxBeat && io.tlRxSop && !bar0) {
+      } elsewhen (canTake && rxBeat && io.tlRxSop && !bar0) {
         when(!io.tlRxEop) {
           state := State.drop
         }
@@ -259,6 +298,8 @@ case class PcieTlpBarTarget(
         state := State.idle
       } elsewhen (writeTimeout) {
         dropBInc := True     // its B, if it ever comes, is discarded
+        wedged := True
+        writeTimeoutSeen := True
         state := State.idle
       } otherwise {
         when(prescaleTick) { stall := stall + 1 }
@@ -271,6 +312,8 @@ case class PcieTlpBarTarget(
         state := State.cpl
       } elsewhen (readTimeout) {
         dropRInc := True     // discard the late R
+        wedged := True
+        readTimeoutSeen := True
         readData := B(0xffffffffL, 32 bits)
         state := State.cpl
       } otherwise {

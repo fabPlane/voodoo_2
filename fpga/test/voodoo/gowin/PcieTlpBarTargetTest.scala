@@ -6,7 +6,7 @@ import spinal.core.sim._
 
 class PcieTlpBarTargetTest extends AnyFunSuite {
   private lazy val compiled =
-    SimConfig.withVerilator.compile(PcieTlpBarTarget(timeoutLog2 = 6))
+    SimConfig.withVerilator.compile(PcieTlpBarTarget(timeoutLog2 = 10))
 
   private def dword(value: Long): BigInt = BigInt(value) & 0xffffffffL
 
@@ -234,6 +234,65 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       dut.clockDomain.waitSampling()
       dut.io.axi.r.valid #= false
       assert(waitCpl() == pcie(0x600dL))
+    }
+  }
+  test("a core that never takes a write wedges the target instead of stalling the link") {
+    compiled.doSim("tlp-wedge") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.io.localRdata #= 0x1234L
+      dut.clockDomain.waitSampling()
+      def beatWhenReady(dws: Seq[Long]): Int = {
+        var waited = 0
+        while (dut.io.tlRxWait.toBoolean) { dut.clockDomain.waitSampling(); waited += 1 }
+        beat(dut, dws)
+        waited
+      }
+      def readCpl(addr: Long): (Long, Int) = {
+        beatWhenReady(Seq(0x00000001L, 0x0000000fL, addr))
+        var c = 0
+        while (dut.io.tlTxValid.toInt == 0) { dut.clockDomain.waitSampling(); c += 1; assert(c < 4000, "no completion") }
+        val v = unpackDw(dut.io.tlTxData.toBigInt, 3)
+        dut.clockDomain.waitSampling()
+        (v, c)
+      }
+      var arSeen = false
+      fork { while (true) { dut.clockDomain.waitSampling(); if (dut.io.axi.ar.valid.toBoolean) arSeen = true } }
+      // A write the core never accepts (AW/W never ready).
+      beat(dut, Seq(0x40000001L, 0x0000000fL, 0x100L, pcie(0x1L)))
+      dut.clockDomain.waitSampling(600) // past the write timeout (~2^7 cycles)
+      // A read behind it answers all-ones at once, without touching AXI.
+      val (v, lat) = readCpl(0x200L)
+      assert(v == 0xffffffffL && lat < 20, s"read while wedged: $v%x after $lat cycles")
+      assert(!arSeen, "wedged read went to AXI")
+      // Further writes flow without backpressure.
+      for (i <- 0 until 5) assert(beatWhenReady(Seq(0x40000001L, 0x0000000fL, 0x104L + 4 * i, pcie(i))) == 0)
+      // Window 31 offset 0x40 reports it; other window-31 offsets still reach the DMA regs.
+      beatWhenReady(Seq(0x40000001L, 0x00000001L, 0x250L, pcie(31L)))
+      val (st, _) = readCpl(0x40L)
+      val stv = pcie(st)
+      assert((stv & 3) == 3 && (stv >>> 16) == 6, f"wedge status $stv%08x")
+      assert(pcie(readCpl(0x00L)._1) == 0x1234L)
+      // The core finally takes the stuck write and answers: the target unwedges.
+      dut.io.axi.aw.ready #= true; dut.io.axi.w.ready #= true
+      dut.clockDomain.waitSampling(); dut.io.axi.aw.ready #= false; dut.io.axi.w.ready #= false
+      dut.io.axi.b.valid #= true; dut.clockDomain.waitSampling(); dut.io.axi.b.valid #= false
+      dut.clockDomain.waitSampling(2)
+      val (st2, _) = readCpl(0x40L)
+      assert((pcie(st2) & 1) == 0, "still wedged after recovery")
+      beatWhenReady(Seq(0x40000001L, 0x0000000fL, 0x40L, pcie(0L))) // clear sticky bits
+      assert(pcie(readCpl(0x40L)._1) == 0)
+      // Back in window 0 a read reaches AXI again.
+      beatWhenReady(Seq(0x40000001L, 0x00000001L, 0x250L, pcie(0L)))
+      beatWhenReady(Seq(0x00000001L, 0x0000000fL, 0x204L))
+      dut.io.axi.ar.ready #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.ar.ready #= false
+      dut.io.axi.r.valid #= true; dut.io.axi.r.data #= 0x600dL
+      dut.clockDomain.waitSampling(); dut.io.axi.r.valid #= false
+      var c = 0
+      while (dut.io.tlTxValid.toInt == 0) { dut.clockDomain.waitSampling(); c += 1; assert(c < 100) }
+      assert(unpackDw(dut.io.tlTxData.toBigInt, 3) == pcie(0x600dL))
     }
   }
 }
