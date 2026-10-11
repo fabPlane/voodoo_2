@@ -769,7 +769,7 @@ index 226d60e..b09f29d 100644
  
      if (formalStrong) {
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..0f13151 100644
+index c23fa0b..98553d4 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -31,6 +31,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
@@ -782,6 +782,15 @@ index c23fa0b..0f13151 100644
    }
  
    private def makeFbWriteArbiter() =
+@@ -80,7 +83,7 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+     if (useCachedReaders) FramebufferPlaneReader(c).setName("fbAuxReader") else null
+   val colorReaderDirect =
+     if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbColorReader") else null
+-  val scanoutReaderCached = FramebufferPlaneReader(c).setName("fbScanoutReader")
++  val scanoutReaderCached = FramebufferPlaneReader(c, skipAnyMismatch = false).setName("fbScanoutReader")
+   val auxReaderDirect =
+     if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbAuxReader") else null
+   val colorWritePort = FramebufferPlaneBuffer(c).setName("fbColorBuffer")
 @@ -95,9 +98,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
    }
  
@@ -932,10 +941,23 @@ index bf8fd33..787dc1c 100644
          io.mem.cmd.fragment.length := drainLength
          io.mem.cmd.fragment.source := 1
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-index 9d1e15f..efa1722 100644
+index 9d1e15f..6ab820f 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-@@ -161,8 +161,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -6,7 +6,11 @@ import spinal.core.sim._
+ import spinal.lib._
+ import spinal.lib.bus.bmb._
+ 
+-case class FramebufferPlaneReader(c: Config) extends Component {
++/** `skipAnyMismatch`: pixel-pipeline readers (reads in span order, pixels
++  * killed before framebuffer access leave dead lanes). The scanout reader
++  * keeps the address-ordered rule: it can issue an out-of-order read, which
++  * must not throw away the rest of its prefetched line. */
++case class FramebufferPlaneReader(c: Config, skipAnyMismatch: Boolean = true) extends Component {
+   import FramebufferPlaneBuffer._
+ 
+   val addrWidth = c.addressWidth.value
+@@ -161,8 +165,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // The cached reader is fed by a span prefetch stream, while the later pixel
    // stream can legally skip pixels before framebuffer access (for example due
    // to pipeline-side kills).  Track the next prefetched lane expected by the
@@ -945,7 +967,7 @@ index 9d1e15f..efa1722 100644
    val consumeQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
    val consumeActive = RegInit(False)
    val consumeExpectedAddr = Reg(UInt(addrWidth bits)) init (0)
-@@ -178,7 +177,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -178,7 +181,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    }
    val consumeExpectedValid = consumeActive || consumeBoot
    val consumeAddrMatches = io.readReq.address === consumeCurrentAddr
@@ -957,11 +979,12 @@ index 9d1e15f..efa1722 100644
 +  // such a read as "behind" sent it down the direct-miss path and left the
 +  // dead lane at the head forever; spans kept being prefetched until the
 +  // consume queue filled and span launch deadlocked (live GLQuake hang).
-+  val consumeAddrAhead = !consumeAddrMatches
++  val consumeAddrAhead =
++    if (skipAnyMismatch) !consumeAddrMatches else io.readReq.address > consumeCurrentAddr
    val consumeInvariantOk = !io.readReq.valid || (consumeExpectedValid && consumeAddrMatches)
  
    spanIssueQueue.io.push.valid := io.prefetchReq.valid && consumeQueue.io.push.ready
-@@ -216,8 +222,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -216,8 +227,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // available), fall back to an ordered direct read.
    val directMissNeeded = !consumeExpectedValid ||
      (consumeExpectedValid && !consumeAddrMatches && !consumeAddrAhead)
@@ -990,7 +1013,7 @@ index 9d1e15f..efa1722 100644
    val directMissCmdSelected = directMissCmdValid
    val prefetchCmdSelected = prefetchCmdValid && !directMissCmdSelected
  
-@@ -234,12 +258,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -234,12 +263,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    internalMem.cmd.fragment.data := 0
    internalMem.cmd.fragment.mask := 0
    internalMem.cmd.last := True
