@@ -1,3 +1,71 @@
+diff --git a/emu/glide/swlibs/newpci/pcilib/fxsim.c b/emu/glide/swlibs/newpci/pcilib/fxsim.c
+index d36865c..8107fe2 100644
+--- a/emu/glide/swlibs/newpci/pcilib/fxsim.c
++++ b/emu/glide/swlibs/newpci/pcilib/fxsim.c
+@@ -298,6 +298,9 @@ static int simGetDebugLevel(void) {
+ #define TEX_NUM_PAGES    (TEX_MEM_SIZE / TEX_PAGE_SIZE) /* 2048 */
+ 
+ static unsigned char texDirtyPages[TEX_NUM_PAGES];
++/* One bit per word inside the dirty pages, so a small sub-image update
++ * sends only the words written rather than whole 4KB pages. */
++static FxU32 texDirtyWords[TEX_MEM_SIZE / 4 / 32];
+ static int texHasDirty = 0;
+ 
+ static void simFlushTexture(void) {
+@@ -326,8 +329,10 @@ static void simFlushTexture(void) {
+         FxU32 words = length / 4;
+         FxU32 j;
+         for (j = 0; j < words; j++) {
+-            FxU32 texOffset = offset + j * 4;
+-            sim_write(0x800000 | texOffset, data[j]);
++            FxU32 w = (offset >> 2) + j;
++            if (!(texDirtyWords[w >> 5] & (1u << (w & 31)))) continue;
++            texDirtyWords[w >> 5] &= ~(1u << (w & 31));
++            sim_write(0x800000 | (offset + j * 4), data[j]);
+         }
+ 
+         totalBytes += length;
+@@ -367,9 +372,10 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+             simFlushTexture();
+         }
+ 
+-        /* Flush pending raw texture aperture writes before texBaseAddr changes so
+-         * Core sees the command stream in-order relative to later draws/reads. */
+-        if (regOff == 0x30C) {
++        /* Flush pending raw texture aperture writes before textureMode, tLOD or
++         * texBaseAddr change: Core decodes each texture write with the layout
++         * those registers select, so the data must land before they move. */
++        if (regOff == 0x300 || regOff == 0x304 || regOff == 0x30C) {
+             simFlushTexture();
+         }
+ 
+@@ -404,17 +410,15 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+             fprintf(stderr, "[fxsim] TEX WRITE stats at #%d: %d non-zero, range 0x%06x-0x%06x\n",
+                     texWriteCount, texNonZeroCount, texMinOffset, texMaxOffset);
+         }
+-        FxU32 texOffset = offset & 0x7FFFFF;
+-        FxU32 page = texOffset >> TEX_PAGE_SHIFT;
+-        if (page < TEX_NUM_PAGES) {
+-            texDirtyPages[page] = 1;
+-            /* Mark next page too if write crosses page boundary */
+-            if (((texOffset + 3) >> TEX_PAGE_SHIFT) != page &&
+-                ((texOffset + 3) >> TEX_PAGE_SHIFT) < TEX_NUM_PAGES) {
+-                texDirtyPages[(texOffset + 3) >> TEX_PAGE_SHIFT] = 1;
+-            }
+-            texHasDirty = 1;
+-        }
++        /* Bits 22:21 select the TMU and Core only has TMU0. Glide's packer
++         * workaround writes a dummy word to TMU "3" (0xe20000) around every
++         * triangle; buffering it would re-send its whole page each time. */
++        if (texOff & 0x600000) return;
++        FxU32 texOffset = offset & 0x7FFFFC;
++        FxU32 w = texOffset >> 2;
++        texDirtyPages[texOffset >> TEX_PAGE_SHIFT] = 1;
++        texDirtyWords[w >> 5] |= 1u << (w & 31);
++        texHasDirty = 1;
+     }
+ }
+ 
 diff --git a/emu/sim/harness/sim_harness.cpp b/emu/sim/harness/sim_harness.cpp
 index eda5bba..e888df0 100644
 --- a/emu/sim/harness/sim_harness.cpp
