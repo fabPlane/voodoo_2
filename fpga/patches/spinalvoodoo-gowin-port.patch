@@ -263,7 +263,7 @@ index 1b34fa2..ce8f552 100644
      enableFog: Boolean = true,
      enableDither: Boolean = true,
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..bb27457 100644
+index 100f1c6..d815142 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -330,6 +330,25 @@ index 100f1c6..bb27457 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
+@@ -200,7 +230,17 @@ case class Core(c: Config) extends Component {
+   hdmiScanout.io.hdmiReset := io.hdmi.reset
+ 
+   regBank.io.statistics := pixelPipeline.io.stats
+-  regBank.io.debug := pixelPipeline.io.debug
++  // Pipeline debug plus the framebuffer readers' state (hwDebugRegs 0x260+).
++  val regDebug = voodoo.core.CoreDebug()
++  regDebug := pixelPipeline.io.debug
++  regDebug.allowOverride()
++  regDebug.fbColorCache := framebufferMem.io.readerDebug(0)
++  regDebug.fbColorCacheOccupancy := framebufferMem.io.readerDebug(1)
++  regDebug.fbAuxCache := framebufferMem.io.readerDebug(2)
++  regDebug.fbAuxCacheOccupancy := framebufferMem.io.readerDebug(3)
++  regDebug.fbColorCacheReq := framebufferMem.io.readerDebug(4)
++  regDebug.fbColorCacheExpected := framebufferMem.io.readerDebug(5)
++  regBank.io.debug := regDebug
+ 
+   pciFifo.io.pipelineBusy := pixelPipeline.io.debug.pipelineBusy
+   pciFifo.io.commandReady := regBank.io.commandReady
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
 index 9effb48..2e25087 100644
 --- a/src/voodoo/CoreSim.scala
@@ -750,10 +769,20 @@ index 226d60e..b09f29d 100644
  
      if (formalStrong) {
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..00fd9c2 100644
+index c23fa0b..0f13151 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
-@@ -95,9 +95,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -31,6 +31,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+ 
+     val status = out(FramebufferMemStatus())
+     val stats = out(FramebufferMemStats())
++    // Cached readers' cacheDebug (low 32 bits) and occupancy words:
++    // colour, colour occ, aux, aux occ, scanout, scanout occ (hwDebugRegs).
++    val readerDebug = out(Vec(Bits(32 bits), 6))
+   }
+ 
+   private def makeFbWriteArbiter() =
+@@ -95,9 +98,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
    }
  
    if (useCachedReaders) {
@@ -765,8 +794,25 @@ index c23fa0b..00fd9c2 100644
      io.auxReadRsp << auxReaderCached.io.readRsp
      colorReaderCached.io.prefetchReq <> io.prefetchColor
      auxReaderCached.io.prefetchReq <> io.prefetchAux
+@@ -111,6 +114,16 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+   }
+ 
+   io.scanoutPrefetchReq >> scanoutReaderCached.io.prefetchReq
++  io.readerDebug(4) := scanoutReaderCached.io.cacheDebug(31 downto 0)
++  io.readerDebug(5) := scanoutReaderCached.io.cacheDebugOccupancy
++  if (useCachedReaders) {
++    io.readerDebug(0) := colorReaderCached.io.cacheDebug(31 downto 0)
++    io.readerDebug(1) := colorReaderCached.io.cacheDebugOccupancy
++    io.readerDebug(2) := auxReaderCached.io.cacheDebug(31 downto 0)
++    io.readerDebug(3) := auxReaderCached.io.cacheDebugOccupancy
++  } else {
++    for (i <- 0 until 4) io.readerDebug(i) := 0
++  }
+   io.scanoutReadReq.s2mPipe() >> scanoutReaderCached.io.readReq
+   io.scanoutReadRsp << scanoutReaderCached.io.readRsp
+ 
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..9b9380f 100644
+index 7797711..e3cbf12 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -367,8 +367,10 @@ case class PixelPipeline(c: Config) extends Component {
@@ -805,6 +851,17 @@ index 7797711..9b9380f 100644
  
    // Framebuffer writeback can drain to external memory after the ordered draw pipeline is idle.
    // Status/sync must not wait on writeback-only busy, but LFB reads still must for coherency.
+@@ -707,6 +713,10 @@ case class PixelPipeline(c: Config) extends Component {
+   pipelineBusySources(30) := lfb.io.busy
+ 
+   io.debug.pipelineBusy := pipelineBusySignal
++  // Framebuffer reader / access words come from FramebufferMemSubsystem in Core.
++  for (w <- Seq(io.debug.fbAccess, io.debug.fbColorCache, io.debug.fbColorCacheReq,
++      io.debug.fbColorCacheExpected, io.debug.fbColorCacheOccupancy, io.debug.fbAuxCache,
++      io.debug.fbAuxCacheReq, io.debug.fbAuxCacheExpected, io.debug.fbAuxCacheOccupancy)) w := 0
+   lfb.io.pipelineBusy := lfbReadSafeBusySignal
+ 
+   io.stats.exposeToSim()
 diff --git a/src/voodoo/core/TextureMemSubsystem.scala b/src/voodoo/core/TextureMemSubsystem.scala
 index 4831d83..0eacc56 100644
 --- a/src/voodoo/core/TextureMemSubsystem.scala
@@ -1033,10 +1090,10 @@ index aeba713..06fa63b 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..60763dd 100644
+index c5a4cd8..dda7ec3 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
-@@ -1095,13 +1095,14 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1095,31 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -1049,10 +1106,27 @@ index c5a4cd8..60763dd 100644
        debugBusy := io.debug.busy.bitsValue
      }
 +    if (config.hwDebugRegs) debugBusyReg() else GenerationFlags.simulation { debugBusyReg() }
++
++    if (config.hwDebugRegs) {
++      // Framebuffer reader state (FramebufferPlaneReader cacheDebug / occupancy
++      // words) for diagnosing a hung board: 0x260 colour, 0x264 colour occ,
++      // 0x268 aux, 0x26c aux occ, 0x270 scanout, 0x274 scanout occ.
++      val readerWords = Seq(
++        io.debug.fbColorCache, io.debug.fbColorCacheOccupancy,
++        io.debug.fbAuxCache, io.debug.fbAuxCacheOccupancy,
++        io.debug.fbColorCacheReq, io.debug.fbColorCacheExpected
++      )
++      for ((w, i) <- readerWords.zipWithIndex) {
++        val r = busif
++          .newRegAt(0x260 + 4 * i, s"fbReaderDebug$i")
++          .field(Bits(32 bits), AccessType.RO, 0, "Framebuffer reader debug word")
++        r := w
++      }
++    }
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1121,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1138,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -1061,7 +1135,7 @@ index c5a4cd8..60763dd 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1133,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1150,7 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }

@@ -101,7 +101,8 @@ case class TangMega138kPro(c: Config) extends Component {
     dma.io.regWrite := bar.io.localWrite
     dma.io.regAddr := bar.io.localAddr
     dma.io.regWdata := bar.io.localWdata
-    bar.io.localRdata := dma.io.regRdata
+    val axiDebug = Bits(32 bits)
+    bar.io.localRdata := Mux(bar.io.localAddr === 0x60, axiDebug, dma.io.regRdata)
   }
 
   // HDMI scanout -> RGB565 words -> TLP clock (see FrameDma).
@@ -165,6 +166,18 @@ case class TangMega138kPro(c: Config) extends Component {
   ddr.io.fb << staged(fbCc.io.output)
   ddr.io.tex << staged(texCc.io.output)
   io.ddr <> ddr.io.ddr
+
+  // Window 31 offset 0x60: AXI valid/ready levels of the memory paths, so a
+  // hung board shows which channel is stuck. [9:0] core tex, [19:10] core fb
+  // (core clock), [29:20] fb at the DDR adapter (DDR clock); each group is
+  // ar.v ar.r r.v r.r aw.v aw.r w.v w.r b.v b.r from bit 0 up.
+  private def handshakes(a: Axi4): Bits = Cat(
+    a.b.ready, a.b.valid, a.w.ready, a.w.valid, a.aw.ready, a.aw.valid,
+    a.r.ready, a.r.valid, a.ar.ready, a.ar.valid
+  )
+  val coreAxiLevels = coreCd(RegNext(handshakes(core.io.memFb) ## handshakes(core.io.memTex)))
+  val ddrAxiLevels = RegNext(handshakes(ddr.io.fb))
+  pcie.axiDebug := pcieCd(B"00" ## BufferCC(ddrAxiLevels, randBoot = true) ## BufferCC(coreAxiLevels, randBoot = true))
 
   core.io.hdmi.clock := io.hdmiClk
   core.io.hdmi.reset := io.hdmiReset
