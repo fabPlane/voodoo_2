@@ -225,32 +225,42 @@ case class BmbPageSplitter(p: BmbParameter, pendingMax: Int = 16) extends Compon
   private val pageBits = 12
   private val totalWidth = p.access.lengthWidth + 1
 
-  val consumed = Reg(UInt(totalWidth bits)) init (0)
-  val total = io.input.cmd.length.resize(totalWidth) + 1
-  val pieceStart = io.input.cmd.address + consumed.resized
-  val toPageEnd = U(1 << pageBits, pageBits + 1 bits) - pieceStart(pageBits - 1 downto 0).resize(pageBits + 1)
-  val remaining = total - consumed
-  val finalPiece = io.input.cmd.isWrite || remaining.resize(totalWidth max (pageBits + 1)) <= toPageEnd.resized
+  // A read is taken into registers and cut into pieces from there, so no
+  // address arithmetic reaches input.cmd.ready (that path closed timing badly
+  // on the congested Gowin build). Writes pass straight through.
+  val busy = RegInit(False)
+  val cur = Reg(Fragment(BmbCmd(p)))
+  val remaining = Reg(UInt(totalWidth bits))
+  val toPageEnd = U(1 << pageBits, pageBits + 1 bits) - cur.address(pageBits - 1 downto 0).resize(pageBits + 1)
+  val finalPiece = remaining.resize(totalWidth max (pageBits + 1)) <= toPageEnd.resized
   val pieceBytes = finalPiece ? remaining | toPageEnd.resize(totalWidth)
 
   // One entry per output command: is it the input burst's final piece?
   val finals = StreamFifo(Bool(), pendingMax)
 
-  io.output.cmd.valid := io.input.cmd.valid && finals.io.push.ready
+  val passWrite = !busy && io.input.cmd.isWrite
+  io.output.cmd.valid := finals.io.push.ready && (busy || (io.input.cmd.valid && io.input.cmd.isWrite))
   io.output.cmd.payload := io.input.cmd.payload
-  io.output.cmd.address.allowOverride()
-  io.output.cmd.length.allowOverride()
-  when(io.input.cmd.isRead) {
-    io.output.cmd.address := pieceStart
+  when(busy) {
+    io.output.cmd.payload := cur
+    io.output.cmd.length.allowOverride()
     io.output.cmd.length := (pieceBytes - 1).resized
   }
-  io.input.cmd.ready := io.output.cmd.ready && finals.io.push.ready && finalPiece
+  io.input.cmd.ready := !busy && (io.input.cmd.isRead || (io.output.cmd.ready && finals.io.push.ready))
+
+  when(!busy && io.input.cmd.valid && io.input.cmd.isRead) {
+    busy := True
+    cur := io.input.cmd.payload
+    remaining := io.input.cmd.length.resize(totalWidth) + 1
+  }
+  when(busy && io.output.cmd.fire) {
+    cur.address := cur.address + pieceBytes.resized
+    remaining := remaining - pieceBytes
+    when(finalPiece) { busy := False }
+  }
 
   finals.io.push.valid := io.output.cmd.fire && io.output.cmd.last
-  finals.io.push.payload := finalPiece
-  when(io.output.cmd.fire && io.input.cmd.isRead) {
-    consumed := finalPiece ? U(0, totalWidth bits) | (consumed + pieceBytes)
-  }
+  finals.io.push.payload := !busy || finalPiece
 
   io.input.rsp.valid := io.output.rsp.valid
   io.input.rsp.payload := io.output.rsp.payload
@@ -272,19 +282,25 @@ object BmbToAxi4Mem {
     BmbToAxi4SharedBridge.getAxi4Config(alignedParameter(p, burstLog2))
 }
 
-case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int) extends Component {
+/** `splitPages`: needed where bursts can cross a 4 KiB page (framebuffer
+  * reader spans). Texture fetches are small aligned reads and skip it. */
+case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = true) extends Component {
   val io = new Bundle {
     val input = slave(Bmb(p))
     val output = master(Axi4(BmbToAxi4Mem.axiConfig(p, burstLog2)))
   }
 
-  val pageSplit = BmbPageSplitter(p)
   val aligner = BmbAligner(p, burstLog2)
   val fixer = BmbLengthFixer(aligner.op.toBmbParameter(), burstLog2)
   val bridge = BmbToAxi4SharedBridge(fixer.op.toBmbParameter())
 
-  pageSplit.io.input <> io.input
-  aligner.io.input <> pageSplit.io.output
+  if (splitPages) {
+    val pageSplit = BmbPageSplitter(p)
+    pageSplit.io.input <> io.input
+    aligner.io.input <> pageSplit.io.output
+  } else {
+    aligner.io.input <> io.input
+  }
   fixer.io.input <> aligner.io.output
   bridge.io.input <> fixer.io.output
   io.output << bridge.io.output.toAxi4()
@@ -319,7 +335,7 @@ case class CoreArtix(c: Config) extends Component {
     lowerFirstPriority = true
   )
   val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), CoreArtix.axiBurstLog2)
-  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreArtix.axiBurstLog2)
+  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreArtix.axiBurstLog2, splitPages = false)
 
   io.bar <> barBridge.io.axi
   core.io.cpuBus <> barBridge.io.cpuBus

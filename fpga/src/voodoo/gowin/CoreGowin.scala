@@ -61,7 +61,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     lowerFirstPriority = false
   )
   val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2)
-  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2)
+  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false)
   val texReloc = Axi4AddressRelocate(
     CoreGowin.texAxiConfig(c, axiBurstLog2),
     GowinAddressMap.texMemBase
