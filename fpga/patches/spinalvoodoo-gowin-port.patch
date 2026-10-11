@@ -932,10 +932,36 @@ index bf8fd33..787dc1c 100644
          io.mem.cmd.fragment.length := drainLength
          io.mem.cmd.fragment.source := 1
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-index 9d1e15f..1371abc 100644
+index 9d1e15f..efa1722 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-@@ -216,8 +216,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -161,8 +161,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   // The cached reader is fed by a span prefetch stream, while the later pixel
+   // stream can legally skip pixels before framebuffer access (for example due
+   // to pipeline-side kills).  Track the next prefetched lane expected by the
+-  // consumer and allow forward skips by discarding unused cached lanes.  A
+-  // backward/non-monotonic request remains an invariant violation.
++  // consumer and skip (discard) unused cached lanes until a read matches.
+   val consumeQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
+   val consumeActive = RegInit(False)
+   val consumeExpectedAddr = Reg(UInt(addrWidth bits)) init (0)
+@@ -178,7 +177,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   }
+   val consumeExpectedValid = consumeActive || consumeBoot
+   val consumeAddrMatches = io.readReq.address === consumeCurrentAddr
+-  val consumeAddrAhead = io.readReq.address > consumeCurrentAddr
++  // Pixel reads arrive in span order, so a read that is not the expected lane
++  // means that lane's pixel was killed before framebuffer access (alpha test,
++  // chroma key, ...): skip it. This must not depend on address order: a later
++  // span can sit at a lower address (bottom-up y origin, GLQuake). Treating
++  // such a read as "behind" sent it down the direct-miss path and left the
++  // dead lane at the head forever; spans kept being prefetched until the
++  // consume queue filled and span launch deadlocked (live GLQuake hang).
++  val consumeAddrAhead = !consumeAddrMatches
+   val consumeInvariantOk = !io.readReq.valid || (consumeExpectedValid && consumeAddrMatches)
+ 
+   spanIssueQueue.io.push.valid := io.prefetchReq.valid && consumeQueue.io.push.ready
+@@ -216,8 +222,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // available), fall back to an ordered direct read.
    val directMissNeeded = !consumeExpectedValid ||
      (consumeExpectedValid && !consumeAddrMatches && !consumeAddrAhead)
@@ -964,7 +990,7 @@ index 9d1e15f..1371abc 100644
    val directMissCmdSelected = directMissCmdValid
    val prefetchCmdSelected = prefetchCmdValid && !directMissCmdSelected
  
-@@ -234,12 +252,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -234,12 +258,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    internalMem.cmd.fragment.data := 0
    internalMem.cmd.fragment.mask := 0
    internalMem.cmd.last := True
@@ -2662,13 +2688,92 @@ index 465ea78..b7b7cc0 100644
    hitRsp.passthrough := compareStage.sample.passthrough
    for (i <- 0 until tapCount) {
 diff --git a/test/FramebufferPlaneReaderTest.scala b/test/FramebufferPlaneReaderTest.scala
-index 0295f4c..7a24417 100644
+index 0295f4c..f468360 100644
 --- a/test/FramebufferPlaneReaderTest.scala
 +++ b/test/FramebufferPlaneReaderTest.scala
-@@ -258,4 +258,86 @@ class FramebufferPlaneReaderTest extends AnyFunSuite {
+@@ -197,7 +197,7 @@ class FramebufferPlaneReaderTest extends AnyFunSuite {
+     }
+   }
+ 
+-  test("direct miss does not consume cached lane") {
++  test("a read matching no cached lane discards the dead lanes and is served directly") {
+     SimConfig.withIVerilog.compile(FramebufferPlaneReader(mkConfig)).doSim { dut =>
+       initDut(dut)
+ 
+@@ -249,13 +249,155 @@ class FramebufferPlaneReaderTest extends AnyFunSuite {
+       assert(dut.io.readRsp.data.toLong == 0xbabeL)
+       dut.clockDomain.waitSampling()
+ 
++      // The read of 0x000 did not match the expected lane (0x004), so 0x004 and
++      // 0x006 were discarded as killed pixels; 0x004 now misses directly.
+       dut.io.readReq.valid #= true
+       dut.io.readReq.address #= 0x004
++      dut.io.mem.cmd.ready #= true
++      while (!dut.io.readReq.ready.toBoolean) dut.clockDomain.waitSampling()
++      assert(dut.io.mem.cmd.valid.toBoolean, "0x004 should be a direct miss once its lane was discarded")
+       dut.clockDomain.waitSampling()
+-      assert(dut.io.readReq.ready.toBoolean, "cached lane at 0x004 must survive the direct miss")
+       dut.io.readReq.valid #= false
++      dut.io.mem.cmd.ready #= false
++      dut.io.mem.rsp.valid #= true
++      dut.io.mem.rsp.fragment.source #= 1
++      dut.io.mem.rsp.fragment.data #= 0xdef09abcL
++      dut.io.mem.rsp.last #= true
++      while (!dut.io.mem.rsp.ready.toBoolean) dut.clockDomain.waitSampling()
++      dut.clockDomain.waitSampling()
++      dut.io.mem.rsp.valid #= false
++      dut.io.mem.rsp.fragment.source #= 0
+       while (!dut.io.readRsp.valid.toBoolean) dut.clockDomain.waitSampling()
        assert(dut.io.readRsp.data.toLong == 0x9abcL)
      }
    }
++
++  // Regression: live GLQuake hang (consume queue full, rasterizer stuck
++  // "running"). With a bottom-up y origin each span sits at a lower address
++  // than the one before. Pixels killed at the end of span A (alpha test) leave
++  // its lanes unread; the next read is span B's first lane at a lower address.
++  // It must discard A's dead lanes and hit B in the cache, not take a direct
++  // miss that leaves A's lanes at the head forever.
++  test("reads skip dead lanes into a later span at a lower address") {
++    SimConfig.withIVerilog.compile(FramebufferPlaneReader(mkConfig)).doSim { dut =>
++      initDut(dut)
++      dut.io.mem.cmd.ready #= true
++      val cmds = scala.collection.mutable.ArrayBuffer[(Long, Int)]()
++      dut.clockDomain.onSamplings {
++        if (dut.io.mem.cmd.valid.toBoolean && dut.io.mem.cmd.ready.toBoolean)
++          cmds += ((dut.io.mem.cmd.fragment.address.toLong, dut.io.mem.cmd.fragment.source.toInt))
++      }
++      for ((start, end) <- Seq((0x100, 0x106), (0x000, 0x006))) {
++        dut.io.prefetchReq.valid #= true
++        dut.io.prefetchReq.startAddress #= start
++        dut.io.prefetchReq.endAddress #= end
++        dut.clockDomain.waitSamplingWhere(dut.io.prefetchReq.ready.toBoolean)
++      }
++      dut.io.prefetchReq.valid #= false
++      while (cmds.size < 2) dut.clockDomain.waitSampling()
++      // Span A (0x100..0x106) then span B (0x000..0x006), two beats each.
++      sendRspBeat(dut, 0x22221111L, last = false)
++      sendRspBeat(dut, 0x44443333L, last = true)
++      sendRspBeat(dut, 0x56781234L, last = false)
++      sendRspBeat(dut, 0xdef09abcL, last = true)
++      dut.io.mem.rsp.valid #= false
++      val issuedBefore = cmds.size
++
++      // Span A: only its first pixel survives; then span B in full.
++      for ((addr, expected) <- Seq(0x100 -> 0x1111L, 0x000 -> 0x1234L, 0x002 -> 0x5678L,
++          0x004 -> 0x9abcL, 0x006 -> 0xdef0L)) {
++        dut.io.readReq.valid #= true
++        dut.io.readReq.address #= addr
++        dut.clockDomain.waitSamplingWhere(dut.io.readReq.ready.toBoolean)
++        dut.io.readReq.valid #= false
++        while (!dut.io.readRsp.valid.toBoolean) dut.clockDomain.waitSampling()
++        assert(dut.io.readRsp.data.toLong == expected, f"0x$addr%x")
++        dut.clockDomain.waitSampling()
++      }
++      assert(cmds.size == issuedBefore, s"no direct misses expected, got ${cmds.drop(issuedBefore)}")
++      assert(!dut.io.busy.toBoolean, "all prefetched lanes should be consumed or discarded")
++    }
++  }
 +  // Regression: GLQuake trace hang (status 0x0ffff3bf, SST/FBI/TMU busy forever).
 +  // The colour and aux readers share one in-order framebuffer memory port. A
 +  // reader that issues prefetch bursts whose lanes it cannot buffer leaves a
