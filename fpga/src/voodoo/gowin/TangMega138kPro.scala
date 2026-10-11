@@ -177,7 +177,7 @@ case class TangMega138kPro(c: Config) extends Component {
   )
   val coreAxiLevels = coreCd(RegNext(handshakes(core.io.memFb) ## handshakes(core.io.memTex)))
   val ddrAxiLevels = RegNext(handshakes(ddr.io.fb))
-  pcie.axiDebug := pcieCd(B"00" ## BufferCC(ddrAxiLevels, randBoot = true) ## BufferCC(coreAxiLevels, randBoot = true))
+  pcie.axiDebug := pcieCd(B"00" ## BufferCC(ddrAxiLevels) ## BufferCC(coreAxiLevels))
 
   core.io.hdmi.clock := io.hdmiClk
   core.io.hdmi.reset := io.hdmiReset
