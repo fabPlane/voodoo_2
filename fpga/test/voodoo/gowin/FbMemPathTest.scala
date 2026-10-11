@@ -218,6 +218,77 @@ class FbMemPathTest extends AnyFunSuite {
       assert(bad == 0, s"$bad of ${lines.size * 256} words wrong, first $first")
     }
   }
+  test("scanout-line reads crossing a 4 KiB page return the right data (not the page start)") {
+    compiledArb.doSim("fbpath-page", seed = 7) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      val rnd = new scala.util.Random(23)
+      val mem = mutable.HashMap[BigInt, BigInt]()
+      val ddr = dut.io.ddr
+      ddr.cmdReady #= true; ddr.wrDataRdy #= true; ddr.rdDataValid #= false; ddr.rdDataEnd #= false
+      ddr.initCalibComplete #= true
+      val reads = mutable.Queue[(BigInt, Int)]()
+      dut.clockDomain.onSamplings {
+        ddr.cmdReady #= rnd.nextInt(4) != 0
+        ddr.wrDataRdy #= rnd.nextInt(4) != 0
+        if (ddr.cmdEn.toBoolean) {
+          val a = ddr.addr.toBigInt
+          if (ddr.cmd.toInt == 0) {
+            val data = ddr.wrData.toBigInt; val mask = ddr.wrDataMask.toBigInt
+            var line = mem.getOrElse(a, BigInt(0))
+            for (b <- 0 until 32 if !mask.testBit(b))
+              line = (line & ~(BigInt(0xff) << (8 * b))) | (((data >> (8 * b)) & 0xff) << (8 * b))
+            mem(a) = line
+          } else reads.enqueue((a, 8))
+        }
+        ddr.rdDataValid #= false
+        if (reads.nonEmpty) {
+          val (a, d) = reads.dequeue()
+          if (d > 0) reads.enqueue((a, d - 1))
+          else { ddr.rdData #= mem.getOrElse(a, BigInt(0)); ddr.rdDataValid #= true; ddr.rdDataEnd #= true }
+        }
+      }
+      val w = dut.io.bmb; val r = dut.io.rd
+      w.cmd.valid #= false; w.rsp.ready #= true; r.cmd.valid #= false; r.rsp.ready #= true
+      dut.clockDomain.waitSampling(3)
+      def word(a: Long): Long = (a * 2654435761L + 77) & 0xffffffffL
+      // Fill two adjacent pages with 1 KiB in-page write bursts.
+      for (a <- 0x40000L until 0x42000L by 1024) {
+        for (i <- 0 until 256) {
+          w.cmd.valid #= true; w.cmd.opcode #= Bmb.Cmd.Opcode.WRITE; w.cmd.address #= a
+          w.cmd.length #= 1023; w.cmd.data #= word(a + 4 * i); w.cmd.mask #= 0xf
+          w.cmd.last #= i == 255; w.cmd.source #= 0
+          dut.clockDomain.waitSamplingWhere(w.cmd.ready.toBoolean)
+        }
+        w.cmd.valid #= false
+        dut.clockDomain.waitSamplingWhere(w.rsp.valid.toBoolean)
+      }
+      // 640-pixel RGB565 lines (320 words) starting at several offsets before the page end.
+      for ((start, src) <- Seq((0x40f00L, 1), (0x40b00L, 2), (0x40ffcL, 3), (0x41000L - 1280, 0))) {
+        r.cmd.valid #= true; r.cmd.opcode #= Bmb.Cmd.Opcode.READ; r.cmd.address #= start
+        r.cmd.length #= 1279; r.cmd.last #= true; r.cmd.source #= src
+        dut.clockDomain.waitSamplingWhere(r.cmd.ready.toBoolean)
+        r.cmd.valid #= false
+        val got = mutable.ArrayBuffer[Long]()
+        var lastSeen = false
+        while (!lastSeen) {
+          dut.clockDomain.waitSampling()
+          if (r.rsp.valid.toBoolean) {
+            assert(r.rsp.source.toInt == src, "response routed with the wrong source")
+            got += r.rsp.data.toLong
+            lastSeen = r.rsp.last.toBoolean
+          }
+        }
+        assert(got.size == 320, f"line 0x$start%x: ${got.size} words before rsp.last, expected 320")
+        val bad = (0 until 320).filter(i => got(i) != word(start + 4 * i))
+        if (bad.nonEmpty) {
+          val i = bad.head
+          fail(f"line 0x$start%x: ${bad.size} words wrong, first at byte 0x${start + 4 * i}%x " +
+            f"got 0x${got(i)}%08x exp 0x${word(start + 4 * i)}%08x")
+        }
+      }
+    }
+  }
+
   private lazy val compiledCc = SimConfig.withVerilator.compile(FbMemPathHarness(withCc = true))
 
   test("1 KiB write bursts survive the board's Axi4CC clock crossing (35 ns core, 10 ns DDR)") {

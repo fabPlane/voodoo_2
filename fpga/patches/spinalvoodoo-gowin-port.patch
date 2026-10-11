@@ -1018,6 +1018,93 @@ index aeba713..06fa63b 100644
    val activeOutputFire = bypassFire || pipelineFire
  
    // State transitions on active output fire
+diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
+index de14d02..58e9303 100644
+--- a/src/voodoo/hdmi/HdmiScanout.scala
++++ b/src/voodoo/hdmi/HdmiScanout.scala
+@@ -346,7 +346,10 @@ case class HdmiCdcFramebufferScanout(
+     config = ClockDomain.current.config
+   )
+ 
+-  val pixelFifo = StreamFifoCC(Bits(16 bits), fifoDepth, coreClockDomain, hdmiClockDomain)
++  // Bit 16 tags the first pixel of each frame so the HDMI side can re-align
++  // every frame: an underflow (DDR starved by rendering) costs one frame
++  // instead of shifting the picture for good.
++  val pixelFifo = StreamFifoCC(Bits(17 bits), fifoDepth, coreClockDomain, hdmiClockDomain)
+ 
+   val prefetchX = Reg(UInt(hWidth bits)) init (0)
+   val prefetchY = Reg(UInt(vWidth bits)) init (0)
+@@ -441,8 +444,25 @@ case class HdmiCdcFramebufferScanout(
+     }
+   }
+ 
++  // Responses come back in request order, so counting pushes tracks the
++  // frame position of each pixel.
++  val pushX = Reg(UInt(hWidth bits)) init (0)
++  val pushY = Reg(UInt(vWidth bits)) init (0)
+   pixelFifo.io.push.valid := io.readRsp.valid && displayEnabled
+-  pixelFifo.io.push.payload := io.readRsp.data
++  pixelFifo.io.push.payload := (pushX === 0 && pushY === 0) ## io.readRsp.data
++  when(!displayEnabled) {
++    pushX := 0
++    pushY := 0
++  } elsewhen (pixelFifo.io.push.fire) {
++    pushX := pushX + 1
++    when(pushX === (displayWidth - 1).resized) {
++      pushX := 0
++      pushY := pushY + 1
++      when(pushY === (displayHeight - 1).resized) {
++        pushY := 0
++      }
++    }
++  }
+   io.readRsp.ready := pixelFifo.io.push.ready
+ 
+   switch((io.readReq.fire.asUInt ## pixelFifo.io.push.fire.asUInt).asBits) {
+@@ -470,23 +490,35 @@ case class HdmiCdcFramebufferScanout(
+ 
+     val useFramebuffer = !testPatternEnable
+     val startArmed = BufferCC(scanoutRun, False)
++    val headValid = pixelFifo.io.pop.valid
++    val headSof = pixelFifo.io.pop.payload(16)
++    // A frame is shown only if its tagged first pixel is at the FIFO head
++    // when the first content pixel is scanned; otherwise (or after a mid-frame
++    // underflow) pixels are flushed up to the next frame's tag and the rest
++    // of this frame is black.
++    val firstContent = contentActive && scan.io.x === 0 && scan.io.y === 0
+     val frameAligned = RegInit(False)
++    val alignedNow = Bool()
++    alignedNow := frameAligned
++    when(firstContent) {
++      alignedNow := headValid && headSof
++    }
++    frameAligned := alignedNow
+     when(!useFramebuffer || !startArmed) {
+       frameAligned := False
+-    } elsewhen (!frameAligned && scan.io.newFrame) {
+-      frameAligned := True
+-    }
+-
+-    pixelFifo.io.pop.ready := useFramebuffer && frameAligned && contentActive
+-    when(useFramebuffer && frameAligned && contentActive && !pixelFifo.io.pop.valid) {
++    } elsewhen (alignedNow && contentActive && !headValid) {
++      frameAligned := False
+       underflowReg := True
+     }
+ 
+-    val rgb = Rgb888.applyGamma(Rgb888.fromRgb565(pixelFifo.io.pop.payload), gammaLut)
++    pixelFifo.io.pop.ready := useFramebuffer && startArmed &&
++      Mux(alignedNow, contentActive, headValid && !headSof)
++
++    val rgb = Rgb888.applyGamma(Rgb888.fromRgb565(pixelFifo.io.pop.payload(15 downto 0)), gammaLut)
+     io.video.rgb := rgb
+     when(testPatternEnable) {
+       io.video.rgb := pattern.io.rgb
+-    } elsewhen (!frameAligned || !contentActive || !pixelFifo.io.pop.valid) {
++    } elsewhen (!alignedNow || !contentActive || !headValid) {
+       io.video.rgb := Rgb888.black()
+     }
+     io.video.de := scan.io.active
 diff --git a/src/voodoo/pixel/Fog.scala b/src/voodoo/pixel/Fog.scala
 index 1a3a34c..e46f94b 100644
 --- a/src/voodoo/pixel/Fog.scala
@@ -2540,6 +2627,142 @@ index 0295f4c..7a24417 100644
 +    }
 +  }
  }
+diff --git a/test/HdmiScanoutTest.scala b/test/HdmiScanoutTest.scala
+index 10a5655..299d79d 100644
+--- a/test/HdmiScanoutTest.scala
++++ b/test/HdmiScanoutTest.scala
+@@ -617,6 +617,131 @@ class HdmiScanoutTest extends AnyFunSuite {
+       }
+   }
+ 
++  test("CDC scanout re-aligns to the frame origin after a mid-frame underflow") {
++    val c = Config.voodoo1()
++    val timing = VideoTiming(
++      activeWidth = 8,
++      activeHeight = 4,
++      hFrontPorch = 1,
++      hSync = 1,
++      hBackPorch = 2,
++      vFrontPorch = 1,
++      vSync = 1,
++      vBackPorch = 1
++    )
++    val frameCycles = timing.hTotal * timing.vTotal
++
++    SimConfig.withIVerilog
++      .compile(
++        HdmiCdcFramebufferScanout(
++          c,
++          timing,
++          fifoDepth = 64,
++          prefillLevel = 8,
++          refillLowLevel = 8,
++          refillHighLevel = 48
++        )
++      )
++      .doSim { dut =>
++        dut.io.hdmiClock #= false
++        dut.io.hdmiReset #= true
++        dut.clockDomain.forkStimulus(10)
++        fork {
++          while (true) {
++            dut.io.hdmiClock #= false
++            sleep(5)
++            dut.io.hdmiClock #= true
++            sleep(5)
++          }
++        }
++
++        dut.io.regs.frontBase #= 0x1000
++        dut.io.regs.backBase #= 0
++        dut.io.regs.pixelStride #= 64
++        dut.io.regs.displayWidth #= timing.activeWidth
++        dut.io.regs.displayHeight #= timing.activeHeight
++        dut.io.regs.framebufferEnable #= true
++        dut.io.regs.testPatternEnable #= false
++        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.prefetchReq.ready #= true
++        dut.io.readReq.ready #= true
++        dut.io.readRsp.valid #= false
++        dut.io.readRsp.payload.data #= 0
++
++        // Red = x + 1, green = y + 1: each pixel names its own position.
++        def pixelFor(address: Long): Int = {
++          val p = ((address - 0x1000L) / 2).toInt
++          ((p % 64 + 1) << 11) | ((p / 64 + 1) << 5)
++        }
++        val pending = mutable.Queue[Int]()
++        var stallFrom = Long.MaxValue
++        var stallUntil = Long.MaxValue
++        fork {
++          var cycles = 0L
++          while (true) {
++            dut.clockDomain.waitSampling()
++            cycles += 1
++            if (dut.io.readRsp.valid.toBoolean && dut.io.readRsp.ready.toBoolean) {
++              dut.io.readRsp.valid #= false
++            }
++            val stalled = cycles >= stallFrom && cycles < stallUntil
++            if (!dut.io.readRsp.valid.toBoolean && pending.nonEmpty && !stalled) {
++              dut.io.readRsp.payload.data #= pending.dequeue()
++              dut.io.readRsp.valid #= true
++            }
++            if (dut.io.readReq.valid.toBoolean && dut.io.readReq.ready.toBoolean) {
++              pending.enqueue(pixelFor(dut.io.readReq.payload.address.toLong))
++            }
++          }
++        }
++
++        dut.clockDomain.waitSampling(4)
++        dut.io.hdmiReset #= false
++
++        // Collect whole HDMI frames as (x, y) -> (r, g) grids.
++        val frames = mutable.ArrayBuffer[Map[(Int, Int), (Int, Int)]]()
++        var cur = mutable.Map[(Int, Int), (Int, Int)]()
++        var previousDe = false
++        var inactiveCycles = 0
++        var x = 0
++        var y = -1
++        var cycle = 0L
++        while (frames.size < 10) {
++          dut.clockDomain.waitSampling()
++          sleep(1)
++          cycle += 1
++          // Starve the FIFO in the middle of the third frame.
++          if (frames.size == 2 && stallFrom == Long.MaxValue && y == 1) {
++            stallFrom = cycle
++            stallUntil = cycle + 2 * frameCycles
++          }
++          val de = dut.io.video.de.toBoolean
++          if (de && !previousDe) {
++            if (inactiveCycles > timing.hTotal) {
++              if (y >= 0) frames += cur.toMap
++              cur = mutable.Map()
++              y = 0
++            } else y += 1
++            x = 0
++            inactiveCycles = 0
++          } else if (!de) inactiveCycles += 1
++          if (de) {
++            cur((x, y)) = (dut.io.video.rgb.r.toInt >> 3, dut.io.video.rgb.g.toInt >> 2)
++            x += 1
++          }
++          previousDe = de
++        }
++
++        def exact(f: Map[(Int, Int), (Int, Int)]) =
++          (for (yy <- 0 until timing.activeHeight; xx <- 0 until timing.activeWidth)
++            yield f.get((xx, yy)) == Some((xx + 1, yy + 1))).forall(identity)
++        assert(exact(frames(1)), "frame before the stall should be exact")
++        assert(dut.io.underflow.toBoolean, "the stall should have caused an underflow")
++        val after = frames.drop(6)
++        assert(after.forall(exact), s"frames after recovery are not aligned: ${after.map(exact)}")
++      }
++  }
++
+   test("CDC scanout pads HDMI pixels outside logical framebuffer width") {
+     val c = Config.voodoo1()
+     val timing = VideoTiming(
 diff --git a/test/PciFifoTextureOrderTest.scala b/test/PciFifoTextureOrderTest.scala
 new file mode 100644
 index 0000000..22d0579

@@ -207,10 +207,62 @@ case class AxiLite4ToBmbBridge(
 /** BMB master to AXI4 master for MIG: aligns and splits every burst to 2^burstLog2 bytes so
   * nothing crosses a 4 KiB boundary or exceeds AXI's 256-beat limit, then bridges to AXI4.
   */
+/** Splits read bursts at 4 KiB pages. BMB and AXI bursts may not cross a
+  * page, and the library bridges (BmbAligner, BmbLengthFixer, even
+  * BmbAlignedSpliter via Bmb.addToAddress) only increment in-page address
+  * bits, so a crossing burst wrapped to the page start. The core's write
+  * buffer never crosses, but framebuffer reader spans (scanout lines, pixel
+  * spans) can: on the Gowin board every 640-pixel scanline crossing a page
+  * showed data from 4 KiB earlier. Writes pass through. Pieces keep the
+  * input's source/context; the memory side must answer in order (it does on
+  * the fb/tex ports here), and only the final piece's response is `last`.
+  */
+case class BmbPageSplitter(p: BmbParameter, pendingMax: Int = 16) extends Component {
+  val io = new Bundle {
+    val input = slave(Bmb(p))
+    val output = master(Bmb(p))
+  }
+  private val pageBits = 12
+  private val totalWidth = p.access.lengthWidth + 1
+
+  val consumed = Reg(UInt(totalWidth bits)) init (0)
+  val total = io.input.cmd.length.resize(totalWidth) + 1
+  val pieceStart = io.input.cmd.address + consumed.resized
+  val toPageEnd = U(1 << pageBits, pageBits + 1 bits) - pieceStart(pageBits - 1 downto 0).resize(pageBits + 1)
+  val remaining = total - consumed
+  val finalPiece = io.input.cmd.isWrite || remaining.resize(totalWidth max (pageBits + 1)) <= toPageEnd.resized
+  val pieceBytes = finalPiece ? remaining | toPageEnd.resize(totalWidth)
+
+  // One entry per output command: is it the input burst's final piece?
+  val finals = StreamFifo(Bool(), pendingMax)
+
+  io.output.cmd.valid := io.input.cmd.valid && finals.io.push.ready
+  io.output.cmd.payload := io.input.cmd.payload
+  io.output.cmd.address.allowOverride()
+  io.output.cmd.length.allowOverride()
+  when(io.input.cmd.isRead) {
+    io.output.cmd.address := pieceStart
+    io.output.cmd.length := (pieceBytes - 1).resized
+  }
+  io.input.cmd.ready := io.output.cmd.ready && finals.io.push.ready && finalPiece
+
+  finals.io.push.valid := io.output.cmd.fire && io.output.cmd.last
+  finals.io.push.payload := finalPiece
+  when(io.output.cmd.fire && io.input.cmd.isRead) {
+    consumed := finalPiece ? U(0, totalWidth bits) | (consumed + pieceBytes)
+  }
+
+  io.input.rsp.valid := io.output.rsp.valid
+  io.input.rsp.payload := io.output.rsp.payload
+  io.input.rsp.last.allowOverride()
+  io.input.rsp.last := io.output.rsp.last && finals.io.pop.payload
+  io.output.rsp.ready := io.input.rsp.ready
+  finals.io.pop.ready := io.output.rsp.fire && io.output.rsp.last
+}
+
 object BmbToAxi4Mem {
-  // Input bursts must not cross a 4 KiB page (BMB rule; BmbAligner and
-  // BmbLengthFixer only increment in-page address bits). The core's
-  // framebuffer write buffer guarantees this (FramebufferPlaneBuffer).
+  // Input bursts may cross 4 KiB pages: BmbPageSplitter cuts reads first, so
+  // BmbAligner and BmbLengthFixer (in-page increments only) are safe.
   def alignedParameter(p: BmbParameter, burstLog2: Int): BmbParameter = {
     val aligned = BmbAligner.outputParameter(p.access, burstLog2)
     BmbLengthFixer.outputParameter(aligned, burstLog2).toBmbParameter()
@@ -226,11 +278,13 @@ case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int) extends Component {
     val output = master(Axi4(BmbToAxi4Mem.axiConfig(p, burstLog2)))
   }
 
+  val pageSplit = BmbPageSplitter(p)
   val aligner = BmbAligner(p, burstLog2)
   val fixer = BmbLengthFixer(aligner.op.toBmbParameter(), burstLog2)
   val bridge = BmbToAxi4SharedBridge(fixer.op.toBmbParameter())
 
-  aligner.io.input <> io.input
+  pageSplit.io.input <> io.input
+  aligner.io.input <> pageSplit.io.output
   fixer.io.input <> aligner.io.output
   bridge.io.input <> fixer.io.output
   io.output << bridge.io.output.toAxi4()
