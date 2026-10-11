@@ -72,14 +72,33 @@ case class TangMega138kPro(c: Config) extends Component {
 
   val pcie = new ClockingArea(pcieCd) {
     val bar = PcieTlpBarTarget(addressWidth = PcieTlpBarTarget.rawAddressWidth)
-    bar.io.tlRxSop := io.tlRxSop
-    bar.io.tlRxEop := io.tlRxEop
-    bar.io.tlRxValid := io.tlRxValid
-    bar.io.tlRxData := io.tlRxData
-    bar.io.tlRxBardec := io.tlRxBardec
-    io.tlRxWait := bar.io.tlRxWait
-    bar.io.tlTxCreditsCpl := io.tlTxCreditsCpl
-    bar.io.tlCfgBusdev := io.tlCfgBusdev
+    // Register RX beats between the PCIe hard block and the BAR target (same
+    // accept-unless-wait handshake, full throughput): the block's TL_RX_DATA
+    // pins otherwise fed the target's decode and enables combinationally, and
+    // whether that closed at 75 MHz depended on where placement put the target.
+    case class RxBeat() extends Bundle {
+      val sop, eop = Bool()
+      val valid = Bits(PcieTlpBarTarget.tlpValidWidth bits)
+      val data = Bits(PcieTlpBarTarget.tlpDataWidth bits)
+      val bardec = Bits(PcieTlpBarTarget.barDecWidth bits)
+    }
+    val rxIn = Stream(RxBeat())
+    rxIn.valid := io.tlRxValid.orR
+    rxIn.sop := io.tlRxSop
+    rxIn.eop := io.tlRxEop
+    rxIn.payload.valid := io.tlRxValid
+    rxIn.data := io.tlRxData
+    rxIn.bardec := io.tlRxBardec
+    io.tlRxWait := !rxIn.ready
+    val rx = rxIn.m2sPipe()
+    bar.io.tlRxSop := rx.sop
+    bar.io.tlRxEop := rx.eop
+    bar.io.tlRxValid := rx.valid ? rx.payload.valid | B(0, PcieTlpBarTarget.tlpValidWidth bits)
+    bar.io.tlRxData := rx.data
+    bar.io.tlRxBardec := rx.bardec
+    rx.ready := !bar.io.tlRxWait
+    bar.io.tlTxCreditsCpl := RegNext(io.tlTxCreditsCpl)
+    bar.io.tlCfgBusdev := RegNext(io.tlCfgBusdev)
 
     // TX port shared by BAR read completions (priority) and frame DMA writes.
     val txArb = TlTxArbiter()
@@ -96,8 +115,10 @@ case class TangMega138kPro(c: Config) extends Component {
 
     val dma = FrameDmaWriter()
     dma.io.tx <> txArb.io.inputs(1)
-    dma.io.postedCreditOk := io.tlTxCreditsP(31)
-    dma.io.busdev := io.tlCfgBusdev
+    // Registered: TL_TX_CREDITS -> TX data was a failing path; a cycle-old
+    // credit bit is fine for the DMA's coarse "posted credits available" gate.
+    dma.io.postedCreditOk := RegNext(io.tlTxCreditsP(31)) init (False)
+    dma.io.busdev := RegNext(io.tlCfgBusdev)
     dma.io.regWrite := bar.io.localWrite
     dma.io.regAddr := bar.io.localAddr
     dma.io.regWdata := bar.io.localWdata
