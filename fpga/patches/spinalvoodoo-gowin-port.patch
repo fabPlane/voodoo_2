@@ -1,3 +1,19 @@
+diff --git a/emu/glide/glide2x/sst1/init/initvg/video.c b/emu/glide/glide2x/sst1/init/initvg/video.c
+index c71ac23..44c086a 100644
+--- a/emu/glide/glide2x/sst1/init/initvg/video.c
++++ b/emu/glide/glide2x/sst1/init/initvg/video.c
+@@ -82,6 +82,11 @@ FX_EXPORT FxBool FX_CSTYLE sst1InitVideo(FxU32 *sstbase,
+     sst1CurrentBoard->memFifoStatusLwm = 0x1f;
+     sst1CurrentBoard->fbiMemoryFifoEn = 1;
+ 
++    /* Y origin, as the real path below does: without it yOriginSwap stays 0
++     * and a bottom-origin fbzMode (GLQuake) draws every row at -y. */
++    ISET(sst->fbiInit3, (IGET(sst->fbiInit3) & ~SST_YORIGIN_TOP) |
++        ((sst1CurrentBoard->fbiVideoHeight - 1) << SST_YORIGIN_TOP_SHIFT));
++
+     /* Set up basic rendering state for simulation. DE10 uses the FPGA HDMI
+      * scanout path and does not need the legacy SST video read-modify-write
+      * sequence here; that sequence can touch unsupported/reset-sensitive
 diff --git a/emu/glide/swlibs/newpci/pcilib/fxsim.c b/emu/glide/swlibs/newpci/pcilib/fxsim.c
 index d36865c..8107fe2 100644
 --- a/emu/glide/swlibs/newpci/pcilib/fxsim.c
