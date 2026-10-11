@@ -248,6 +248,20 @@ index d163ab7..4a8a8ed 100644
      fprintf(stderr, "[trace_test] Replay %s: %u/%u packed entries (%llu logical commands), %d triangles, %d tex writes, %d fb writes, %d swaps\n",
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
+diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
+index 1b34fa2..ce8f552 100644
+--- a/src/voodoo/Config.scala
++++ b/src/voodoo/Config.scala
+@@ -22,6 +22,9 @@ case class Config(
+     useFbWriteBuffer: Boolean,
+     useFbReadCache: Boolean,
+     useTexFillCache: Boolean,
++    // Keep the debugBusy (0x240) / writePathDebug (0x250) registers in
++    // synthesis too, to read which pipeline stage a hung board is stuck in.
++    hwDebugRegs: Boolean = false,
+     enableTmu: Boolean = true,
+     enableFog: Boolean = true,
+     enableDither: Boolean = true,
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
 index 100f1c6..bb27457 100644
 --- a/src/voodoo/Core.scala
@@ -1018,6 +1032,43 @@ index aeba713..06fa63b 100644
    val activeOutputFire = bypassFire || pipelineFire
  
    // State transitions on active output fire
+diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
+index c5a4cd8..60763dd 100644
+--- a/src/voodoo/frontend/RegisterBank.scala
++++ b/src/voodoo/frontend/RegisterBank.scala
+@@ -1095,13 +1095,14 @@ case class RegisterBank(config: Config) extends Component {
+       .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
+       .asOutput()
+ 
+-    GenerationFlags.simulation {
++    def debugBusyReg(): Unit = {
+       // debugBusy (0x240) - Internal busy-source debug bitfield
+       val debugBusy = busif
+         .newRegAt(0x240, "debugBusy")
+         .field(Bits(32 bits), AccessType.RO, 0, "Internal pipeline busy-source debug bitfield")
+       debugBusy := io.debug.busy.bitsValue
+     }
++    if (config.hwDebugRegs) debugBusyReg() else GenerationFlags.simulation { debugBusyReg() }
+ 
+     // fbiInit5 (0x244) - Multi-chip config
+     val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
+@@ -1120,7 +1121,7 @@ case class RegisterBank(config: Config) extends Component {
+     val fbiInit7_cmdFifoEnable =
+       fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
+ 
+-    GenerationFlags.simulation {
++    def writePathDebugRegs(): Unit = {
+       // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
+       val writePathDebugReg = busif
+         .newRegAt(0x250, "writePathDebug")
+@@ -1132,6 +1133,7 @@ case class RegisterBank(config: Config) extends Component {
+         )
+       writePathDebugReg := io.debug.writePath.bitsValue
+     }
++    if (config.hwDebugRegs) writePathDebugRegs() else GenerationFlags.simulation { writePathDebugRegs() }
+   }
+ 
+   // ========================================================================
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
 index de14d02..58e9303 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala

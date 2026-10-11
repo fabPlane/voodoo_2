@@ -58,7 +58,9 @@ object GowinGenSupport {
       useFbWriteBuffer = true,
       fbWriteBufferLineWords = 256,
       useFbReadCache = true,
-      useTexFillCache = false
+      useTexFillCache = false,
+      // debugBusy/writePathDebug readable over PCIe (0x240/0x250) for live hangs.
+      hwDebugRegs = true
     )
 
   def verilog(targetDirectory: String = "rtl/gowin"): SpinalConfig =
