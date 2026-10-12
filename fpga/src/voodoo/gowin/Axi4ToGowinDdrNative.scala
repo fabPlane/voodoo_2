@@ -82,6 +82,10 @@ case class Axi4ToGowinDdrNative(
     val fb = slave(Axi4(fbConfig))
     val tex = slave(Axi4(texConfig))
     val ddr = master(GowinDdrNative(addrWidth = nativeAddrWidth, dataWidth = nativeDataWidth))
+    // Run-time throttles (quasi-static): idle cycles after every native
+    // command, and the most reads in flight (0 = readsInFlight).
+    val cmdGap = in UInt (8 bits)
+    val maxReads = in UInt (4 bits)
   }
 
   private def toNative(a: UInt): UInt = {
@@ -113,15 +117,14 @@ case class Axi4ToGowinDdrNative(
   // cycles corrupts bursts or kills JTAG, gap >= 8 was clean over 1 GiB).
   // The one-outstanding bridge never got close; with reads pipelined, gap 0
   // reloaded the FPGA 8 s into GLQuake (B41), so keep 8.
-  val cmdGapCycles = 8
-  val cmdGapOk = Bool()
-  if (cmdGapCycles == 0) cmdGapOk := True
-  else {
-    val cmdGap = Reg(UInt(log2Up(cmdGapCycles + 1) bits)) init (0)
-    cmdGapOk := cmdGap === 0
-    when(!cmdGapOk) { cmdGap := cmdGap - 1 }
-    when(io.ddr.cmdEn) { cmdGap := cmdGapCycles }
-  }
+  // The gap is io.cmdGap (8 by default on the board: see TangMega138kPro).
+  val cmdGap = Reg(UInt(8 bits)) init (0)
+  val cmdGapOk = cmdGap === 0
+  when(!cmdGapOk) { cmdGap := cmdGap - 1 }
+  when(io.ddr.cmdEn) { cmdGap := io.cmdGap }
+  val readLimit = RegNext(
+    Mux(io.maxReads === 0 || io.maxReads > readsInFlight, U(readsInFlight), io.maxReads.resized)
+  ).resize(log2Up(readsInFlight + 1) bits)
 
   // Default AXI outputs.
   for (axi <- Seq(io.fb, io.tex)) {
@@ -169,7 +172,10 @@ case class Axi4ToGowinDdrNative(
     // nextLine() needs a cycle after every address change.
     val addrSettled = RegInit(False)
     addrSettled := True
-    val wantsCmd = active && addrSettled && inFlight =/= readsInFlight && meta.io.push.ready
+    // Registered "a read slot is free" (inFlight after this cycle < limit):
+    // the compare fed the command arbiter combinationally and missed 100 MHz.
+    val slotFree = RegInit(True)
+    val wantsCmd = active && addrSettled && slotFree && meta.io.push.ready
     val issue = Bool() // driven by the command arbiter below
 
     meta.io.push.valid := issue
@@ -238,8 +244,12 @@ case class Axi4ToGowinDdrNative(
       idxReg := idx + 1
     }
 
-    when(issue && !lineDone) { inFlight := inFlight + 1 }
-      .elsewhen(!issue && lineDone) { inFlight := inFlight - 1 }
+    val inFlightNext = UInt(inFlight.getWidth bits)
+    inFlightNext := inFlight
+    when(issue && !lineDone) { inFlightNext := inFlight + 1 }
+      .elsewhen(!issue && lineDone) { inFlightNext := inFlight - 1 }
+    inFlight := inFlightNext
+    slotFree := inFlightNext < readLimit
   }
   if (fbConfig.useId) io.fb.r.id := rd.head.id.resized
   if (texConfig.useId) io.tex.r.id := rd.head.id.resized

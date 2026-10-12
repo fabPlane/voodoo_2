@@ -123,7 +123,15 @@ case class TangMega138kPro(c: Config) extends Component {
     dma.io.regAddr := bar.io.localAddr
     dma.io.regWdata := bar.io.localWdata
     val axiDebug = Bits(32 bits)
-    bar.io.localRdata := Mux(bar.io.localAddr === 0x60, axiDebug, dma.io.regRdata)
+    // Window 31 offset 0x64: DDR3 throttles for stability testing, [7:0]
+    // idle cycles after every native command, [11:8] max reads in flight
+    // (0 = all 8). Set before a run; the DDR side samples it through a
+    // synchronizer.
+    val ddrThrottle = Reg(Bits(32 bits)) init (B(8, 32 bits))
+    when(bar.io.localWrite && bar.io.localAddr === 0x64) { ddrThrottle := bar.io.localWdata }
+    bar.io.localRdata := dma.io.regRdata
+    when(bar.io.localAddr === 0x60) { bar.io.localRdata := axiDebug }
+    when(bar.io.localAddr === 0x64) { bar.io.localRdata := ddrThrottle }
   }
 
   // HDMI scanout -> RGB565 words -> TLP clock (see FrameDma).
@@ -187,6 +195,9 @@ case class TangMega138kPro(c: Config) extends Component {
   ddr.io.fb << staged(fbCc.io.output)
   ddr.io.tex << staged(texCc.io.output)
   io.ddr <> ddr.io.ddr
+  private val throttle = BufferCC(pcie.ddrThrottle, init = B(8, 32 bits))
+  ddr.io.cmdGap := throttle(7 downto 0).asUInt
+  ddr.io.maxReads := throttle(11 downto 8).asUInt
 
   // Window 31 offset 0x60: AXI valid/ready levels of the memory paths, so a
   // hung board shows which channel is stuck. [9:0] core tex, [19:10] core fb

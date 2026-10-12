@@ -30,6 +30,8 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       dut.io.ddr.rdDataValid #= false
       dut.io.ddr.rdDataEnd #= false
       dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
       val pendingReads = mutable.Queue[(BigInt, Long)]() // in order: (addr, due cycle)
       var cycle = 0L
       dut.clockDomain.onSamplings {
@@ -133,11 +135,21 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       dut.io.ddr.rdDataValid #= false
       dut.io.ddr.rdDataEnd #= false
       dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
       val pendingReads = mutable.Queue[(BigInt, Long)]()
       var cycle = 0L
       var maxInFlight = 0
+      var throttled = false
+      var lastCmd = -1000L
+      var minGapThrottled = Long.MaxValue
+      var maxInFlightThrottled = 0
       dut.clockDomain.onSamplings {
         cycle += 1
+        if (dut.io.ddr.cmdEn.toBoolean) {
+          if (throttled) minGapThrottled = minGapThrottled min (cycle - lastCmd)
+          lastCmd = cycle
+        }
         dut.io.ddr.cmdReady #= rnd.nextInt(5) != 0
         dut.io.ddr.wrDataRdy #= rnd.nextInt(5) != 0
         if (dut.io.ddr.cmdEn.toBoolean) {
@@ -158,6 +170,7 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
             val due = cycle + 10 + rnd.nextInt(20)
             pendingReads.enqueue((a, pendingReads.lastOption.map(_._2 max due).getOrElse(due)))
             maxInFlight = maxInFlight max pendingReads.size
+            if (throttled) maxInFlightThrottled = maxInFlightThrottled max pendingReads.size
           }
         }
         dut.io.ddr.rdDataValid #= false
@@ -248,6 +261,17 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
         b.join()
       }
       assert(maxInFlight >= 4, s"reads were not pipelined (max $maxInFlight in flight)")
+      // Run-time throttles: 20 idle cycles after every command, one read at a time.
+      dut.io.cmdGap #= 20
+      dut.io.maxReads #= 1
+      dut.clockDomain.waitSampling(5)
+      throttled = true
+      val a = fork(runPort(0, fb, 0x200000L, 7))
+      val b = fork(runPort(1, tx, 0x400000L, 7))
+      a.join()
+      b.join()
+      assert(minGapThrottled >= 21, s"commands $minGapThrottled cycles apart with cmdGap 20")
+      assert(maxInFlightThrottled <= 1, s"$maxInFlightThrottled reads in flight with maxReads 1")
     }
   }
 }

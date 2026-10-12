@@ -71,6 +71,8 @@ case class TangConsole138k(c: Config) extends Component {
     nativeDataWidth = GowinAddressMap.consoleDdrNativeDataWidth,
     nativeAddrWidth = GowinAddressMap.consoleDdrNativeAddrWidth
   )
+  ddr.io.cmdGap := 8
+  ddr.io.maxReads := 0
   val player = DemoAxiLitePlayer(DemoTraceRom.banks(), DemoCatalog.playerLoopAt)
   val ctrlCd = ClockDomain(
     clock = io.ctrlClk,

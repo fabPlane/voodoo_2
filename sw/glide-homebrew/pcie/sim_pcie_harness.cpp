@@ -19,6 +19,8 @@
  *   VOODOO_PCI_NOFLOW=1           disable the flow control below
  *   VOODOO_PCI_MIN_FRAME_MS=N     idle until N ms have passed since the last
  *                                 swap (duty-cycles the card's load)
+ *   VOODOO_PCI_WRITE_GAP_NS=N     at least N ns between MMIO writes (caps the
+ *                                 PCIe posted-write rate)
  *   VOODOO_PCI_PROFILE=1          one line per swap: where the frame's time
  *                                 went (FIFO-full stalls, idle waits, reads,
  *                                 host) plus write counts and pixel counters
@@ -66,6 +68,7 @@ struct FrameProfile {
 };
 bool g_profile = false;
 uint64_t g_minFrameNs = 0, g_lastSwapNs = 0;
+uint64_t g_writeGapNs = 0, g_lastWriteNs = 0;
 FrameProfile g_frame;
 uint64_t g_frameNo = 0;
 uint32_t g_lastPixIn = 0, g_lastPixOut = 0;
@@ -129,6 +132,7 @@ extern "C" int sim_init(void) {
   g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
+  if (const char *g = getenv("VOODOO_PCI_WRITE_GAP_NS")) g_writeGapNs = strtoull(g, nullptr, 0);
   if (const char *m = getenv("VOODOO_PCI_MIN_FRAME_MS")) g_minFrameNs = strtoull(m, nullptr, 0) * 1000000ull;
   logOp("init dry=%d\n", g_dry);
   if (g_dry) {
@@ -169,6 +173,10 @@ extern "C" void sim_shutdown(void) {
 
 // Block until the PCI FIFO has room for at least one more write.
 void waitForRoom() {
+  if (g_writeGapNs) {
+    while (nowNs() - g_lastWriteNs < g_writeGapNs) {}
+    g_lastWriteNs = nowNs();
+  }
   if (!g_flow || g_dry) return;
   if (g_budget == 0 && g_profile) {
     uint64_t t0 = nowNs();
