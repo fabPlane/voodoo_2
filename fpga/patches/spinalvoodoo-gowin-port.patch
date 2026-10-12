@@ -1193,7 +1193,7 @@ index c5a4cd8..dda7ec3 100644
  
    // ========================================================================
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
-index de14d02..58e9303 100644
+index de14d02..46a89b7 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
 +++ b/src/voodoo/hdmi/HdmiScanout.scala
 @@ -346,7 +346,10 @@ case class HdmiCdcFramebufferScanout(
@@ -1208,18 +1208,24 @@ index de14d02..58e9303 100644
  
    val prefetchX = Reg(UInt(hWidth bits)) init (0)
    val prefetchY = Reg(UInt(vWidth bits)) init (0)
-@@ -441,8 +444,25 @@ case class HdmiCdcFramebufferScanout(
+@@ -441,11 +444,36 @@ case class HdmiCdcFramebufferScanout(
      }
    }
  
 +  // Responses come back in request order, so counting pushes tracks the
-+  // frame position of each pixel.
++  // frame position of each pixel. Responses still in flight when the display
++  // is turned off and on again (Glide does that during init) would shift the
++  // count, so whenever nothing is in flight the push position is resynced to
++  // the request position: a stale count costs some frames, not the picture.
 +  val pushX = Reg(UInt(hWidth bits)) init (0)
 +  val pushY = Reg(UInt(vWidth bits)) init (0)
    pixelFifo.io.push.valid := io.readRsp.valid && displayEnabled
 -  pixelFifo.io.push.payload := io.readRsp.data
 +  pixelFifo.io.push.payload := (pushX === 0 && pushY === 0) ## io.readRsp.data
-+  when(!displayEnabled) {
++  when(outstanding === 0 && !io.readRsp.valid) {
++    pushX := prefetchX
++    pushY := prefetchY
++  } elsewhen (!displayEnabled) {
 +    pushX := 0
 +    pushY := 0
 +  } elsewhen (pixelFifo.io.push.fire) {
@@ -1234,8 +1240,14 @@ index de14d02..58e9303 100644
 +  }
    io.readRsp.ready := pixelFifo.io.push.ready
  
-   switch((io.readReq.fire.asUInt ## pixelFifo.io.push.fire.asUInt).asBits) {
-@@ -470,23 +490,35 @@ case class HdmiCdcFramebufferScanout(
+-  switch((io.readReq.fire.asUInt ## pixelFifo.io.push.fire.asUInt).asBits) {
++  // Counted on the response (not the push) so responses dropped while the
++  // display is off do not leak.
++  switch((io.readReq.fire.asUInt ## io.readRsp.fire.asUInt).asBits) {
+     is(B"10") { outstanding := outstanding + 1 }
+     is(B"01") { outstanding := outstanding - 1 }
+     default {}
+@@ -470,23 +498,35 @@ case class HdmiCdcFramebufferScanout(
  
      val useFramebuffer = !testPatternEnable
      val startArmed = BufferCC(scanoutRun, False)
@@ -2881,10 +2893,10 @@ index 0295f4c..f468360 100644
 +  }
  }
 diff --git a/test/HdmiScanoutTest.scala b/test/HdmiScanoutTest.scala
-index 10a5655..299d79d 100644
+index 10a5655..725256b 100644
 --- a/test/HdmiScanoutTest.scala
 +++ b/test/HdmiScanoutTest.scala
-@@ -617,6 +617,131 @@ class HdmiScanoutTest extends AnyFunSuite {
+@@ -617,6 +617,259 @@ class HdmiScanoutTest extends AnyFunSuite {
        }
    }
  
@@ -2949,17 +2961,17 @@ index 10a5655..299d79d 100644
 +        var stallUntil = Long.MaxValue
 +        fork {
 +          var cycles = 0L
++          var rspValid = false  // sim writes only show up next cycle, so track it here
 +          while (true) {
 +            dut.clockDomain.waitSampling()
 +            cycles += 1
-+            if (dut.io.readRsp.valid.toBoolean && dut.io.readRsp.ready.toBoolean) {
-+              dut.io.readRsp.valid #= false
-+            }
++            if (rspValid && dut.io.readRsp.ready.toBoolean) rspValid = false
 +            val stalled = cycles >= stallFrom && cycles < stallUntil
-+            if (!dut.io.readRsp.valid.toBoolean && pending.nonEmpty && !stalled) {
++            if (!rspValid && pending.nonEmpty && !stalled) {
 +              dut.io.readRsp.payload.data #= pending.dequeue()
-+              dut.io.readRsp.valid #= true
++              rspValid = true
 +            }
++            dut.io.readRsp.valid #= rspValid
 +            if (dut.io.readReq.valid.toBoolean && dut.io.readReq.ready.toBoolean) {
 +              pending.enqueue(pixelFor(dut.io.readReq.payload.address.toLong))
 +            }
@@ -3008,6 +3020,134 @@ index 10a5655..299d79d 100644
 +            yield f.get((xx, yy)) == Some((xx + 1, yy + 1))).forall(identity)
 +        assert(exact(frames(1)), "frame before the stall should be exact")
 +        assert(dut.io.underflow.toBoolean, "the stall should have caused an underflow")
++        val after = frames.drop(6)
++        assert(after.forall(exact), s"frames after recovery are not aligned: ${after.map(exact)}")
++      }
++  }
++
++  test("CDC scanout recovers when the display is toggled with reads in flight") {
++    val c = Config.voodoo1()
++    val timing = VideoTiming(
++      activeWidth = 8,
++      activeHeight = 4,
++      hFrontPorch = 1,
++      hSync = 1,
++      hBackPorch = 2,
++      vFrontPorch = 1,
++      vSync = 1,
++      vBackPorch = 1
++    )
++    val frameCycles = timing.hTotal * timing.vTotal
++
++    SimConfig.withIVerilog
++      .compile(
++        HdmiCdcFramebufferScanout(
++          c,
++          timing,
++          fifoDepth = 64,
++          prefillLevel = 8,
++          refillLowLevel = 8,
++          refillHighLevel = 48
++        )
++      )
++      .doSim { dut =>
++        dut.io.hdmiClock #= false
++        dut.io.hdmiReset #= true
++        dut.clockDomain.forkStimulus(10)
++        fork {
++          while (true) {
++            dut.io.hdmiClock #= false
++            sleep(5)
++            dut.io.hdmiClock #= true
++            sleep(5)
++          }
++        }
++
++        dut.io.regs.frontBase #= 0x1000
++        dut.io.regs.backBase #= 0
++        dut.io.regs.pixelStride #= 64
++        dut.io.regs.displayWidth #= timing.activeWidth
++        dut.io.regs.displayHeight #= timing.activeHeight
++        dut.io.regs.framebufferEnable #= true
++        dut.io.regs.testPatternEnable #= false
++        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.prefetchReq.ready #= true
++        dut.io.readReq.ready #= true
++        dut.io.readRsp.valid #= false
++        dut.io.readRsp.payload.data #= 0
++
++        // Red = x + 1, green = y + 1: each pixel names its own position.
++        def pixelFor(address: Long): Int = {
++          val p = ((address - 0x1000L) / 2).toInt
++          ((p % 64 + 1) << 11) | ((p / 64 + 1) << 5)
++        }
++        val pending = mutable.Queue[Int]()
++        var stallFrom = Long.MaxValue
++        var stallUntil = Long.MaxValue
++        fork {
++          var cycles = 0L
++          var rspValid = false  // sim writes only show up next cycle, so track it here
++          while (true) {
++            dut.clockDomain.waitSampling()
++            cycles += 1
++            if (rspValid && dut.io.readRsp.ready.toBoolean) rspValid = false
++            val stalled = cycles >= stallFrom && cycles < stallUntil
++            if (!rspValid && pending.nonEmpty && !stalled) {
++              dut.io.readRsp.payload.data #= pending.dequeue()
++              rspValid = true
++            }
++            dut.io.readRsp.valid #= rspValid
++            if (dut.io.readReq.valid.toBoolean && dut.io.readReq.ready.toBoolean) {
++              pending.enqueue(pixelFor(dut.io.readReq.payload.address.toLong))
++            }
++          }
++        }
++
++        dut.clockDomain.waitSampling(4)
++        dut.io.hdmiReset #= false
++
++        // Collect whole HDMI frames as (x, y) -> (r, g) grids.
++        val frames = mutable.ArrayBuffer[Map[(Int, Int), (Int, Int)]]()
++        var cur = mutable.Map[(Int, Int), (Int, Int)]()
++        var previousDe = false
++        var inactiveCycles = 0
++        var x = 0
++        var y = -1
++        var cycle = 0L
++        while (frames.size < 10) {
++          dut.clockDomain.waitSampling()
++          sleep(1)
++          cycle += 1
++          // In the third frame, hold the responses back and turn the display
++          // off and on again (as Glide's init does), so reads issued before
++          // the toggle come back after it.
++          if (frames.size == 2 && stallFrom == Long.MaxValue && y == 1) {
++            stallFrom = cycle
++            stallUntil = cycle + 12
++            dut.io.regs.framebufferEnable #= false
++          }
++          if (cycle == stallFrom + 3) dut.io.regs.framebufferEnable #= true
++          val de = dut.io.video.de.toBoolean
++          if (de && !previousDe) {
++            if (inactiveCycles > timing.hTotal) {
++              if (y >= 0) frames += cur.toMap
++              cur = mutable.Map()
++              y = 0
++            } else y += 1
++            x = 0
++            inactiveCycles = 0
++          } else if (!de) inactiveCycles += 1
++          if (de) {
++            cur((x, y)) = (dut.io.video.rgb.r.toInt >> 3, dut.io.video.rgb.g.toInt >> 2)
++            x += 1
++          }
++          previousDe = de
++        }
++
++        def exact(f: Map[(Int, Int), (Int, Int)]) =
++          (for (yy <- 0 until timing.activeHeight; xx <- 0 until timing.activeWidth)
++            yield f.get((xx, yy)) == Some((xx + 1, yy + 1))).forall(identity)
++        assert(exact(frames(1)), "frame before the toggle should be exact")
 +        val after = frames.drop(6)
 +        assert(after.forall(exact), s"frames after recovery are not aligned: ${after.map(exact)}")
 +      }
