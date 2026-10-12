@@ -134,19 +134,32 @@ case class TangMega138kPro(c: Config) extends Component {
     // 0x68 / extra 0: vcc [15:0] | temp [31:16]; 0x6C / extra 1: vccMin |
     // tempMax since configuration; 0x70 / extra 2: samples. VCC [V] =
     // vcc / 1024, temperature [degC] = temp / 4 (see AdcMonitor).
-    val adc = AdcMonitor()
-    val adcNow = adc.io.temp.asBits ## adc.io.vcc.asBits
-    val adcExtremes = adc.io.tempMax.asBits ## adc.io.vccMin.asBits
+    // The monitor runs in the core clock domain (the PCIe domain is tight
+    // around the hard block); its slowly changing outputs cross over here.
+    val adcNowIn, adcExtremesIn, adcSamplesIn = Bits(32 bits)
+    val adcNow = BufferCC(adcNowIn, init = B(0, 32 bits))
+    val adcExtremes = BufferCC(adcExtremesIn, init = B(0, 32 bits))
+    val adcSamples = BufferCC(adcSamplesIn, init = B(0, 32 bits))
     dma.io.extraStatus(0) := adcNow
     dma.io.extraStatus(1) := adcExtremes
-    dma.io.extraStatus(2) := adc.io.samples.asBits
+    dma.io.extraStatus(2) := adcSamples
     bar.io.localRdata := dma.io.regRdata
     when(bar.io.localAddr === 0x60) { bar.io.localRdata := axiDebug }
     when(bar.io.localAddr === 0x64) { bar.io.localRdata := ddrThrottle }
     when(bar.io.localAddr === 0x68) { bar.io.localRdata := adcNow }
     when(bar.io.localAddr === 0x6c) { bar.io.localRdata := adcExtremes }
-    when(bar.io.localAddr === 0x70) { bar.io.localRdata := adc.io.samples.asBits }
+    when(bar.io.localAddr === 0x70) { bar.io.localRdata := adcSamples }
   }
+
+  val adcMon = new ClockingArea(coreCd) {
+    val adc = AdcMonitor()
+    val now = RegNext(adc.io.temp.asBits ## adc.io.vcc.asBits)
+    val extremes = RegNext(adc.io.tempMax.asBits ## adc.io.vccMin.asBits)
+    val samples = RegNext(adc.io.samples.asBits)
+  }
+  pcie.adcNowIn := adcMon.now
+  pcie.adcExtremesIn := adcMon.extremes
+  pcie.adcSamplesIn := adcMon.samples
 
   // HDMI scanout -> RGB565 words -> TLP clock (see FrameDma).
   val hdmiCd = ClockDomain(
