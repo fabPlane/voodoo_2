@@ -15,10 +15,10 @@ index c71ac23..44c086a 100644
       * scanout path and does not need the legacy SST video read-modify-write
       * sequence here; that sequence can touch unsupported/reset-sensitive
 diff --git a/emu/glide/swlibs/newpci/pcilib/fxsim.c b/emu/glide/swlibs/newpci/pcilib/fxsim.c
-index d36865c..8107fe2 100644
+index d36865c..e261ebf 100644
 --- a/emu/glide/swlibs/newpci/pcilib/fxsim.c
 +++ b/emu/glide/swlibs/newpci/pcilib/fxsim.c
-@@ -298,6 +298,9 @@ static int simGetDebugLevel(void) {
+@@ -298,8 +298,82 @@ static int simGetDebugLevel(void) {
  #define TEX_NUM_PAGES    (TEX_MEM_SIZE / TEX_PAGE_SIZE) /* 2048 */
  
  static unsigned char texDirtyPages[TEX_NUM_PAGES];
@@ -27,8 +27,81 @@ index d36865c..8107fe2 100644
 +static FxU32 texDirtyWords[TEX_MEM_SIZE / 4 / 32];
  static int texHasDirty = 0;
  
++/* Texture upload dedupe. The card writes each aperture word to packed
++ * texture memory at an address that depends on textureMode / tLOD /
++ * texBaseAddr* (TextureMem.fromPciDrain + TexLayoutTables in the RTL). That
++ * translation is mirrored here, with a copy of what the card's texture
++ * memory holds, so a word the card already has is not sent again: the Mesa
++ * fx driver re-downloads evicted textures every frame when they do not all
++ * fit. VOODOO_TEX_NODEDUPE=1 sends everything. */
++static FxU32 texRegMode, texRegLod, texRegBase[4]; /* base, base1, base2, base3_8 */
++#define TEX_SHADOW_BYTES (1u << 22) /* the RTL masks packed addresses to 22 bits */
++static FxU32 *texShadow;            /* card texture memory, by word */
++static FxU32 *texShadowValid;       /* one bit per word */
++static int texDedupe = -1;
++static unsigned long texSentWords, texSkippedWords;
++
++static FxU32 texLodSize(int lod, int aspect, int is16) {
++    int wide = 8 - lod > 0 ? 8 - lod : 0;
++    int narrow = 8 - aspect - lod > 0 ? 8 - aspect - lod : 0;
++    return 1u << (wide + narrow + is16);
++}
++
++/* Packed byte address of the 4 bytes an aperture word lands on, or -1 when
++ * the card drops the write. */
++static long texPackedAddr(FxU32 pciAddr) {
++    FxU32 lod = (pciAddr >> 17) & 0xf, t = (pciAddr >> 9) & 0xff, s, lodBase, shift;
++    int tformat = (texRegMode >> 8) & 0xf, is16 = tformat >= 8, seq8 = (texRegMode >> 31) & 1;
++    int aspect = (texRegLod >> 21) & 3, sIsWider = (texRegLod >> 20) & 1;
++    int multibase = (texRegLod >> 24) & 1, k;
++    if ((pciAddr & 0x600000) || lod > 8) return -1;
++    if (is16) s = (pciAddr >> 1) & 0xfe;
++    else if (seq8) s = pciAddr & 0xfc;
++    else s = (pciAddr >> 1) & 0xfc;
++    {
++        int wide = 8 - (int)lod > 0 ? 8 - (int)lod : 0;
++        int narrow = 8 - aspect - (int)lod > 0 ? 8 - aspect - (int)lod : 0;
++        shift = sIsWider ? wide : narrow;
++    }
++    if (multibase && lod == 1) lodBase = (texRegBase[1] & 0x7ffff) << 3;
++    else if (multibase && lod == 2) lodBase = (texRegBase[2] & 0x7ffff) << 3;
++    else if (multibase && lod >= 3) {
++        lodBase = (texRegBase[3] & 0x7ffff) << 3;
++        for (k = 3; k < (int)lod; k++) lodBase += texLodSize(k, aspect, is16);
++    } else {
++        lodBase = (texRegBase[0] & 0x7ffff) << 3;
++        for (k = 0; k < (int)lod; k++) lodBase += texLodSize(k, aspect, is16);
++    }
++    if (is16) return (lodBase + (s << 1) + (t << (shift + 1))) & (TEX_SHADOW_BYTES - 1);
++    return (lodBase + s + (t << shift)) & (TEX_SHADOW_BYTES - 1);
++}
++
++/* 1 = send the word (and remember it), 0 = the card already holds it. */
++static int texNeedsSend(FxU32 pciAddr, FxU32 data) {
++    long a;
++    FxU32 w;
++    if (texDedupe < 0) {
++        texDedupe = getenv("VOODOO_TEX_NODEDUPE") == NULL;
++        if (texDedupe) {
++            texShadow = calloc(TEX_SHADOW_BYTES / 4, sizeof(FxU32));
++            texShadowValid = calloc(TEX_SHADOW_BYTES / 4 / 32, sizeof(FxU32));
++            if (!texShadow || !texShadowValid) texDedupe = 0;
++        }
++    }
++    if (!texDedupe) return 1;
++    a = texPackedAddr(pciAddr);
++    if (a < 0) return 1; /* dropped by the card anyway; keep its behaviour */
++    w = (FxU32)a >> 2;
++    if ((texShadowValid[w >> 5] >> (w & 31) & 1) && texShadow[w] == data) return 0;
++    texShadow[w] = data;
++    texShadowValid[w >> 5] |= 1u << (w & 31);
++    return 1;
++}
++
  static void simFlushTexture(void) {
-@@ -326,8 +329,10 @@ static void simFlushTexture(void) {
+     if (!texHasDirty || !simInitialized) return;
+ 
+@@ -326,16 +400,23 @@ static void simFlushTexture(void) {
          FxU32 words = length / 4;
          FxU32 j;
          for (j = 0; j < words; j++) {
@@ -37,11 +110,26 @@ index d36865c..8107fe2 100644
 +            FxU32 w = (offset >> 2) + j;
 +            if (!(texDirtyWords[w >> 5] & (1u << (w & 31)))) continue;
 +            texDirtyWords[w >> 5] &= ~(1u << (w & 31));
++            if (!texNeedsSend(offset + j * 4, data[j])) {
++                texSkippedWords++;
++                continue;
++            }
++            texSentWords++;
 +            sim_write(0x800000 | (offset + j * 4), data[j]);
          }
  
          totalBytes += length;
-@@ -367,9 +372,10 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+         numRuns++;
+     }
+ 
+-    fprintf(stderr, "[fxsim] FLUSH TEX %d runs, %d bytes total\n",
+-            numRuns, totalBytes);
++    fprintf(stderr, "[fxsim] FLUSH TEX %d runs, %d bytes total; words sent %lu skipped %lu so far\n",
++            numRuns, totalBytes, texSentWords, texSkippedWords);
+ 
+     texHasDirty = 0;
+ }
+@@ -367,10 +448,14 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              simFlushTexture();
          }
  
@@ -51,11 +139,15 @@ index d36865c..8107fe2 100644
 +        /* Flush pending raw texture aperture writes before textureMode, tLOD or
 +         * texBaseAddr change: Core decodes each texture write with the layout
 +         * those registers select, so the data must land before they move. */
-+        if (regOff == 0x300 || regOff == 0x304 || regOff == 0x30C) {
++        if (regOff == 0x300 || regOff == 0x304 || (regOff >= 0x30C && regOff <= 0x318)) {
              simFlushTexture();
++            if (regOff == 0x300) texRegMode = value;
++            else if (regOff == 0x304) texRegLod = value;
++            else texRegBase[(regOff - 0x30C) >> 2] = value;
          }
  
-@@ -404,17 +410,15 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+         /* Wait for pipeline drain before swapbuffer */
+@@ -404,17 +489,15 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              fprintf(stderr, "[fxsim] TEX WRITE stats at #%d: %d non-zero, range 0x%06x-0x%06x\n",
                      texWriteCount, texNonZeroCount, texMinOffset, texMaxOffset);
          }
@@ -82,6 +174,14 @@ index d36865c..8107fe2 100644
      }
  }
  
+@@ -474,6 +557,7 @@ void simWriteTex(FxU32 offset, const void *data, FxU32 length) {
+     FxU32 numWords = length / 4;
+     FxU32 i;
+     for (i = 0; i < numWords; i++) {
++        (void)texNeedsSend(offset + i * 4, words[i]); /* keep the dedupe copy current */
+         sim_write(0x800000 + offset + i * 4, words[i]);
+     }
+ }
 diff --git a/emu/sim/harness/sim_harness.cpp b/emu/sim/harness/sim_harness.cpp
 index eda5bba..e888df0 100644
 --- a/emu/sim/harness/sim_harness.cpp
@@ -249,7 +349,7 @@ index d163ab7..4a8a8ed 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..ce8f552 100644
+index 1b34fa2..d55f005 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -262,6 +362,16 @@ index 1b34fa2..ce8f552 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
+@@ -31,6 +34,9 @@ case class Config(
+     texFillWayCount: Int = 2,
+     texFillXorIndex: Boolean = false,
+     texFillRequestWindow: Int = 16,
++    // Lines of the small direct-mapped texture cache used when
++    // useTexFillCache is off (TmuSmallTextureCache); 0 = no cache.
++    texSmallCacheLines: Int = 0,
+     packedTexLayout: Boolean = true,
+     trace: TraceConfig = TraceConfig()
+ )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
 index 100f1c6..d815142 100644
 --- a/src/voodoo/Core.scala
@@ -369,6 +479,21 @@ index 9effb48..2e25087 100644
      lowerFirstPriority = true
    )
  
+diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
+index 6051025..8664556 100644
+--- a/src/voodoo/CoreSimGen.scala
++++ b/src/voodoo/CoreSimGen.scala
+@@ -37,7 +37,9 @@ object CoreSimGen extends App {
+         argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
+       texFillXorIndex = args.contains("--tex-fill-xor-index"),
+       texFillRequestWindow =
+-        argIntValue("--tex-fill-request-window").getOrElse(Config.voodoo1().texFillRequestWindow)
++        argIntValue("--tex-fill-request-window").getOrElse(Config.voodoo1().texFillRequestWindow),
++      texSmallCacheLines =
++        argIntValue("--tex-small-cache-lines").getOrElse(Config.voodoo1().texSmallCacheLines)
+     )
+ 
+   val memTiming = SimMemoryTiming(
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
 index 226d60e..b09f29d 100644
 --- a/src/voodoo/bus/PciFifo.scala
@@ -2278,7 +2403,7 @@ index fbf774f..6f372f1 100644
  
      tables
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..47dee9a 100644
+index 8b06179..80a314e 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -89,11 +89,39 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -2544,7 +2669,18 @@ index 8b06179..47dee9a 100644
        req
      }
      .m2sPipe()
-@@ -621,7 +683,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -594,7 +656,9 @@ case class Tmu(c: voodoo.Config) extends Component {
+   )
+ 
+   val texturePath: TmuTexturePathBase =
+-    if (c.useTexFillCache) TmuTextureCache(c) else TmuNoTextureCache(c)
++    if (c.useTexFillCache) TmuTextureCache(c)
++    else if (c.texSmallCacheLines > 0) TmuSmallTextureCache(c)
++    else TmuNoTextureCache(c)
+   sampleRequest >/-> texturePath.io.sampleRequest
+   texturePath.io.invalidate := io.invalidate
+   io.texRead <> texturePath.io.texRead
+@@ -621,7 +685,7 @@ case class Tmu(c: voodoo.Config) extends Component {
    }.elsewhen(!(sampleRequest.fire || bypassOutput.fire) && io.output.fire) {
      inFlightCount := inFlightCount - 1
    }
@@ -2553,7 +2689,7 @@ index 8b06179..47dee9a 100644
  
    /** BMB parameters for texture memory access */
    def bmbParams(c: voodoo.Config) = BmbParameter(
-@@ -694,12 +756,82 @@ object Tmu {
+@@ -694,12 +758,82 @@ object Tmu {
      bankMsb := byteOffsLow(shift)
      bankLsb := byteOffsLow(0)
      when(is16Bit) {
@@ -2637,7 +2773,7 @@ index 8b06179..47dee9a 100644
    def packedStartupDecode4(
        lineBase: UInt,
        is16Bit: Bool,
-@@ -866,6 +998,12 @@ object Tmu {
+@@ -866,6 +1000,12 @@ object Tmu {
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
@@ -2650,7 +2786,7 @@ index 8b06179..47dee9a 100644
    case class FrontRecipPrep(c: voodoo.Config) extends Bundle {
      val s = AFix(c.texCoordsAccumFormat)
      val t = AFix(c.texCoordsAccumFormat)
-@@ -885,6 +1023,12 @@ object Tmu {
+@@ -885,6 +1025,12 @@ object Tmu {
      val meta = FrontMeta(c)
    }
  
@@ -2663,7 +2799,7 @@ index 8b06179..47dee9a 100644
    case class FrontA(c: voodoo.Config) extends Bundle {
      val texS = SInt(18 bits)
      val texT = SInt(18 bits)
-@@ -979,6 +1123,12 @@ object Tmu {
+@@ -979,6 +1125,12 @@ object Tmu {
      val passthrough = TmuPassthrough(c)
    }
  
@@ -2677,7 +2813,7 @@ index 8b06179..47dee9a 100644
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..b7b7cc0 100644
+index 465ea78..5026ffc 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -762,7 +762,10 @@ case class TmuTextureCache(
@@ -2722,6 +2858,204 @@ index 465ea78..b7b7cc0 100644
    hitRsp.bilinear := compareStage.sample.bilinear
    hitRsp.passthrough := compareStage.sample.passthrough
    for (i <- 0 until tapCount) {
+@@ -994,3 +1005,197 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+     }
+   }
+ }
++
++/** Small direct-mapped texture cache for boards where TmuTextureCache does not
++  * fit (Tang Mega 138K): `c.texSmallCacheLines` lines of 32 bytes in block
++  * RAM, one per 256-bit DDR3 transfer. Taps are expanded into word reads as in
++  * TmuNoTextureCache; a hit returns one word per cycle, a miss stalls and
++  * fetches the whole line in one burst (bilinear neighbours and the next
++  * pixels of a span then hit). `invalidate` (a texture download) clears every
++  * line; a fill it overlaps is not marked valid.
++  */
++case class TmuSmallTextureCache(override val c: voodoo.Config) extends TmuTexturePathBase(c) {
++  require(!c.useTexFillCache && c.texSmallCacheLines >= 2 && isPow2(c.texSmallCacheLines))
++
++  val lines = c.texSmallCacheLines
++  val wordsPerLine = 8
++  val offBits = 5
++  val idxBits = log2Up(lines)
++  val aw = c.addressWidth.value
++  val tagBits = aw - idxBits - offBits
++
++  def lineIdx(a: UInt): UInt = a(offBits + idxBits - 1 downto offBits)
++  def lineTag(a: UInt): UInt = a(aw - 1 downto offBits + idxBits)
++  def wordOff(a: UInt): UInt = a(offBits - 1 downto 2)
++
++  val reqStream = io.sampleRequest.queue(c.texFillRequestWindow)
++
++  // Same tap -> word expansion as TmuNoTextureCache.
++  def pendingFirst(mask: Bits): UInt = new Composite(mask) {
++    val idx = UInt(2 bits)
++    idx := 0
++    when(mask(0)) { idx := 0 } elsewhen (mask(1)) { idx := 1 } elsewhen (mask(2)) { idx := 2 } elsewhen (mask(3)) {
++      idx := 3
++    }
++  }.idx
++
++  val expanded = new Area {
++    val stream = Stream(TmuTextureCacheDirectWordReq(c))
++    val running = RegInit(False)
++    val hold = Reg(Tmu.SampleRequest(c))
++    val pending = Reg(Bits(4 bits)) init 0
++
++    val req = running ? hold | reqStream.payload
++    val initPending = Mux(reqStream.payload.bilinear, B"1111", B"0001")
++    val activePending = running ? pending | initPending
++
++    val tapAddrs = Vec(req.pointAddr, req.biAddr1, req.biAddr2, req.biAddr3)
++    when(req.bilinear) { tapAddrs(0) := req.biAddr0 }
++    val tapWordAddrs = Vec.fill(4)(UInt(aw bits))
++    for (i <- 0 until 4) {
++      tapWordAddrs(i) := ((tapAddrs(i) >> 2) << 2).resize(aw bits)
++      stream.payload.tapHalf(i) := tapAddrs(i)(1)
++      stream.payload.tapByte(i) := tapAddrs(i)(0)
++    }
++
++    val currentWord = tapWordAddrs(pendingFirst(activePending))
++    val currentMask = Bits(4 bits)
++    val nextPending = Bits(4 bits)
++    for (i <- 0 until 4) {
++      currentMask(i) := activePending(i) && tapWordAddrs(i) === currentWord
++      nextPending(i) := activePending(i) && !(tapWordAddrs(i) === currentWord)
++    }
++
++    stream.valid := running || reqStream.valid
++    stream.payload.address := currentWord
++    stream.payload.is16Bit := req.is16Bit
++    stream.payload.firstWord := !running
++    stream.payload.lastWord := nextPending === 0
++    stream.payload.bilinear := req.bilinear
++    stream.payload.tapMask := currentMask
++    stream.payload.passthrough := req.passthrough
++
++    reqStream.ready := !running && stream.ready
++
++    when(stream.fire) {
++      when(!running && !stream.payload.lastWord) {
++        hold := reqStream.payload
++        pending := nextPending
++        running := True
++      } elsewhen (running && !stream.payload.lastWord) {
++        pending := nextPending
++      } elsewhen (running) {
++        running := False
++        pending := 0
++      }
++    }
++  }
++
++  val tagMem = Mem(UInt(tagBits bits), lines)
++  val dataMem = Mem(Bits(32 bits), lines * wordsPerLine)
++  val lineValid = Reg(Bits(lines bits)) init 0
++
++  // Lookup stage: tag and data are read as a word request enters s1.
++  val s1Valid = RegInit(False)
++  val s1 = Reg(TmuTextureCacheDirectWordReq(c))
++  val s1Done = Bool()
++  val advance = !s1Valid || s1Done
++  expanded.stream.ready := advance
++  when(advance) {
++    s1Valid := expanded.stream.valid
++    s1 := expanded.stream.payload
++  }
++  val inAddr = expanded.stream.payload.address
++  val tagRd = tagMem.readSync(lineIdx(inAddr), enable = advance)
++  val dataRd = dataMem.readSync((lineIdx(inAddr) ## wordOff(inAddr)).asUInt, enable = advance)
++
++  object FillState extends SpinalEnum {
++    val idle, cmd, beats, done = newElement()
++  }
++  val fill = new Area {
++    val state = RegInit(FillState.idle)
++    val beat = Reg(UInt(3 bits)) init 0
++    val word = Reg(Bits(32 bits)) init 0
++    val poisoned = RegInit(False)
++  }
++
++  val hit = lineValid(lineIdx(s1.address)) && tagRd === lineTag(s1.address)
++  val lookupHit = s1Valid && fill.state === FillState.idle && hit
++
++  case class WordOut() extends Bundle {
++    val data = Bits(32 bits)
++    val meta = TmuTextureCacheDirectWordReq(c)
++  }
++  val out = Stream(WordOut())
++  out.valid := lookupHit || (s1Valid && fill.state === FillState.done)
++  out.payload.data := Mux(fill.state === FillState.done, fill.word, dataRd)
++  out.payload.meta := s1
++  s1Done := out.fire
++
++  io.texRead.cmd.valid := fill.state === FillState.cmd
++  io.texRead.cmd.fragment.address := (s1.address >> offBits << offBits).resized
++  io.texRead.cmd.fragment.opcode := Bmb.Cmd.Opcode.READ
++  io.texRead.cmd.fragment.length := lineBytes - 1
++  io.texRead.cmd.fragment.source := 0
++  io.texRead.cmd.last := True
++  io.texRead.rsp.ready := fill.state === FillState.beats
++  def lineBytes = wordsPerLine * 4
++
++  switch(fill.state) {
++    is(FillState.idle) {
++      when(s1Valid && !hit) {
++        fill.poisoned := False
++        fill.state := FillState.cmd
++      }
++    }
++    is(FillState.cmd) {
++      fill.beat := 0
++      when(io.texRead.cmd.ready) { fill.state := FillState.beats }
++    }
++    is(FillState.beats) {
++      when(io.texRead.rsp.valid) {
++        dataMem.write((lineIdx(s1.address) ## fill.beat).asUInt, io.texRead.rsp.fragment.data)
++        when(fill.beat === wordOff(s1.address)) { fill.word := io.texRead.rsp.fragment.data }
++        fill.beat := fill.beat + 1
++        when(io.texRead.rsp.last) {
++          tagMem.write(lineIdx(s1.address), lineTag(s1.address))
++          when(!fill.poisoned && !io.invalidate) { lineValid(lineIdx(s1.address)) := True }
++          // The answer goes out next cycle, so the next lookup reads the
++          // filled line rather than racing its last write.
++          fill.state := FillState.done
++        }
++      }
++    }
++    is(FillState.done) {
++      when(out.fire) { fill.state := FillState.idle }
++    }
++  }
++  when(io.invalidate) {
++    lineValid := 0
++    when(fill.state =/= FillState.idle) { fill.poisoned := True }
++  }
++
++  // Assemble the taps of one sample, as TmuNoTextureCache does.
++  val assembled = Reg(Tmu.SampleFetch(c))
++  val outValid = RegInit(False)
++  out.ready := !outValid
++  when(out.fire) {
++    val meta = out.payload.meta
++    when(meta.firstWord) {
++      assembled.bilinear := meta.bilinear
++      assembled.passthrough := meta.passthrough
++      for (i <- 0 until 4) assembled.texels(i) := 0
++    }
++    for (i <- 0 until 4) {
++      when(meta.tapMask(i)) {
++        assembled.texels(i) := texel16(out.payload.data, meta.tapHalf(i), meta.tapByte(i), meta.is16Bit)
++      }
++    }
++    when(meta.lastWord) { outValid := True }
++  }
++  io.sampleFetch.valid := outValid
++  io.sampleFetch.payload := assembled
++  when(io.sampleFetch.fire) { outValid := False }
++  io.busy := reqStream.valid || expanded.running || s1Valid || outValid
++}
++
 diff --git a/test/FramebufferPlaneReaderTest.scala b/test/FramebufferPlaneReaderTest.scala
 index 0295f4c..f468360 100644
 --- a/test/FramebufferPlaneReaderTest.scala
@@ -3295,5 +3629,156 @@ index 0000000..22d0579
 +
 +  test("texture writes drain without a preceding triangle") {
 +    run(withTriangle = false)
++  }
++}
+diff --git a/test/TmuSmallTextureCacheTest.scala b/test/TmuSmallTextureCacheTest.scala
+new file mode 100644
+index 0000000..0065696
+--- /dev/null
++++ b/test/TmuSmallTextureCacheTest.scala
+@@ -0,0 +1,145 @@
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import voodoo.texture.TmuSmallTextureCache
++
++import scala.collection.mutable
++
++/** TmuSmallTextureCache against a word-addressed memory model: every tap of
++  * every sample must match memory as it was when the sample was requested,
++  * across line conflicts (a 16-line cache over 8 KiB), downloads that change
++  * memory and invalidate, and invalidates that land while a line is filling.
++  */
++class TmuSmallTextureCacheTest extends AnyFunSuite {
++  private val config = Config.voodoo1().copy(useTexFillCache = false, texSmallCacheLines = 16)
++
++  test("small texture cache returns current memory for random point and bilinear samples") {
++    SimConfig.withIVerilog.compile(TmuSmallTextureCache(config)).doSim(seed = 3) { dut =>
++      dut.clockDomain.forkStimulus(10)
++      val rnd = new scala.util.Random(5)
++      val mem = mutable.HashMap[Long, Long]() // word address -> data
++      var memGen = 0
++      def wordAt(a: Long): Long = mem.getOrElse(a, ((a * 2654435761L) ^ (memGen * 0x9e3779b9L)) & 0xffffffffL)
++
++      for (bt <- dut.io.sampleRequest.payload.flatten) bt match {
++        case b: Bool => b #= false
++        case b: BitVector => b #= 0
++        case _ =>
++      }
++      dut.io.sampleRequest.valid #= false
++      dut.io.sampleFetch.ready #= true
++      dut.io.invalidate #= false
++      dut.io.texRead.cmd.ready #= false
++      dut.io.texRead.rsp.valid #= false
++
++      // BMB memory: one command at a time, a few cycles of latency, 32-bit beats.
++      var fills = 0
++      fork {
++        while (true) {
++          dut.io.texRead.cmd.ready #= rnd.nextInt(3) != 0
++          dut.clockDomain.waitSampling()
++          if (dut.io.texRead.cmd.valid.toBoolean && dut.io.texRead.cmd.ready.toBoolean) {
++            val a = dut.io.texRead.cmd.fragment.address.toLong
++            val beats = (dut.io.texRead.cmd.fragment.length.toInt + 1) / 4
++            assert(a % 32 == 0 && beats == 8, s"fill of $beats beats at 0x${a.toHexString}")
++            fills += 1
++            dut.io.texRead.cmd.ready #= false
++            dut.clockDomain.waitSampling(3 + rnd.nextInt(10))
++            val data = (0 until beats).map(i => wordAt(a / 4 + i))
++            for (i <- 0 until beats) {
++              dut.io.texRead.rsp.valid #= true
++              dut.io.texRead.rsp.fragment.data #= data(i)
++              dut.io.texRead.rsp.last #= i == beats - 1
++              dut.clockDomain.waitSamplingWhere(dut.io.texRead.rsp.ready.toBoolean)
++            }
++            dut.io.texRead.rsp.valid #= false
++          }
++        }
++      }
++
++      def texel(addr: Long, is16: Boolean): Int = {
++        val w = wordAt(addr / 4)
++        val half = if ((addr & 2) != 0) (w >> 16) & 0xffff else w & 0xffff
++        if (is16) half.toInt
++        else {
++          val b = (if ((addr & 1) != 0) half >> 8 else half) & 0xff
++          (b << 8 | b).toInt
++        }
++      }
++
++      case class Sample(bilinear: Boolean, is16: Boolean, taps: Seq[Long]) {
++        // Memory is only changed while nothing is in flight, so the expected
++        // texels can be computed at request time.
++        val expect: Seq[Int] = if (bilinear) taps.map(texel(_, is16)) else Seq(texel(taps.head, is16), 0, 0, 0)
++      }
++      val expected = mutable.Queue[Sample]()
++      var checked = 0
++      fork {
++        while (true) {
++          dut.clockDomain.waitSampling()
++          if (dut.io.sampleFetch.valid.toBoolean && dut.io.sampleFetch.ready.toBoolean) {
++            assert(expected.nonEmpty, "sample without a request")
++            val e = expected.dequeue()
++            val got = dut.io.sampleFetch.payload.texels.map(_.toInt)
++            assert(dut.io.sampleFetch.payload.bilinear.toBoolean == e.bilinear)
++            assert(got == e.expect, s"sample $checked taps ${e.taps.map(_.toHexString)}: got ${got.map(_.toHexString)} exp ${e.expect.map(_.toHexString)}")
++            checked += 1
++          }
++          dut.io.sampleFetch.ready #= rnd.nextInt(4) != 0
++        }
++      }
++
++      var sent = 0
++      for (batch <- 0 until 12) {
++        // A download between batches: new memory contents and an invalidate.
++        if (batch % 3 == 2) {
++          memGen += 1
++          for (k <- 0 until 64) mem(rnd.nextInt(2048).toLong) = rnd.nextLong() & 0xffffffffL
++          dut.io.invalidate #= true
++          dut.clockDomain.waitSampling()
++          dut.io.invalidate #= false
++        }
++        // Odd batches walk along a span like the rasterizer; even ones jump.
++        val span = batch % 2 == 1
++        val fillsBefore = fills
++        var spanAddr = rnd.nextInt(4096).toLong & ~1L
++        for (_ <- 0 until 150) {
++          val bilinear = rnd.nextBoolean()
++          val is16 = if (span) true else rnd.nextBoolean()
++          val step = if (is16) 2 else 1
++          val base = if (span) { spanAddr += step; spanAddr } else rnd.nextInt(8192 - 600).toLong & ~1L
++          val row = if (span) 128L else if (rnd.nextBoolean()) 256L else 512L
++          val taps = Seq(base, base + step, base + row, base + row + step)
++          val s = Sample(bilinear, is16, taps)
++          dut.io.sampleRequest.payload.bilinear #= bilinear
++          dut.io.sampleRequest.payload.is16Bit #= is16
++          dut.io.sampleRequest.payload.pointAddr #= taps.head
++          dut.io.sampleRequest.payload.biAddr0 #= taps(0)
++          dut.io.sampleRequest.payload.biAddr1 #= taps(1)
++          dut.io.sampleRequest.payload.biAddr2 #= taps(2)
++          dut.io.sampleRequest.payload.biAddr3 #= taps(3)
++          dut.io.sampleRequest.valid #= true
++          expected.enqueue(s)
++          dut.clockDomain.waitSamplingWhere(dut.io.sampleRequest.ready.toBoolean)
++          dut.io.sampleRequest.valid #= false
++          sent += 1
++          // Invalidate with unchanged memory while lines are filling.
++          if (rnd.nextInt(40) == 0) {
++            dut.io.invalidate #= true
++            dut.clockDomain.waitSampling()
++            dut.io.invalidate #= false
++          }
++        }
++        dut.clockDomain.waitSamplingWhere(checked == sent && !dut.io.busy.toBoolean)
++        if (span) {
++          val spanFills = fills - fillsBefore
++          assert(spanFills < 40, s"span batch $batch took $spanFills line fills for 150 samples")
++        }
++      }
++      assert(checked == sent)
++      println(s"[small tex cache] $sent samples, $fills line fills")
++    }
 +  }
 +}

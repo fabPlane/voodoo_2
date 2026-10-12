@@ -17,6 +17,9 @@
  *                                 keeps the log if only the process dies)
  *   VOODOO_PCI_DRYRUN=1           don't touch the board; reads return idle
  *   VOODOO_PCI_NOFLOW=1           disable the flow control below
+ *   VOODOO_PCI_PROFILE=1          one line per swap: where the frame's time
+ *                                 went (FIFO-full stalls, idle waits, reads,
+ *                                 host) plus write counts and pixel counters
  *
  * Flow control: a PCIe read must complete within the root port's completion
  * timeout (50 us - 50 ms, not configurable on the AMD root port), and PCIe
@@ -53,6 +56,16 @@ bool g_flow = true;
 uint32_t g_budget = 0;  // writes the PCI FIFO can take without stalling
 uint64_t g_budgetPolls = 0, g_slowReads = 0, g_maxReadNs = 0;
 uint32_t g_maxReadAddr = 0;
+
+// VOODOO_PCI_PROFILE: per-frame accounting, reported at each swapbufferCMD.
+struct FrameProfile {
+  uint64_t start = 0, stallNs = 0, idleNs = 0, readNs = 0, writeNs = 0;
+  uint64_t regWrites = 0, lfbWrites = 0, texWrites = 0, tris = 0, fastfills = 0;
+};
+bool g_profile = false;
+FrameProfile g_frame;
+uint64_t g_frameNo = 0;
+uint32_t g_lastPixIn = 0, g_lastPixOut = 0;
 
 void logOp(const char *fmt, ...) {
   if (g_logFd < 0) return;
@@ -112,6 +125,7 @@ extern "C" int sim_init(void) {
   g_flow = getenv("VOODOO_PCI_NOFLOW") == nullptr;
   g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
+  g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
   logOp("init dry=%d\n", g_dry);
   if (g_dry) {
     g_open = true;
@@ -152,6 +166,15 @@ extern "C" void sim_shutdown(void) {
 // Block until the PCI FIFO has room for at least one more write.
 void waitForRoom() {
   if (!g_flow || g_dry) return;
+  if (g_budget == 0 && g_profile) {
+    uint64_t t0 = nowNs();
+    while (g_budget == 0) {
+      g_budgetPolls++;
+      g_budget = timedRead(0) & kPciFifoFreeMask;
+      g_budget = g_budget > 4 ? g_budget - 4 : 0;
+    }
+    g_frame.stallNs += nowNs() - t0;
+  }
   while (g_budget == 0) {
     g_budgetPolls++;
     g_budget = timedRead(0) & kPciFifoFreeMask;
@@ -164,6 +187,10 @@ void waitForRoom() {
 // Non-status reads wait for the core to drain first so they answer quickly.
 void idleBeforeRead(uint32_t addr) {
   if (!g_flow || g_dry || (addr & 0xfffffcu) == 0) return;
+  struct Timer {
+    uint64_t t0 = nowNs();
+    ~Timer() { if (g_profile) g_frame.idleNs += nowNs() - t0; }
+  } timer;
   for (int i = 0;; i++) {
     uint32_t s = timedRead(0);
     if (!(s & kSstBusy) && (s & kPciFifoFreeMask) == kPciFifoFreeMask) {
@@ -174,16 +201,38 @@ void idleBeforeRead(uint32_t addr) {
   }
 }
 
+void reportFrame();
+
+void countWrite(uint32_t addr) {
+  if (addr >= 0x800000) g_frame.texWrites++;
+  else if (addr >= 0x400000) g_frame.lfbWrites++;
+  else {
+    g_frame.regWrites++;
+    uint32_t r = addr & 0x3fc;
+    if (r == 0x080 || r == 0x100) g_frame.tris++;
+    if (r == 0x124) g_frame.fastfills++;
+  }
+}
+
 extern "C" void sim_write(uint32_t addr, uint32_t data) {
   waitForRoom();
   g_writes++;
   if (g_logAll) logOp("w32 %06x %08x\n", addr, data);
+  if (g_profile) {
+    countWrite(addr);
+    uint64_t t0 = nowNs();
+    if (!g_dry) g_bar.write32(addr & 0xfffffcu, data);
+    g_frame.writeNs += nowNs() - t0;
+    if (addr < 0x400000 && (addr & 0x3fc) == 0x128) reportFrame();
+    return;
+  }
   if (!g_dry) g_bar.write32(addr & 0xfffffcu, data);
 }
 
 extern "C" void sim_write16(uint32_t addr, uint16_t data) {
   waitForRoom();
   g_writes++;
+  if (g_profile) countWrite(addr);
   if (g_logAll) logOp("w16 %06x %04x\n", addr, data);
   if (!g_dry) g_bar.write16(addr & 0xfffffeu, data);
 }
@@ -193,7 +242,9 @@ extern "C" uint32_t sim_read(uint32_t addr) {
   if (g_logAll) logOp("r32 %06x\n", addr);
   if (g_dry) return (addr & 0xfffffcu) == 0 ? kPciFifoFreeMask : 0;
   idleBeforeRead(addr);
+  uint64_t t0 = nowNs();
   uint32_t v = timedRead(addr & 0xfffffcu);
+  if (g_profile) g_frame.readNs += nowNs() - t0;
   if ((addr & 0xfffffcu) == 0) g_budget = (v & kPciFifoFreeMask) > 4 ? (v & kPciFifoFreeMask) - 4 : 0;
   if (g_logAll) logOp("  = %08x\n", v);
   return v;
@@ -201,6 +252,10 @@ extern "C" uint32_t sim_read(uint32_t addr) {
 
 extern "C" uint32_t sim_idle_wait(void) {
   // Wait for the core to drain: SST busy clear and the PCI FIFO empty.
+  struct Timer {
+    uint64_t t0 = nowNs();
+    ~Timer() { if (g_profile) g_frame.idleNs += nowNs() - t0; }
+  } timer;
   auto start = std::chrono::steady_clock::now();
   for (;;) {
     g_idle_polls++;
@@ -214,6 +269,40 @@ extern "C" uint32_t sim_idle_wait(void) {
       }
     }
   }
+}
+
+// Called after the swapbufferCMD write: the frame's command stream is in.
+// The pixel counters are read after the swap drains (time not charged to the
+// frame), so the numbers cover the whole frame.
+void reportFrame() {
+  uint64_t now = nowNs();
+  FrameProfile f = g_frame;
+  if (g_dry) {
+    g_frame = FrameProfile();
+    return;
+  }
+  sim_idle_wait();
+  g_frame = FrameProfile();  // the drain above is reported separately
+  g_budget = kPciFifoFreeMask - 4;
+  uint32_t in = g_bar.read32(0x14c) & 0xffffff, out = g_bar.read32(0x15c) & 0xffffff;
+  uint32_t dIn = (in - g_lastPixIn) & 0xffffff, dOut = (out - g_lastPixOut) & 0xffffff;
+  g_lastPixIn = in;
+  g_lastPixOut = out;
+  uint64_t done = nowNs();
+  if (f.start && g_frameNo++ > 0) {
+    auto ms = [](uint64_t ns) { return ns / 1e6; };
+    uint64_t wall = now - f.start;
+    uint64_t host = wall - f.stallNs - f.idleNs - f.readNs - f.writeNs;
+    fprintf(stderr,
+            "[prof] frame %llu: %.0f ms = stall %.0f + idle %.0f + reads %.0f + writes %.0f + host %.0f;"
+            " swap drain %.0f ms; writes reg %llu lfb %llu tex %llu; tris %llu fills %llu;"
+            " pixels in %u out %u\n",
+            (unsigned long long)g_frameNo, ms(wall), ms(f.stallNs), ms(f.idleNs), ms(f.readNs),
+            ms(f.writeNs), ms(host), ms(done - now), (unsigned long long)f.regWrites,
+            (unsigned long long)f.lfbWrites, (unsigned long long)f.texWrites,
+            (unsigned long long)f.tris, (unsigned long long)f.fastfills, dIn, dOut);
+  }
+  g_frame.start = nowNs();
 }
 
 // Unused by libglide2x but part of sim_harness.h; keep the link complete for

@@ -59,6 +59,10 @@ object GowinGenSupport {
       fbWriteBufferLineWords = 256,
       useFbReadCache = true,
       useTexFillCache = false,
+      // 8 KiB direct-mapped texture cache in BSRAM (TmuSmallTextureCache):
+      // the full fill cache does not fit, but without any cache every texel
+      // is a DDR3 round trip.
+      texSmallCacheLines = 256,
       // debugBusy/writePathDebug readable over PCIe (0x240/0x250) for live hangs.
       hwDebugRegs = true
     )

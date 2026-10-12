@@ -18,7 +18,13 @@ import voodoo.hdmi.HdmiScanoutPort
   */
 object CoreGowin {
   val barAddressWidth = CoreArtix.barAddressWidth
-  val axiBurstLog2 = CoreArtix.axiBurstLog2
+  // AXI bursts are aligned to 32 bytes: one 256-bit DDR3 native transfer on
+  // the Pro Dock. BmbAligner pads every access to this size, and the core's
+  // texel / depth / colour accesses are 4 bytes, so with CoreArtix's 256-byte
+  // bursts each one cost 64 beats and eight serial DDR commands (~20 us per
+  // GLQuake pixel). Long bursts (scanout, write-buffer drains) are split into
+  // 32-byte pieces, which the one-native-command-at-a-time bridge did anyway.
+  val axiBurstLog2 = 5
 
   // The 5-way fb arbiter appends its input index to the BMB source, so the
   // shared side (and the AXI ID) must be the wider fbMemSharedBmbParams;

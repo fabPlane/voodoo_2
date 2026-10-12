@@ -166,8 +166,8 @@ case class TangMega138kPro(c: Config) extends Component {
   }
   val fbDdrConfig = raw.merge.outConfig
   val ddr = Axi4ToGowinDdrNative(fbDdrConfig, CoreGowin.texAxiConfig(c))
-  // One full burst (2^axiBurstLog2 beats) of W / R buffering per direction.
-  private val burstBeats = 1 << CoreGowin.axiBurstLog2
+  // W / R buffering per direction: 32 words, four 32-byte bursts.
+  private val burstBeats = 32
   val fbCc = Axi4CC(fbDdrConfig, coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
   val texCc = Axi4CC(CoreGowin.texAxiConfig(c), coreCd, ClockDomain.current,
