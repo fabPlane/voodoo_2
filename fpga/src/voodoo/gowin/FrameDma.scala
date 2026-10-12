@@ -133,7 +133,8 @@ case class TlTxArbiter() extends Component {
   *   0x08 RW buffer base (bus address, 4 KiB aligned, < 4 GiB: 3-DW headers)
   *   0x0C RW slot count
   *   0x10 RW frame size in 32-byte words (640x480 RGB565 = 19200)
-  *   0x14 RW status address: after each frame, one dword (seq << 8 | slot)
+  *   0x14 RW status address: after each frame, four dwords: (seq << 8 | slot)
+  *           then io.extraStatus(0..2) (board monitors, e.g. supply voltage)
   *   0x18 RW slot stride in bytes
   *   0x20 R  frames written   0x24 R overflows   0x28 R resyncs   0x2C R TLPs
   * Disabling drains and discards the FIFO and restarts at slot 0.
@@ -153,6 +154,8 @@ case class FrameDmaWriter() extends Component {
     val overflowPulse = in Bool ()
     val enable = out Bool ()
     val decimate = out UInt (8 bits)
+    // Written after the status dword (sampled when the frame completes).
+    val extraStatus = in Vec (Bits(32 bits), 3)
   }
 
   val ctrl = Reg(Bits(32 bits)) init (0)
@@ -202,6 +205,7 @@ case class FrameDmaWriter() extends Component {
   val wordsDone = Reg(UInt(20 bits)) init (0)
   val statusPending = RegInit(False)
   val statusValue = Reg(Bits(32 bits)) init (0)
+  val statusExtra = Vec(Reg(Bits(32 bits)) init (0), 3)
 
   def swap(dw: Bits): Bits = dw(7 downto 0) ## dw(15 downto 8) ## dw(23 downto 16) ## dw(31 downto 24)
   def dw(word: Bits, i: Int): Bits = word(32 * i + 31 downto 32 * i)
@@ -271,6 +275,7 @@ case class FrameDmaWriter() extends Component {
             // Frame complete: report it, move to the next slot.
             statusPending := True
             statusValue := ((framesDone + 1).resize(24) ## slot).asBits
+            statusExtra := io.extraStatus
             framesDone := framesDone + 1
             wordsDone := 0
             val wrap = slot + 1 >= slots
@@ -288,8 +293,9 @@ case class FrameDmaWriter() extends Component {
     is(S.status) {
       io.tx.sop := True
       io.tx.eop := True
-      io.tx.valid := B"11110000"
-      io.tx.data := mwrHeader(1, statusAddr, 0x0f) ## swap(statusValue) ## B(0, 128 bits)
+      io.tx.valid := B"11111110"
+      io.tx.data := mwrHeader(4, statusAddr, 0xff) ## swap(statusValue) ##
+        swap(statusExtra(0)) ## swap(statusExtra(1)) ## swap(statusExtra(2)) ## B(0, 32 bits)
       when(!io.tx.waitReq) {
         statusPending := False
         state := S.idle

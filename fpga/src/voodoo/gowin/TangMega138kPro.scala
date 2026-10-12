@@ -129,9 +129,23 @@ case class TangMega138kPro(c: Config) extends Component {
     // synchronizer.
     val ddrThrottle = Reg(Bits(32 bits)) init (B(8, 32 bits))
     when(bar.io.localWrite && bar.io.localAddr === 0x64) { ddrThrottle := bar.io.localWdata }
+    // On-chip supply / temperature monitor. Also sent with every frame-DMA
+    // status write, so the host logs it without touching the BAR:
+    // 0x68 / extra 0: vcc [15:0] | temp [31:16]; 0x6C / extra 1: vccMin |
+    // tempMax since configuration; 0x70 / extra 2: samples. VCC [V] =
+    // vcc / 1024, temperature [degC] = temp / 4 (see AdcMonitor).
+    val adc = AdcMonitor()
+    val adcNow = adc.io.temp.asBits ## adc.io.vcc.asBits
+    val adcExtremes = adc.io.tempMax.asBits ## adc.io.vccMin.asBits
+    dma.io.extraStatus(0) := adcNow
+    dma.io.extraStatus(1) := adcExtremes
+    dma.io.extraStatus(2) := adc.io.samples.asBits
     bar.io.localRdata := dma.io.regRdata
     when(bar.io.localAddr === 0x60) { bar.io.localRdata := axiDebug }
     when(bar.io.localAddr === 0x64) { bar.io.localRdata := ddrThrottle }
+    when(bar.io.localAddr === 0x68) { bar.io.localRdata := adcNow }
+    when(bar.io.localAddr === 0x6c) { bar.io.localRdata := adcExtremes }
+    when(bar.io.localAddr === 0x70) { bar.io.localRdata := adc.io.samples.asBits }
   }
 
   // HDMI scanout -> RGB565 words -> TLP clock (see FrameDma).

@@ -39,6 +39,9 @@ case class FrameDmaHarness(fifoDepth: Int) extends Component {
   dma.io.regWdata := io.regWdata
   io.regRdata := dma.io.regRdata
   io.tx <> dma.io.tx
+  dma.io.extraStatus(0) := B(0x11223344L, 32 bits)
+  dma.io.extraStatus(1) := B(0x55667788L, 32 bits)
+  dma.io.extraStatus(2) := B(0x99aabbccL, 32 bits)
 }
 
 class FrameDmaTest extends AnyFunSuite {
@@ -81,9 +84,10 @@ class FrameDmaTest extends AnyFunSuite {
       val len = (h0 & 0x3ff).toInt
       assert(p.size == 3 + len, s"payload ${p.size - 3} dwords, length field $len")
       assert(((h1 >> 16) & 0xffff) == (0x123 << 3), f"requester id ${h1 >> 16}%04x")
-      if (len == 1) {
-        assert((h1 & 0xff) == 0x0f, "status write BE")
+      if (len == 4) {
+        assert((h1 & 0xff) == 0xff, "status write BE")
         assert(addr == statusAddr)
+        assert(p.drop(4).map(swap) == Seq(0x11223344L, 0x55667788L, 0x99aabbccL), "extra status dwords")
         statuses += swap(p(3))
       } else {
         assert(len == 64 && (h1 & 0xff) == 0xff)

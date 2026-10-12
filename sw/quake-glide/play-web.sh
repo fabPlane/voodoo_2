@@ -7,7 +7,8 @@
 #   fpga/hw/gowin/board-lock -m "glquake web" -- sudo sw/quake-glide/play-web.sh [quake args]
 #
 # PORT (8090) is the web port, INPUT_PORT (27961) the local UDP port for input,
-# RECORD=file.mp4 also records the stream, THROTTLE= the DDR3 throttle (see
+# RECORD=file.mp4 also records the stream, ADC_LOG=file logs the board's
+# supply voltage / temperature (B45+), THROTTLE= the DDR3 throttle (see
 # below). Ctrl-C stops everything.
 set -euo pipefail
 
@@ -36,7 +37,9 @@ PY
 
 rec=()
 [ -n "${RECORD:-}" ] && rec=(--record "$RECORD")
-"$P/voodoo-stream" --attach 2>/dev/null |
+adc=()
+[ -n "${ADC_LOG:-}" ] && adc=(--adc-log "$ADC_LOG")
+"$P/voodoo-stream" --attach "${adc[@]}" 2>/dev/null |
   python3 "$P/voodoo-view.py" --port "$PORT" --input-port "$INPUT_PORT" "${rec[@]}" &
 view=$!
 trap 'kill $view 2>/dev/null; pkill -x voodoo-stream; wait' EXIT

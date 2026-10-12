@@ -8,6 +8,9 @@
 //                                        game can own the board meanwhile
 //   sudo ./voodoo-stream --stop          disable the writer
 //   sudo ./voodoo-stream --counters      print the writer's counters
+//   --adc-log FILE  append the board's supply / temperature monitor (sent
+//                   after each frame's status word, B45+) every 10 frames,
+//                   synced to disk so the readings before a crash survive
 //
 // Programs BAR0 window 31 once at start (before the game runs: the window
 // register is shared with whatever else drives the BAR), then only reads the
@@ -18,6 +21,9 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <ctime>
+#include <fcntl.h>
+#include <unistd.h>
 #include <thread>
 #include <vector>
 
@@ -70,6 +76,7 @@ int main(int argc, char **argv) {
   long maxFrames = -1;
   bool stop = false, counters = false, setupOnly = false, attach = false;
   uint32_t width = 720, height = 480;
+  const char *adcLog = nullptr;
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i];
     if (a == "--skip" && i + 1 < argc) skip = strtoul(argv[++i], nullptr, 0);
@@ -77,10 +84,11 @@ int main(int argc, char **argv) {
     else if (a == "--size" && i + 1 < argc) sscanf(argv[++i], "%ux%u", &width, &height);
     else if (a == "--setup-only") setupOnly = true;
     else if (a == "--attach") attach = true;
+    else if (a == "--adc-log" && i + 1 < argc) adcLog = argv[++i];
     else if (a == "--stop") stop = true;
     else if (a == "--counters") counters = true;
     else {
-      fprintf(stderr, "usage: %s [--skip N] [--frames N] [--size WxH] [--setup-only|--attach] | --stop | --counters\n", argv[0]);
+      fprintf(stderr, "usage: %s [--skip N] [--frames N] [--size WxH] [--setup-only|--attach] [--adc-log FILE] | --stop | --counters\n", argv[0]);
       return 2;
     }
   }
@@ -147,6 +155,7 @@ int main(int argc, char **argv) {
   signal(SIGINT, onSignal);
   signal(SIGTERM, onSignal);
   signal(SIGPIPE, onSignal);
+  int adcFd = adcLog ? open(adcLog, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
   std::vector<uint8_t> frame(kFrameBytes);
   uint32_t lastSeq = 0;
   long written = 0, missed = 0, secWritten = 0;
@@ -159,6 +168,21 @@ int main(int argc, char **argv) {
     if (seq != lastSeq && slot < slots) {
       if (lastSeq && seq - lastSeq > 1) missed += (seq - lastSeq - 1) & 0xffffff;
       lastSeq = seq;
+      if (adcFd >= 0 && seq % 10 == 0) {
+        // status[1]: vcc | temp << 16, status[2]: vccMin | tempMax << 16,
+        // status[3]: samples. VCC = /1024 V, temperature = /4 degC.
+        uint32_t now1 = status[1], ext = status[2], n = status[3];
+        auto lo = [](uint32_t v) { return int16_t(v & 0xffff); };
+        auto hi = [](uint32_t v) { return int16_t(v >> 16); };
+        timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        char line[160];
+        int len = snprintf(line, sizeof line,
+                           "%ld.%03ld seq %u vcc %.4f V temp %.2f C vccMin %.4f V tempMax %.2f C samples %u\n",
+                           long(ts.tv_sec), long(ts.tv_nsec / 1000000), seq, lo(now1) / 1024.0,
+                           hi(now1) / 4.0, lo(ext) / 1024.0, hi(ext) / 4.0, n);
+        if (write(adcFd, line, len) == len) fdatasync(adcFd);
+      }
       memcpy(frame.data(), const_cast<uint8_t *>(buf + size_t(slot) * kFrameBytes), kFrameBytes);
       if (fwrite(frame.data(), 1, kFrameBytes, stdout) != kFrameBytes) break;
       fflush(stdout);
