@@ -17,6 +17,8 @@
  *                                 keeps the log if only the process dies)
  *   VOODOO_PCI_DRYRUN=1           don't touch the board; reads return idle
  *   VOODOO_PCI_NOFLOW=1           disable the flow control below
+ *   VOODOO_PCI_MIN_FRAME_MS=N     idle until N ms have passed since the last
+ *                                 swap (duty-cycles the card's load)
  *   VOODOO_PCI_PROFILE=1          one line per swap: where the frame's time
  *                                 went (FIFO-full stalls, idle waits, reads,
  *                                 host) plus write counts and pixel counters
@@ -63,6 +65,7 @@ struct FrameProfile {
   uint64_t regWrites = 0, lfbWrites = 0, texWrites = 0, tris = 0, fastfills = 0;
 };
 bool g_profile = false;
+uint64_t g_minFrameNs = 0, g_lastSwapNs = 0;
 FrameProfile g_frame;
 uint64_t g_frameNo = 0;
 uint32_t g_lastPixIn = 0, g_lastPixOut = 0;
@@ -126,6 +129,7 @@ extern "C" int sim_init(void) {
   g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
+  if (const char *m = getenv("VOODOO_PCI_MIN_FRAME_MS")) g_minFrameNs = strtoull(m, nullptr, 0) * 1000000ull;
   logOp("init dry=%d\n", g_dry);
   if (g_dry) {
     g_open = true;
@@ -214,7 +218,20 @@ void countWrite(uint32_t addr) {
   }
 }
 
+// VOODOO_PCI_MIN_FRAME_MS: hold the swap until the frame period has passed.
+void frameCap() {
+  if (!g_minFrameNs) return;
+  uint64_t now = nowNs();
+  if (g_lastSwapNs && now - g_lastSwapNs < g_minFrameNs) {
+    uint64_t left = g_minFrameNs - (now - g_lastSwapNs);
+    timespec ts{time_t(left / 1000000000ull), long(left % 1000000000ull)};
+    nanosleep(&ts, nullptr);
+  }
+  g_lastSwapNs = nowNs();
+}
+
 extern "C" void sim_write(uint32_t addr, uint32_t data) {
+  if (addr < 0x400000 && (addr & 0x3fc) == 0x128) frameCap();
   waitForRoom();
   g_writes++;
   if (g_logAll) logOp("w32 %06x %08x\n", addr, data);

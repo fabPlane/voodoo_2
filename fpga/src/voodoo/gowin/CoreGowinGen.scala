@@ -38,6 +38,7 @@ class GowinMemStylePhase(
   }
 
   override def impl(pc: PhaseContext): Unit = pc.walkDeclarations {
+    case mem: Mem[_] if mem.component != null && mem.component.hasTag(GowinKeepBsram) =>
     case mem: Mem[_] if mem.initialContent == null && !isDualClock(mem) =>
       val depth = mem.wordCount
       val small = depth <= smallMaxDepth && depth * mem.getWidth <= smallMaxBits
@@ -46,6 +47,12 @@ class GowinMemStylePhase(
     case _ =>
   }
 }
+
+/** Tag on a component (e.g. a StreamFifo) whose memories must stay in BSRAM:
+  * a shallow but very wide FIFO as registers fans its write enable out to
+  * every bit (the DDR bridge's 8 x 256-bit read FIFO missed 100 MHz).
+  */
+object GowinKeepBsram extends SpinalTag
 
 object GowinGenSupport {
   // Same as the DE10 top, minus the texture fill cache: with it the design

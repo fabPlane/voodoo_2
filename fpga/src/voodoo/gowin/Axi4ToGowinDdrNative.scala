@@ -108,12 +108,12 @@ case class Axi4ToGowinDdrNative(
     n
   }
 
-  // Minimum spacing between native commands. On the Pro Dock, sustained
-  // back-to-back DDR3 traffic was suspected of browning out the FPGA (see
-  // hw/gowin/ddr3_test/README.md: gap >= 8 UI cycles was clean); 16 and 8
-  // were tried against the render-load reloads without effect and cost up
-  // to 7x, so the gap is off.
-  val cmdGapCycles = 0
+  // Minimum spacing between native commands. Sustained back-to-back DDR3
+  // traffic breaks the Pro Dock (hw/gowin/ddr3_test/README.md: gap <= 4 UI
+  // cycles corrupts bursts or kills JTAG, gap >= 8 was clean over 1 GiB).
+  // The one-outstanding bridge never got close; with reads pipelined, gap 0
+  // reloaded the FPGA 8 s into GLQuake (B41), so keep 8.
+  val cmdGapCycles = 8
   val cmdGapOk = Bool()
   if (cmdGapCycles == 0) cmdGapOk := True
   else {
@@ -157,6 +157,8 @@ case class Axi4ToGowinDdrNative(
     val inFlight = Reg(UInt(log2Up(readsInFlight + 1) bits)) init (0)
     val meta = StreamFifo(ReadMeta(), readsInFlight)
     val data = StreamFifo(Bits(nativeDataWidth bits), readsInFlight)
+    // As registers this FIFO's write enable fans out to 2048 bits.
+    data.addTag(GowinKeepBsram)
 
     val firstIdx = wordIdx(addr)
     val wordsHere = (U(nativeWords, 5 bits) - firstIdx.resize(5)).resize(9)
