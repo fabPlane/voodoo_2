@@ -920,7 +920,7 @@ index 226d60e..b09f29d 100644
  
      if (formalStrong) {
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..d8c3dda 100644
+index c23fa0b..5757812 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -5,7 +5,7 @@ import spinal.core.sim._
@@ -951,7 +951,7 @@ index c23fa0b..d8c3dda 100644
 +  // or (c.scanoutLineFetcher) a plain line fetcher with no cache state.
 +  val scanoutReaderCached =
 +    if (!c.scanoutLineFetcher) FramebufferPlaneReader(c, skipAnyMismatch = false).setName("fbScanoutReader") else null
-+  val scanoutFetcher = if (c.scanoutLineFetcher) ScanoutLineFetcher(c).setName("fbScanoutFetcher") else null
++  val scanoutFetcher = if (c.scanoutLineFetcher) ScanoutLineFetcher(c, fifoWords = 1024).setName("fbScanoutFetcher") else null
 +  private def scanoutPrefetch = if (c.scanoutLineFetcher) scanoutFetcher.io.prefetchReq else scanoutReaderCached.io.prefetchReq
 +  private def scanoutReq = if (c.scanoutLineFetcher) scanoutFetcher.io.readReq else scanoutReaderCached.io.readReq
 +  private def scanoutRsp = if (c.scanoutLineFetcher) scanoutFetcher.io.readRsp else scanoutReaderCached.io.readRsp
@@ -3963,10 +3963,10 @@ index 0000000..22d0579
 +}
 diff --git a/test/ScanoutLineFetcherTest.scala b/test/ScanoutLineFetcherTest.scala
 new file mode 100644
-index 0000000..d8a0517
+index 0000000..e902b3b
 --- /dev/null
 +++ b/test/ScanoutLineFetcherTest.scala
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,151 @@
 +package voodoo
 +
 +import org.scalatest.funsuite.AnyFunSuite
@@ -4020,15 +4020,19 @@ index 0000000..d8a0517
 +    io.de := scan.io.video.de
 +  }
 +
-+  for (ahead <- Seq(1, 2)) test(s"scanout through the line fetcher shows every frame pixel-exact (ahead $ahead)") {
++  /** Runs the scanout for 30 HDMI frames and returns, for each frame after
++    * the first three, whether it showed the framebuffer pixel-exact.
++    * Memory latency is `latency(rnd)` core cycles; `hdmiHalf` is half the
++    * HDMI clock period (the core clock period is 10).
++    */
++  def run(ahead: Int, timing: VideoTiming, base: Long, hdmiHalf: Int, cmdBusy: Boolean,
++      latency: scala.util.Random => Int): Seq[Boolean] = {
 +    val c = Config.voodoo1()
-+    val timing = VideoTiming(activeWidth = 37, activeHeight = 6, hFrontPorch = 2, hSync = 2, hBackPorch = 3,
-+      vFrontPorch = 1, vSync = 1, vBackPorch = 1)
++    var result: Seq[Boolean] = Nil
 +    SimConfig.withIVerilog.compile(Harness(c, timing, ahead)).doSim(seed = 4) { dut =>
 +      dut.clockDomain.forkStimulus(10)
-+      fork { while (true) { dut.io.hdmiClock #= false; sleep(7); dut.io.hdmiClock #= true; sleep(7) } }
++      fork { while (true) { dut.io.hdmiClock #= false; sleep(hdmiHalf); dut.io.hdmiClock #= true; sleep(hdmiHalf) } }
 +      dut.io.hdmiReset #= true
-+      val base = 0x10002L // odd pixel start: first pixel in the high half word
 +      val stride = 64 // hardware stride is in 64-pixel tiles
 +      dut.io.frontBase #= base
 +      dut.io.stride #= stride
@@ -4055,9 +4059,9 @@ index 0000000..d8a0517
 +            val a = dut.io.mem.cmd.fragment.address.toLong
 +            val words = (dut.io.mem.cmd.fragment.length.toInt + 1 + (a & 3).toInt + 3) / 4
 +            assert((a & ~0xfffL) == ((a + 4 * words - 1) & ~0xfffL), "burst crosses a 4 KiB page")
-+            pending.enqueue((a & ~3L, words, cycle + 3 + rnd.nextInt(12)))
++            pending.enqueue((a & ~3L, words, cycle + latency(rnd)))
 +          }
-+          dut.io.mem.cmd.ready #= rnd.nextInt(3) != 0
++          dut.io.mem.cmd.ready #= !cmdBusy || rnd.nextInt(3) != 0
 +          if (rspValid && dut.io.mem.rsp.ready.toBoolean) { rspValid = false; beat += 1
 +            if (beat == pending.head._2) { pending.dequeue(); beat = 0 } }
 +          if (!rspValid && pending.nonEmpty && pending.head._3 <= cycle) {
@@ -4088,9 +4092,30 @@ index 0000000..d8a0517
 +      }
 +      def exact(f: Map[(Int, Int), (Int, Int)]) =
 +        (for (yy <- 0 until timing.activeHeight; xx <- 0 until timing.activeWidth) yield f.get((xx, yy)) == Some(((xx + 1) & 31, yy + 1))).forall(identity)
-+      val ok = frames.drop(3).map(exact)
-+      assert(ok.forall(identity), s"frames not exact: $ok")
++      result = frames.drop(3).map(exact).toSeq
 +    }
++    result
++  }
++
++  for (ahead <- Seq(1, 2)) test(s"scanout through the line fetcher shows every frame pixel-exact (ahead $ahead)") {
++    val timing = VideoTiming(activeWidth = 37, activeHeight = 6, hFrontPorch = 2, hSync = 2, hBackPorch = 3,
++      vFrontPorch = 1, vSync = 1, vBackPorch = 1)
++    // Odd pixel start: the first pixel is in the high half word.
++    val ok = run(ahead, timing, 0x10002L, hdmiHalf = 7, cmdBusy = true, latency = r => 3 + r.nextInt(12))
++    assert(ok.forall(identity), s"frames not exact: $ok")
++  }
++
++  // On the dock (GLQuake) the scanout underflowed mid-frame with one line
++  // announced at a time: each line then costs a full memory round trip plus
++  // its pixels, longer than an HDMI line. Two lines ahead hide the latency.
++  test("two lines ahead keep up where one line ahead underflows (memory latency > line slack)") {
++    val timing = VideoTiming(activeWidth = 40, activeHeight = 40, hFrontPorch = 2, hSync = 2, hBackPorch = 4,
++      vFrontPorch = 1, vSync = 1, vBackPorch = 1)
++    // HDMI line = 48 * 12 = 57.6 core cycles; one line ahead needs ~30 + 40.
++    val one = run(1, timing, 0x10000L, hdmiHalf = 6, cmdBusy = false, latency = _ => 30)
++    val two = run(2, timing, 0x10000L, hdmiHalf = 6, cmdBusy = false, latency = _ => 30)
++    assert(!one.forall(identity), s"one line ahead was expected to underflow: $one")
++    assert(two.forall(identity), s"two lines ahead underflowed: $two")
 +  }
 +}
 diff --git a/test/TmuSmallTextureCacheTest.scala b/test/TmuSmallTextureCacheTest.scala
