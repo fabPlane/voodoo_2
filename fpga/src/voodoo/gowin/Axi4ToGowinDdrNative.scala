@@ -274,7 +274,9 @@ case class Axi4ToGowinDdrNative(
     val words = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
     val strbs = Vec(Reg(Bits(4 bits)) init (0), nativeWords)
     // Do not spend a native DDR command on a line made entirely of padding.
-    val groupHasData = Cat(strbs).orR
+    // Registered while the line is collected: OR-ing the 32 strobe bits fed
+    // the command arbiter combinationally and missed 100 MHz (B55).
+    val groupHasData = RegInit(False)
     val wantsCmd = state === State.issue && groupHasData && io.ddr.wrDataRdy
     val issue = Bool() // driven by the command arbiter below
 
@@ -289,6 +291,7 @@ case class Axi4ToGowinDdrNative(
             if (fbConfig.useId) id := io.fb.aw.id.resized
             groupIdx := wordIdx(io.fb.aw.addr.resize(32))
             strbs.foreach(_ := 0)
+            groupHasData := False
             state := State.collect
           } elsewhen (io.tex.aw.valid) {
             io.tex.aw.ready := True
@@ -298,6 +301,7 @@ case class Axi4ToGowinDdrNative(
             if (texConfig.useId) id := io.tex.aw.id.resized
             groupIdx := wordIdx(io.tex.aw.addr.resize(32))
             strbs.foreach(_ := 0)
+            groupHasData := False
             state := State.collect
           }
         }
@@ -315,6 +319,7 @@ case class Axi4ToGowinDdrNative(
           // WSTRB=0 beats; the data bus is repeated during padding and must
           // not be written to memory.
           strbs(groupIdx) := wStrb
+          when(wStrb.orR) { groupHasData := True }
           beatsLeft := beatsLeft - 1
           when(groupIdx === lastIdx || wLast || beatsLeft === 1) {
             groupIdx := 0
@@ -331,6 +336,7 @@ case class Axi4ToGowinDdrNative(
             state := State.resp
           } otherwise {
             strbs.foreach(_ := 0)
+            groupHasData := False
             state := State.collect
           }
         }
