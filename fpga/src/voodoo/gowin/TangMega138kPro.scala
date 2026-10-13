@@ -179,8 +179,11 @@ case class TangMega138kPro(c: Config) extends Component {
   }
   val videoFifo = StreamFifoCC(FrameDma.fifoWord, 128, hdmiCd, pcieCd)
   videoFifo.io.push << videoTap.tap.io.push
-  pcie.dma.io.words << videoFifo.io.pop
-  pcie.dma.io.wordsAvailable := videoFifo.io.popOccupancy.resized
+  // Registered: the FIFO's BSRAM output fed the PCIe TX data directly and
+  // missed 75 MHz (B61). The word held in the register counts as available.
+  val videoWords = pcieCd(videoFifo.io.pop.m2sPipe())
+  pcie.dma.io.words << videoWords
+  pcie.dma.io.wordsAvailable := pcieCd((videoFifo.io.popOccupancy +^ videoWords.valid.asUInt).resized)
   pcie.dma.io.overflowPulse := PulseCCByToggle(videoTap.tap.io.overflow, hdmiCd, pcieCd)
 
   val barCc = AxiLite4ClockCrossing(
