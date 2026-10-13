@@ -15,3 +15,7 @@ report_timing -setup -max_paths 200 -max_common_paths 1 -to_clock [get_clocks {c
 report_timing -setup -max_paths 200 -max_common_paths 1 -to_clock [get_clocks {clk100}]
 report_timing -setup -max_paths 200 -max_common_paths 1 -to_clock [get_clocks {ddr_clk_out}]
 report_timing -setup -max_paths 100 -max_common_paths 1 -to_clock [get_clocks {clk_hdmi_pixel}]
+
+# The DDR PHY's init-complete flop releases the DDR-domain reset once, after
+# calibration, while nothing is in flight: not a timed path.
+set_false_path -from [get_regs {u_ddr3/gw3_top/u_ddr_phy_top/u_ddr_init/ddr_init_complete_d_3_s0}]
