@@ -32,6 +32,7 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       dut.io.ddr.initCalibComplete #= true
       dut.io.cmdGap #= 0
       dut.io.maxReads #= 0
+      dut.io.urgent #= false
       val pendingReads = mutable.Queue[(BigInt, Long)]() // in order: (addr, due cycle)
       var cycle = 0L
       dut.clockDomain.onSamplings {
@@ -137,6 +138,7 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       dut.io.ddr.initCalibComplete #= true
       dut.io.cmdGap #= 0
       dut.io.maxReads #= 0
+      dut.io.urgent #= false
       val pendingReads = mutable.Queue[(BigInt, Long)]()
       var cycle = 0L
       var maxInFlight = 0

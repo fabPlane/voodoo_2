@@ -40,4 +40,8 @@ MOD
 }
 
 gen Gowin_ADC_Vcc gowin_adc_vcc ADCULC voltage 653 0
+# vtest (VSEN_CTL 000) read 0 V on the board (B47); VCC is also on vdd09_2
+# (VSEN_CTL 011) behind BUF_VCC_EN, which ModGen offers no option for.
+sed -i "s/adculc_inst.BUF_VCC_EN = 1'b0/adculc_inst.BUF_VCC_EN = 1'b1/; s/adculc_inst.VSEN_CTL = 3'b000/adculc_inst.VSEN_CTL = 3'b011/" \
+  "$IPDIR/Gowin_ADC_Vcc/gowin_adc_vcc.v"
 gen Gowin_ADC_Temp gowin_adc_temp ADCLRC temperature 730 -1180

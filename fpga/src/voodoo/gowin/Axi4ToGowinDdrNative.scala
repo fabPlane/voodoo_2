@@ -86,6 +86,10 @@ case class Axi4ToGowinDdrNative(
     // command, and the most reads in flight (0 = readsInFlight).
     val cmdGap = in UInt (8 bits)
     val maxReads = in UInt (4 bits)
+    // The display is running short of pixels: skip the command gap so its
+    // reads are not starved by the throttle (the scanout's own rate was
+    // always there in the stable builds; only rendering needs pacing).
+    val urgent = in Bool ()
   }
 
   private def toNative(a: UInt): UInt = {
@@ -119,7 +123,8 @@ case class Axi4ToGowinDdrNative(
   // reloaded the FPGA 8 s into GLQuake (B41), so keep 8.
   // The gap is io.cmdGap (8 by default on the board: see TangMega138kPro).
   val cmdGap = Reg(UInt(8 bits)) init (0)
-  val cmdGapOk = cmdGap === 0
+  val urgentSync = RegNext(io.urgent, init = False)
+  val cmdGapOk = cmdGap === 0 || urgentSync
   when(!cmdGapOk) { cmdGap := cmdGap - 1 }
   when(io.ddr.cmdEn) { cmdGap := io.cmdGap }
   val readLimit = RegNext(

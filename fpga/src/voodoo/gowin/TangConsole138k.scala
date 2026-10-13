@@ -73,6 +73,7 @@ case class TangConsole138k(c: Config) extends Component {
   )
   ddr.io.cmdGap := 8
   ddr.io.maxReads := 0
+  ddr.io.urgent := False
   val player = DemoAxiLitePlayer(DemoTraceRom.banks(), DemoCatalog.playerLoopAt)
   val ctrlCd = ClockDomain(
     clock = io.ctrlClk,

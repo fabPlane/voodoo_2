@@ -225,6 +225,10 @@ case class TangMega138kPro(c: Config) extends Component {
   private val throttle = BufferCC(pcie.ddrThrottle, init = B(8, 32 bits))
   ddr.io.cmdGap := throttle(7 downto 0).asUInt
   ddr.io.maxReads := throttle(11 downto 8).asUInt
+  // Scanout FIFO (4096 pixels) below half: let the display's reads through
+  // the DDR throttle (black frames at gap 32 otherwise).
+  private val scanoutLow = coreCd(RegNext(core.io.hdmi.fifoLevel < 2048, init = True))
+  ddr.io.urgent := BufferCC(scanoutLow, init = True)
 
   // Window 31 offset 0x60: AXI valid/ready levels of the memory paths, so a
   // hung board shows which channel is stuck. [9:0] core tex, [19:10] core fb
