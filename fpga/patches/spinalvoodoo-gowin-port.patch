@@ -349,7 +349,7 @@ index d163ab7..4a8a8ed 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..77c7c51 100644
+index 1b34fa2..e38994d 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -362,7 +362,7 @@ index 1b34fa2..77c7c51 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,16 @@ case class Config(
+@@ -31,6 +34,19 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -373,6 +373,9 @@ index 1b34fa2..77c7c51 100644
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
 +    hdmiFifoDepth: Int = 4096,
++    // Scanout reads lines through ScanoutLineFetcher instead of a cached
++    // FramebufferPlaneReader.
++    scanoutLineFetcher: Boolean = false,
 +    hdmiPrefill: Int = 2048,
 +    hdmiRefillLow: Int = 1024,
 +    hdmiRefillHigh: Int = 3072,
@@ -916,9 +919,18 @@ index 226d60e..b09f29d 100644
  
      if (formalStrong) {
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..98553d4 100644
+index c23fa0b..d8c3dda 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
+@@ -5,7 +5,7 @@ import spinal.core.sim._
+ import spinal.lib._
+ import spinal.lib.bus.bmb._
+ import voodoo._
+-import voodoo.framebuffer.{FramebufferPlaneDirectReader, FramebufferPlaneReader}
++import voodoo.framebuffer.{FramebufferPlaneDirectReader, FramebufferPlaneReader, ScanoutLineFetcher}
+ 
+ case class FramebufferMemSubsystem(c: Config) extends Component {
+   val io = new Bundle {
 @@ -31,6 +31,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
  
      val status = out(FramebufferMemStatus())
@@ -929,16 +941,24 @@ index c23fa0b..98553d4 100644
    }
  
    private def makeFbWriteArbiter() =
-@@ -80,7 +83,7 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -80,7 +83,15 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
      if (useCachedReaders) FramebufferPlaneReader(c).setName("fbAuxReader") else null
    val colorReaderDirect =
      if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbColorReader") else null
 -  val scanoutReaderCached = FramebufferPlaneReader(c).setName("fbScanoutReader")
-+  val scanoutReaderCached = FramebufferPlaneReader(c, skipAnyMismatch = false).setName("fbScanoutReader")
++  // The scanout reads whole lines in order: either the general cached reader
++  // or (c.scanoutLineFetcher) a plain line fetcher with no cache state.
++  val scanoutReaderCached =
++    if (!c.scanoutLineFetcher) FramebufferPlaneReader(c, skipAnyMismatch = false).setName("fbScanoutReader") else null
++  val scanoutFetcher = if (c.scanoutLineFetcher) ScanoutLineFetcher(c).setName("fbScanoutFetcher") else null
++  private def scanoutPrefetch = if (c.scanoutLineFetcher) scanoutFetcher.io.prefetchReq else scanoutReaderCached.io.prefetchReq
++  private def scanoutReq = if (c.scanoutLineFetcher) scanoutFetcher.io.readReq else scanoutReaderCached.io.readReq
++  private def scanoutRsp = if (c.scanoutLineFetcher) scanoutFetcher.io.readRsp else scanoutReaderCached.io.readRsp
++  private def scanoutMem = if (c.scanoutLineFetcher) scanoutFetcher.io.mem else scanoutReaderCached.io.mem
    val auxReaderDirect =
      if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbAuxReader") else null
    val colorWritePort = FramebufferPlaneBuffer(c).setName("fbColorBuffer")
-@@ -95,9 +98,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -95,9 +106,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
    }
  
    if (useCachedReaders) {
@@ -950,12 +970,21 @@ index c23fa0b..98553d4 100644
      io.auxReadRsp << auxReaderCached.io.readRsp
      colorReaderCached.io.prefetchReq <> io.prefetchColor
      auxReaderCached.io.prefetchReq <> io.prefetchAux
-@@ -111,6 +114,16 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -110,9 +121,24 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+     io.prefetchAux.ready := True
    }
  
-   io.scanoutPrefetchReq >> scanoutReaderCached.io.prefetchReq
-+  io.readerDebug(4) := scanoutReaderCached.io.cacheDebug(31 downto 0)
-+  io.readerDebug(5) := scanoutReaderCached.io.cacheDebugOccupancy
+-  io.scanoutPrefetchReq >> scanoutReaderCached.io.prefetchReq
+-  io.scanoutReadReq.s2mPipe() >> scanoutReaderCached.io.readReq
+-  io.scanoutReadRsp << scanoutReaderCached.io.readRsp
++  io.scanoutPrefetchReq >> scanoutPrefetch
++  if (c.scanoutLineFetcher) {
++    io.readerDebug(4) := 0
++    io.readerDebug(5) := 0
++  } else {
++    io.readerDebug(4) := scanoutReaderCached.io.cacheDebug(31 downto 0)
++    io.readerDebug(5) := scanoutReaderCached.io.cacheDebugOccupancy
++  }
 +  if (useCachedReaders) {
 +    io.readerDebug(0) := colorReaderCached.io.cacheDebug(31 downto 0)
 +    io.readerDebug(1) := colorReaderCached.io.cacheDebugOccupancy
@@ -964,8 +993,32 @@ index c23fa0b..98553d4 100644
 +  } else {
 +    for (i <- 0 until 4) io.readerDebug(i) := 0
 +  }
-   io.scanoutReadReq.s2mPipe() >> scanoutReaderCached.io.readReq
-   io.scanoutReadRsp << scanoutReaderCached.io.readRsp
++  io.scanoutReadReq.s2mPipe() >> scanoutReq
++  io.scanoutReadRsp << scanoutRsp
+ 
+   disableReadPort(colorWritePort)
+   disableReadPort(auxWritePort)
+@@ -142,8 +168,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+       fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
+       auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
+     }
+-    fbColorReadArbiter.io.inputs(0).cmd << scanoutReaderCached.io.mem.cmd.s2mPipe()
+-    scanoutReaderCached.io.mem.rsp << fbColorReadArbiter.io.inputs(0).rsp.s2mPipe()
++    fbColorReadArbiter.io.inputs(0).cmd << scanoutMem.cmd.s2mPipe()
++    scanoutMem.rsp << fbColorReadArbiter.io.inputs(0).rsp.s2mPipe()
+     fbColorReadArbiter.io.inputs(2).cmd << io.lfbReadBus.cmd
+     io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
+ 
+@@ -200,8 +226,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+       fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
+       auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
+     }
+-    fbColorReadArbiter.io.inputs(0).cmd << scanoutReaderCached.io.mem.cmd.s2mPipe()
+-    scanoutReaderCached.io.mem.rsp << fbColorReadArbiter.io.inputs(0).rsp.s2mPipe()
++    fbColorReadArbiter.io.inputs(0).cmd << scanoutMem.cmd.s2mPipe()
++    scanoutMem.rsp << fbColorReadArbiter.io.inputs(0).rsp.s2mPipe()
+     fbColorReadArbiter.io.inputs(2).cmd << io.lfbReadBus.cmd
+     io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
 index 7797711..e3cbf12 100644
@@ -1177,6 +1230,131 @@ index 9d1e15f..6ab820f 100644
    when(internalMem.cmd.fire && prefetchCmdSelected) {
      fillBurstCount := fillBurstCount + 1
      fillBurstBeats := fillBurstBeats + spanIssueQueue.io.pop.payload.wordCount.resize(32 bits)
+diff --git a/src/voodoo/framebuffer/ScanoutLineFetcher.scala b/src/voodoo/framebuffer/ScanoutLineFetcher.scala
+new file mode 100644
+index 0000000..286b588
+--- /dev/null
++++ b/src/voodoo/framebuffer/ScanoutLineFetcher.scala
+@@ -0,0 +1,119 @@
++package voodoo.framebuffer
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo._
++
++/** HDMI scanout fetcher that reads whole lines in order, with no cache.
++  *
++  * Drop-in for the scanout's FramebufferPlaneReader (same prefetchReq /
++  * readReq / readRsp / mem contract as used by HdmiCdcFramebufferScanout):
++  * the scanout announces each line with a prefetchReq (first and last pixel
++  * byte address), then asks for its pixels one readReq at a time in order,
++  * and announces the next line only after the last readReq of this one.
++  * So the request addresses carry no information beyond the order: each
++  * line is read with plain BMB bursts in aligned pieces of up to 256 bytes
++  * (never crossing a 4 KiB page) into a word FIFO, and every readReq is
++  * answered with the next pixel. A burst is only issued when the FIFO has
++  * room for all of it, so responses are never back-pressured.
++  *
++  * The general cached reader stalled for good on the Tang dock under GLQuake
++  * load (scanout black while rendering continued); this has no such state.
++  */
++case class ScanoutLineFetcher(c: Config, fifoWords: Int = 512, maxBurstBytes: Int = 256) extends Component {
++  require(isPow2(fifoWords) && isPow2(maxBurstBytes) && maxBurstBytes >= 4)
++  val io = new Bundle {
++    val prefetchReq = slave(Stream(FramebufferPlaneReader.PrefetchReq(c)))
++    val readReq = slave(Stream(FramebufferPlaneBuffer.ReadReq(c)))
++    val readRsp = master(Stream(FramebufferPlaneBuffer.ReadRsp()))
++    val mem = master(Bmb(FramebufferPlaneReader.bmbParams(c)))
++  }
++  private val aw = c.addressWidth.value
++  private val burstLog2 = log2Up(maxBurstBytes)
++
++  val words = StreamFifo(Bits(32 bits), fifoWords)
++
++  // ---- fetch side: one line at a time, aligned bursts
++  val fetch = new Area {
++    val active = RegInit(False)
++    val addr = Reg(UInt(aw bits)) init (0) // next word-aligned byte address
++    val endWord = Reg(UInt(aw bits)) init (0) // last word-aligned byte address
++    // Words requested but not yet popped by the pixel side.
++    val credit = Reg(UInt(log2Up(fifoWords + 1) + 1 bits)) init (0)
++
++    val toBurstEnd = (U(maxBurstBytes, burstLog2 + 1 bits) - addr(burstLog2 - 1 downto 0).resize(burstLog2 + 1))
++    val toLineEnd = (endWord - addr + 4).resize(aw)
++    val pieceBytes = UInt(burstLog2 + 1 bits)
++    pieceBytes := Mux(toLineEnd < toBurstEnd.resize(aw), toLineEnd.resize(burstLog2 + 1), toBurstEnd)
++    val pieceWords = (pieceBytes >> 2).resize(credit.getWidth)
++    val room = credit + pieceWords <= fifoWords
++
++    io.mem.cmd.valid := active && room
++    io.mem.cmd.fragment.opcode := Bmb.Cmd.Opcode.READ
++    io.mem.cmd.fragment.address := addr.resized
++    io.mem.cmd.fragment.length := (pieceBytes - 1).resized
++    io.mem.cmd.fragment.source := 0
++    io.mem.cmd.fragment.data := 0
++    io.mem.cmd.fragment.mask := 0
++    io.mem.cmd.last := True
++    if (io.mem.cmd.fragment.context.getWidth > 0) io.mem.cmd.fragment.context := 0
++
++    when(io.mem.cmd.fire) {
++      addr := addr + pieceBytes.resized
++      when(pieceBytes.resize(aw) === toLineEnd) { active := False }
++    }
++  }
++
++  words.io.push.valid := io.mem.rsp.valid
++  words.io.push.payload := io.mem.rsp.fragment.data
++  io.mem.rsp.ready := True // the credit guarantees FIFO room
++
++  // ---- pixel side: per line, the first pixel's half and the pixel count
++  case class LineInfo() extends Bundle {
++    val firstHalf = Bool()
++    val pixels = UInt(12 bits)
++  }
++  val lines = StreamFifo(LineInfo(), 4)
++
++  io.prefetchReq.ready := !fetch.active && lines.io.push.ready
++  lines.io.push.valid := io.prefetchReq.fire
++  lines.io.push.firstHalf := io.prefetchReq.startAddress(1)
++  lines.io.push.pixels := ((io.prefetchReq.endAddress - io.prefetchReq.startAddress) >> 1).resize(12) + 1
++  when(io.prefetchReq.fire) {
++    fetch.active := True
++    fetch.addr := io.prefetchReq.startAddress(aw - 1 downto 2) @@ U"00"
++    fetch.endWord := io.prefetchReq.endAddress(aw - 1 downto 2) @@ U"00"
++  }
++
++  val pix = new Area {
++    val started = RegInit(False)
++    val half = Reg(Bool()) init (False)
++    val left = Reg(UInt(12 bits)) init (0)
++    val curHalf = Mux(started, half, lines.io.pop.firstHalf)
++    val curLeft = Mux(started, left, lines.io.pop.pixels)
++    val word = words.io.pop.payload
++    val have = lines.io.pop.valid && words.io.pop.valid
++
++    io.readRsp.valid := have && io.readReq.valid
++    io.readRsp.data := Mux(curHalf, word(31 downto 16), word(15 downto 0))
++    io.readReq.ready := have && io.readRsp.ready
++
++    val take = io.readRsp.fire
++    val lastPixel = curLeft === 1
++    // Pop the word after its high half, or after the line's last pixel.
++    words.io.pop.ready := take && (curHalf || lastPixel)
++    lines.io.pop.ready := take && lastPixel
++    when(take) {
++      started := !lastPixel
++      half := !curHalf
++      left := curLeft - 1
++    }
++  }
++
++  // Credit: + words requested, - words popped.
++  val popped = words.io.pop.fire
++  when(io.mem.cmd.fire && !popped) { fetch.credit := fetch.credit + fetch.pieceWords }
++    .elsewhen(io.mem.cmd.fire && popped) { fetch.credit := fetch.credit + fetch.pieceWords - 1 }
++    .elsewhen(popped) { fetch.credit := fetch.credit - 1 }
++}
 diff --git a/src/voodoo/frontend/Lfb.scala b/src/voodoo/frontend/Lfb.scala
 index aeba713..06fa63b 100644
 --- a/src/voodoo/frontend/Lfb.scala
@@ -1340,7 +1518,7 @@ index c5a4cd8..dda7ec3 100644
  
    // ========================================================================
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
-index de14d02..51144d2 100644
+index de14d02..5fe6e54 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
 +++ b/src/voodoo/hdmi/HdmiScanout.scala
 @@ -112,7 +112,7 @@ case class HdmiScanoutStatus(c: Config) extends Bundle {
@@ -1447,6 +1625,14 @@ index de14d02..51144d2 100644
        io.video.rgb := Rgb888.black()
      }
      io.video.de := scan.io.active
+@@ -496,6 +536,7 @@ case class HdmiCdcFramebufferScanout(
+ 
+   val newFrameCore = PulseCCByToggle(hdmi.scan.io.newFrame, hdmiClockDomain, coreClockDomain)
+ 
++
+   io.status.displayedBuffer := 0
+   io.status.displayedBase := prefetchBase
+   io.status.swapPending := False
 diff --git a/src/voodoo/pixel/Fog.scala b/src/voodoo/pixel/Fog.scala
 index 1a3a34c..e46f94b 100644
 --- a/src/voodoo/pixel/Fog.scala
@@ -3660,6 +3846,137 @@ index 0000000..22d0579
 +
 +  test("texture writes drain without a preceding triangle") {
 +    run(withTriangle = false)
++  }
++}
+diff --git a/test/ScanoutLineFetcherTest.scala b/test/ScanoutLineFetcherTest.scala
+new file mode 100644
+index 0000000..9210bd3
+--- /dev/null
++++ b/test/ScanoutLineFetcherTest.scala
+@@ -0,0 +1,125 @@
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo.framebuffer.{FramebufferPlaneReader, ScanoutLineFetcher}
++import voodoo.hdmi.{HdmiCdcFramebufferScanout, VideoTiming}
++
++import scala.collection.mutable
++
++/** HdmiCdcFramebufferScanout fed by ScanoutLineFetcher, against a BMB memory
++  * model with random latency and command back-pressure: every HDMI frame
++  * must show the framebuffer pixel-exact, frame after frame, including lines
++  * that start or end on a half word (odd base address) and bursts that cross
++  * 256-byte pieces.
++  */
++class ScanoutLineFetcherTest extends AnyFunSuite {
++  case class Harness(c: Config, timing: VideoTiming) extends Component {
++    val io = new Bundle {
++      val hdmiClock = in Bool ()
++      val hdmiReset = in Bool ()
++      val frontBase = in UInt (c.addressWidth.value bits)
++      val stride = in UInt (16 bits)
++      val mem = master(Bmb(FramebufferPlaneReader.bmbParams(c)))
++      val rgb = out Bits (24 bits)
++      val de = out Bool ()
++    }
++    val scan = HdmiCdcFramebufferScanout(c, timing, fifoDepth = 256, prefillLevel = 64, refillLowLevel = 96, refillHighLevel = 224)
++    val fetch = ScanoutLineFetcher(c, fifoWords = 64, maxBurstBytes = 32)
++    scan.io.hdmiClock := io.hdmiClock
++    scan.io.hdmiReset := io.hdmiReset
++    scan.io.regs.frontBase := io.frontBase
++    scan.io.regs.backBase := 0
++    scan.io.regs.pixelStride := io.stride.resized
++    scan.io.regs.displayWidth := timing.activeWidth
++    scan.io.regs.displayHeight := timing.activeHeight
++    scan.io.regs.framebufferEnable := True
++    scan.io.regs.testPatternEnable := False
++    for (i <- 0 until 33) {
++      val v = if (i == 32) 255 else i * 8
++      scan.io.regs.gammaLut(i) := B((v << 16) | (v << 8) | v, 24 bits)
++    }
++    scan.io.prefetchReq >> fetch.io.prefetchReq
++    scan.io.readReq >> fetch.io.readReq
++    fetch.io.readRsp >> scan.io.readRsp
++    io.mem <> fetch.io.mem
++    io.rgb := scan.io.video.rgb.r ## scan.io.video.rgb.g ## scan.io.video.rgb.b
++    io.de := scan.io.video.de
++  }
++
++  test("scanout through the line fetcher shows every frame pixel-exact") {
++    val c = Config.voodoo1()
++    val timing = VideoTiming(activeWidth = 37, activeHeight = 6, hFrontPorch = 2, hSync = 2, hBackPorch = 3,
++      vFrontPorch = 1, vSync = 1, vBackPorch = 1)
++    SimConfig.withIVerilog.compile(Harness(c, timing)).doSim(seed = 4) { dut =>
++      dut.clockDomain.forkStimulus(10)
++      fork { while (true) { dut.io.hdmiClock #= false; sleep(7); dut.io.hdmiClock #= true; sleep(7) } }
++      dut.io.hdmiReset #= true
++      val base = 0x10002L // odd pixel start: first pixel in the high half word
++      val stride = 64 // hardware stride is in 64-pixel tiles
++      dut.io.frontBase #= base
++      dut.io.stride #= stride
++      // Pixel (x, y) -> red x+1, green y+1 (RGB565).
++      def pix(x: Int, y: Int): Int = (((x + 1) & 31) << 11) | ((y + 1) << 5)
++      val mem = mutable.HashMap[Long, Int]()
++      for (y <- 0 until timing.activeHeight; x <- 0 until timing.activeWidth) {
++        val a = base + 2L * (y * stride + x)
++        val w = a & ~3L
++        val old = mem.getOrElse(w, 0)
++        mem(w) = if ((a & 2) != 0) (old & 0xffff) | (pix(x, y) << 16) else (old & 0xffff0000) | pix(x, y)
++      }
++      val rnd = new scala.util.Random(9)
++      val pending = mutable.Queue[(Long, Int, Long)]() // addr, words, due
++      var cycle = 0L
++      dut.io.mem.cmd.ready #= false
++      dut.io.mem.rsp.valid #= false
++      fork {
++        var beat = 0
++        var rspValid = false
++        while (true) {
++          dut.clockDomain.waitSampling(); cycle += 1
++          if (dut.io.mem.cmd.valid.toBoolean && dut.io.mem.cmd.ready.toBoolean) {
++            val a = dut.io.mem.cmd.fragment.address.toLong
++            val words = (dut.io.mem.cmd.fragment.length.toInt + 1 + (a & 3).toInt + 3) / 4
++            assert((a & ~0xfffL) == ((a + 4 * words - 1) & ~0xfffL), "burst crosses a 4 KiB page")
++            pending.enqueue((a & ~3L, words, cycle + 3 + rnd.nextInt(12)))
++          }
++          dut.io.mem.cmd.ready #= rnd.nextInt(3) != 0
++          if (rspValid && dut.io.mem.rsp.ready.toBoolean) { rspValid = false; beat += 1
++            if (beat == pending.head._2) { pending.dequeue(); beat = 0 } }
++          if (!rspValid && pending.nonEmpty && pending.head._3 <= cycle) {
++            val (a, words, _) = pending.head
++            dut.io.mem.rsp.fragment.data #= mem.getOrElse(a + 4 * beat, 0) & 0xffffffffL
++            dut.io.mem.rsp.last #= beat == words - 1
++            rspValid = true
++          }
++          dut.io.mem.rsp.valid #= rspValid
++        }
++      }
++      dut.clockDomain.waitSampling(4)
++      dut.io.hdmiReset #= false
++      // Collect HDMI frames (sampled on the HDMI clock).
++      val frames = mutable.ArrayBuffer[Map[(Int, Int), (Int, Int)]]()
++      var cur = mutable.Map[(Int, Int), (Int, Int)]()
++      var prevDe = false; var inactive = 0; var x = 0; var y = -1
++      while (frames.size < 30) {
++        waitUntil(dut.io.hdmiClock.toBoolean == false); waitUntil(dut.io.hdmiClock.toBoolean)
++        sleep(1)
++        val de = dut.io.de.toBoolean
++        if (de && !prevDe) {
++          if (inactive > timing.hTotal) { if (y >= 0) frames += cur.toMap; cur = mutable.Map(); y = 0 } else y += 1
++          x = 0; inactive = 0
++        } else if (!de) inactive += 1
++        if (de) { val v = dut.io.rgb.toBigInt.toInt; cur((x, y)) = ((v >> 16) >> 3, ((v >> 8) & 0xff) >> 2); x += 1 }
++        prevDe = de
++      }
++      def exact(f: Map[(Int, Int), (Int, Int)]) =
++        (for (yy <- 0 until timing.activeHeight; xx <- 0 until timing.activeWidth) yield f.get((xx, yy)) == Some(((xx + 1) & 31, yy + 1))).forall(identity)
++      val ok = frames.drop(3).map(exact)
++      assert(ok.forall(identity), s"frames not exact: $ok")
++    }
 +  }
 +}
 diff --git a/test/TmuSmallTextureCacheTest.scala b/test/TmuSmallTextureCacheTest.scala

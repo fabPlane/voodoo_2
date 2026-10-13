@@ -76,6 +76,9 @@ object GowinGenSupport {
       // 16K-pixel FIFO (~0.65 ms of display): occasional memory stalls
       // outlast 4K pixels (~15% of frames blanked mid-frame on B52/B54).
       hdmiFifoDepth = 16384,
+      // The cached scanout reader stalled for good under GLQuake (B53, B58:
+      // black HDMI while rendering went on); fetch whole lines instead.
+      scanoutLineFetcher = true,
       hdmiPrefill = 8192,
       hdmiRefillLow = 8192,
       hdmiRefillHigh = 14336,
