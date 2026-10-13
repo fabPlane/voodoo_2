@@ -349,7 +349,7 @@ index d163ab7..4a8a8ed 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..d55f005 100644
+index 1b34fa2..ca5df54 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -362,18 +362,22 @@ index 1b34fa2..d55f005 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,9 @@ case class Config(
+@@ -31,6 +34,13 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
 +    // Lines of the small direct-mapped texture cache used when
 +    // useTexFillCache is off (TmuSmallTextureCache); 0 = no cache.
 +    texSmallCacheLines: Int = 0,
++    // HDMI scanout FIFO (4096 pixels) refill hysteresis: start fetching at
++    // or below the low level, stop at the high level.
++    hdmiRefillLow: Int = 1024,
++    hdmiRefillHigh: Int = 3072,
      packedTexLayout: Boolean = true,
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..d815142 100644
+index 100f1c6..3a6e7c2 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -415,7 +419,20 @@ index 100f1c6..d815142 100644
      // Integrated scanout path. Board wrappers provide the physical HDMI transmitter/clocking.
      val hdmi = master(HdmiScanoutPort(c))
  
-@@ -164,7 +189,9 @@ case class Core(c: Config) extends Component {
+@@ -110,7 +135,11 @@ case class Core(c: Config) extends Component {
+   val pixelPipeline = PixelPipeline(c)
+   val framebufferMem = FramebufferMemSubsystem(c)
+   val textureMem = TextureMemSubsystem(c)
+-  val hdmiScanout = HdmiCdcFramebufferScanout(c)
++  val hdmiScanout = HdmiCdcFramebufferScanout(
++    c,
++    refillLowLevel = c.hdmiRefillLow,
++    refillHighLevel = c.hdmiRefillHigh
++  )
+ 
+   val controlPlane = new Area {
+     val swapBuffer = SwapBuffer()
+@@ -164,7 +193,9 @@ case class Core(c: Config) extends Component {
    pixelPipeline.io.ftriangleCmd << regBank.commands.ftriangleCmd
    pixelPipeline.io.fastfillCmd << regBank.commands.fastfillCmd
    pixelPipeline.io.paletteWrite << regBank.io.paletteWrite
@@ -426,7 +443,7 @@ index 100f1c6..d815142 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,8 +200,11 @@ case class Core(c: Config) extends Component {
+@@ -173,8 +204,11 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -440,7 +457,7 @@ index 100f1c6..d815142 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -200,7 +230,17 @@ case class Core(c: Config) extends Component {
+@@ -200,7 +234,17 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
