@@ -70,11 +70,11 @@ object GowinGenSupport {
       // the full fill cache does not fit, but without any cache every texel
       // is a DDR3 round trip.
       texSmallCacheLines = 256,
-      // Keep the HDMI scanout FIFO topped up: refilling only from 1024 left
-      // too little margin once rendering competed for memory (frames
-      // blanked mid-frame, B52).
-      hdmiRefillLow = 3072,
-      hdmiRefillHigh = 3840,
+      // More HDMI scanout FIFO margin: refilling only from 1024 left too
+      // little once rendering competed for memory (frames blanked
+      // mid-frame, B52). 3072-3840 hung the scanout reader for good (B53).
+      hdmiRefillLow = 2048,
+      hdmiRefillHigh = 3584,
       // debugBusy/writePathDebug readable over PCIe (0x240/0x250) for live hangs.
       hwDebugRegs = true
     )
