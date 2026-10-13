@@ -383,7 +383,7 @@ index 1b34fa2..e38994d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..eefcc7b 100644
+index 100f1c6..6967ed4 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -425,7 +425,7 @@ index 100f1c6..eefcc7b 100644
      // Integrated scanout path. Board wrappers provide the physical HDMI transmitter/clocking.
      val hdmi = master(HdmiScanoutPort(c))
  
-@@ -110,7 +135,13 @@ case class Core(c: Config) extends Component {
+@@ -110,7 +135,14 @@ case class Core(c: Config) extends Component {
    val pixelPipeline = PixelPipeline(c)
    val framebufferMem = FramebufferMemSubsystem(c)
    val textureMem = TextureMemSubsystem(c)
@@ -435,12 +435,13 @@ index 100f1c6..eefcc7b 100644
 +    fifoDepth = c.hdmiFifoDepth,
 +    prefillLevel = c.hdmiPrefill,
 +    refillLowLevel = c.hdmiRefillLow,
-+    refillHighLevel = c.hdmiRefillHigh
++    refillHighLevel = c.hdmiRefillHigh,
++    prefetchAheadLines = if (c.scanoutLineFetcher) 2 else 1
 +  )
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -164,7 +195,9 @@ case class Core(c: Config) extends Component {
+@@ -164,7 +196,9 @@ case class Core(c: Config) extends Component {
    pixelPipeline.io.ftriangleCmd << regBank.commands.ftriangleCmd
    pixelPipeline.io.fastfillCmd << regBank.commands.fastfillCmd
    pixelPipeline.io.paletteWrite << regBank.io.paletteWrite
@@ -451,7 +452,7 @@ index 100f1c6..eefcc7b 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,8 +206,11 @@ case class Core(c: Config) extends Component {
+@@ -173,8 +207,11 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -465,7 +466,7 @@ index 100f1c6..eefcc7b 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -200,7 +236,17 @@ case class Core(c: Config) extends Component {
+@@ -200,7 +237,17 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -1518,7 +1519,7 @@ index c5a4cd8..dda7ec3 100644
  
    // ========================================================================
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
-index de14d02..5fe6e54 100644
+index de14d02..4677973 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
 +++ b/src/voodoo/hdmi/HdmiScanout.scala
 @@ -112,7 +112,7 @@ case class HdmiScanoutStatus(c: Config) extends Bundle {
@@ -1530,7 +1531,24 @@ index de14d02..5fe6e54 100644
    val clock = Bool()
    val reset = Bool()
    val video = ParallelRgbVideo()
-@@ -346,7 +346,10 @@ case class HdmiCdcFramebufferScanout(
+@@ -315,9 +315,15 @@ case class HdmiCdcFramebufferScanout(
+     fifoDepth: Int = 4096,
+     prefillLevel: Int = 2048,
+     refillLowLevel: Int = 1024,
+-    refillHighLevel: Int = 3072
++    refillHighLevel: Int = 3072,
++    // Lines that may be announced (prefetchReq) ahead of the line being read.
++    // 1 = announce a line only after the previous one is fully read (what the
++    // cached plane reader expects); the line fetcher overlaps the next line's
++    // DDR reads with this one's pixels when given 2.
++    prefetchAheadLines: Int = 1
+ ) extends Component {
+   require(isPow2(fifoDepth), "HDMI CDC FIFO depth must be a power of two")
++  require(prefetchAheadLines >= 1)
+   require(prefillLevel > 0 && prefillLevel < fifoDepth)
+   require(refillLowLevel > 0 && refillLowLevel < refillHighLevel)
+   require(refillHighLevel < fifoDepth)
+@@ -346,7 +352,10 @@ case class HdmiCdcFramebufferScanout(
      config = ClockDomain.current.config
    )
  
@@ -1542,7 +1560,102 @@ index de14d02..5fe6e54 100644
  
    val prefetchX = Reg(UInt(hWidth bits)) init (0)
    val prefetchY = Reg(UInt(vWidth bits)) init (0)
-@@ -441,11 +444,36 @@ case class HdmiCdcFramebufferScanout(
+@@ -354,7 +363,11 @@ case class HdmiCdcFramebufferScanout(
+   val outstanding = Reg(UInt(log2Up(fifoDepth + 1) bits)) init (0)
+   val scanoutRun = RegInit(False)
+   val refillActive = RegInit(True)
+-  val linePrefetched = RegInit(False)
++  // Prefetch side: the next line to announce, ahead of prefetchY/prefetchBase.
++  val pfY = Reg(UInt(vWidth bits)) init (0)
++  val pfBase = Reg(UInt(c.addressWidth)) init (0)
++  val linesQueued = Reg(UInt(log2Up(prefetchAheadLines + 1) bits)) init (0)
++  val linePrefetched = linesQueued =/= 0
+ 
+   val projected = UInt((log2Up(fifoDepth + 1) + 1) bits)
+   projected := (pixelFifo.io.pushOccupancy.resize(projected.getWidth) + outstanding.resize(
+@@ -370,15 +383,15 @@ case class HdmiCdcFramebufferScanout(
+   val atEndOfDisplayLine = prefetchX === (displayWidth - 1).resized
+   val atEndOfDisplayFrame = atEndOfDisplayLine && prefetchY === (displayHeight - 1).resized
+   val lineStartAddress = FramebufferAddressMath.planeAddress(
+-    prefetchBase,
++    pfBase,
+     U(0, 10 bits),
+-    prefetchY.resize(10 bits),
++    pfY.resize(10 bits),
+     io.regs.pixelStride
+   )
+   val lineEndAddress = FramebufferAddressMath.planeAddress(
+-    prefetchBase,
++    pfBase,
+     (displayWidth - 1).resize(10 bits),
+-    prefetchY.resize(10 bits),
++    pfY.resize(10 bits),
+     io.regs.pixelStride
+   )
+ 
+@@ -386,12 +399,14 @@ case class HdmiCdcFramebufferScanout(
+     prefetchX := 0
+     prefetchY := 0
+     prefetchBase := io.regs.frontBase
++    pfY := 0
++    pfBase := io.regs.frontBase
+     scanoutRun := False
+     refillActive := True
+-    linePrefetched := False
+   } otherwise {
+     when(!scanoutRun) {
+       prefetchBase := io.regs.frontBase
++      pfBase := io.regs.frontBase
+       refillActive := True
+       when(pixelFifo.io.pushOccupancy >= prefillLevel) {
+         scanoutRun := True
+@@ -409,7 +424,7 @@ case class HdmiCdcFramebufferScanout(
+     }
+   }
+ 
+-  io.prefetchReq.valid := displayEnabled && refillActive && !linePrefetched
++  io.prefetchReq.valid := displayEnabled && refillActive && linesQueued < prefetchAheadLines
+   io.prefetchReq.startAddress := lineStartAddress
+   io.prefetchReq.endAddress := lineEndAddress
+ 
+@@ -421,8 +436,23 @@ case class HdmiCdcFramebufferScanout(
+     io.regs.pixelStride
+   )
+ 
++  // The prefetch side latches the next frame's base when it wraps; the read
++  // side, always behind it, takes that base when it wraps.
+   when(io.prefetchReq.fire) {
+-    linePrefetched := True
++    when(pfY === (displayHeight - 1).resized) {
++      pfY := 0
++      pfBase := io.regs.frontBase
++    } otherwise {
++      pfY := pfY + 1
++    }
++  }
++  val lineRead = io.readReq.fire && atEndOfDisplayLine
++  when(!displayEnabled) {
++    linesQueued := 0
++  } elsewhen (io.prefetchReq.fire && !lineRead) {
++    linesQueued := linesQueued + 1
++  } elsewhen (lineRead && !io.prefetchReq.fire) {
++    linesQueued := linesQueued - 1
+   }
+ 
+   when(io.readReq.fire) {
+@@ -430,22 +460,45 @@ case class HdmiCdcFramebufferScanout(
+       prefetchX := 0
+       when(atEndOfDisplayFrame) {
+         prefetchY := 0
+-        prefetchBase := io.regs.frontBase
+-        linePrefetched := False
++        prefetchBase := pfBase
+       } otherwise {
+         prefetchY := prefetchY + 1
+-        linePrefetched := False
+       }
+     } otherwise {
+       prefetchX := prefetchX + 1
      }
    }
  
@@ -1581,7 +1694,7 @@ index de14d02..5fe6e54 100644
      is(B"10") { outstanding := outstanding + 1 }
      is(B"01") { outstanding := outstanding - 1 }
      default {}
-@@ -470,23 +498,35 @@ case class HdmiCdcFramebufferScanout(
+@@ -470,23 +523,35 @@ case class HdmiCdcFramebufferScanout(
  
      val useFramebuffer = !testPatternEnable
      val startArmed = BufferCC(scanoutRun, False)
@@ -1625,7 +1738,7 @@ index de14d02..5fe6e54 100644
        io.video.rgb := Rgb888.black()
      }
      io.video.de := scan.io.active
-@@ -496,6 +536,7 @@ case class HdmiCdcFramebufferScanout(
+@@ -496,6 +561,7 @@ case class HdmiCdcFramebufferScanout(
  
    val newFrameCore = PulseCCByToggle(hdmi.scan.io.newFrame, hdmiClockDomain, coreClockDomain)
  
@@ -3850,10 +3963,10 @@ index 0000000..22d0579
 +}
 diff --git a/test/ScanoutLineFetcherTest.scala b/test/ScanoutLineFetcherTest.scala
 new file mode 100644
-index 0000000..9210bd3
+index 0000000..d8a0517
 --- /dev/null
 +++ b/test/ScanoutLineFetcherTest.scala
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,126 @@
 +package voodoo
 +
 +import org.scalatest.funsuite.AnyFunSuite
@@ -3873,7 +3986,7 @@ index 0000000..9210bd3
 +  * 256-byte pieces.
 +  */
 +class ScanoutLineFetcherTest extends AnyFunSuite {
-+  case class Harness(c: Config, timing: VideoTiming) extends Component {
++  case class Harness(c: Config, timing: VideoTiming, ahead: Int) extends Component {
 +    val io = new Bundle {
 +      val hdmiClock = in Bool ()
 +      val hdmiReset = in Bool ()
@@ -3883,7 +3996,8 @@ index 0000000..9210bd3
 +      val rgb = out Bits (24 bits)
 +      val de = out Bool ()
 +    }
-+    val scan = HdmiCdcFramebufferScanout(c, timing, fifoDepth = 256, prefillLevel = 64, refillLowLevel = 96, refillHighLevel = 224)
++    val scan = HdmiCdcFramebufferScanout(c, timing, fifoDepth = 256, prefillLevel = 64, refillLowLevel = 96, refillHighLevel = 224,
++      prefetchAheadLines = ahead)
 +    val fetch = ScanoutLineFetcher(c, fifoWords = 64, maxBurstBytes = 32)
 +    scan.io.hdmiClock := io.hdmiClock
 +    scan.io.hdmiReset := io.hdmiReset
@@ -3906,11 +4020,11 @@ index 0000000..9210bd3
 +    io.de := scan.io.video.de
 +  }
 +
-+  test("scanout through the line fetcher shows every frame pixel-exact") {
++  for (ahead <- Seq(1, 2)) test(s"scanout through the line fetcher shows every frame pixel-exact (ahead $ahead)") {
 +    val c = Config.voodoo1()
 +    val timing = VideoTiming(activeWidth = 37, activeHeight = 6, hFrontPorch = 2, hSync = 2, hBackPorch = 3,
 +      vFrontPorch = 1, vSync = 1, vBackPorch = 1)
-+    SimConfig.withIVerilog.compile(Harness(c, timing)).doSim(seed = 4) { dut =>
++    SimConfig.withIVerilog.compile(Harness(c, timing, ahead)).doSim(seed = 4) { dut =>
 +      dut.clockDomain.forkStimulus(10)
 +      fork { while (true) { dut.io.hdmiClock #= false; sleep(7); dut.io.hdmiClock #= true; sleep(7) } }
 +      dut.io.hdmiReset #= true
