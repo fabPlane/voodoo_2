@@ -228,7 +228,7 @@ case class TangMega138kPro(c: Config) extends Component {
   // Scanout FIFO (4096 pixels) below 3/4: let the display's reads through
   // the DDR throttle, ahead of writes (black frames at gap 32 otherwise; at
   // 1/2 a mid-frame underflow still blanked frames during texture uploads).
-  private val scanoutLow = coreCd(RegNext(core.io.hdmi.fifoLevel < 3072, init = True))
+  private val scanoutLow = coreCd(RegNext(core.io.hdmi.fifoLevel < c.hdmiRefillLow, init = True))
   ddr.io.urgent := BufferCC(scanoutLow, init = True)
 
   // Window 31 offset 0x60: AXI valid/ready levels of the memory paths, so a

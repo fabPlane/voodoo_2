@@ -73,8 +73,12 @@ object GowinGenSupport {
       // More HDMI scanout FIFO margin: refilling only from 1024 left too
       // little once rendering competed for memory (frames blanked
       // mid-frame, B52). 3072-3840 hung the scanout reader for good (B53).
-      hdmiRefillLow = 2048,
-      hdmiRefillHigh = 3584,
+      // 16K-pixel FIFO (~0.65 ms of display): occasional memory stalls
+      // outlast 4K pixels (~15% of frames blanked mid-frame on B52/B54).
+      hdmiFifoDepth = 16384,
+      hdmiPrefill = 8192,
+      hdmiRefillLow = 8192,
+      hdmiRefillHigh = 14336,
       // debugBusy/writePathDebug readable over PCIe (0x240/0x250) for live hangs.
       hwDebugRegs = true
     )
