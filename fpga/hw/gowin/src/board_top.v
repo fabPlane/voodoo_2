@@ -203,11 +203,18 @@ module board_top #(
         if (core_rst_async) core_rst_sync <= 3'b111;
         else                core_rst_sync <= {core_rst_sync[1:0], 1'b0};
 
+    // DDR-UI-domain reset, registered twice: driven straight from the PHY's
+    // init_calib_complete it fanned out to ~150 synchronous resets and missed
+    // 100 MHz (B62).
+    reg [1:0] ddr_dom_rst = 2'b11;
+    always @(posedge ddr_clk_out)
+        ddr_dom_rst <= {ddr_dom_rst[0], ddr_rst | ~init_calib_complete};
+
     // Implicit domain = DDR3 UI clock (native-port adapter only); the Voodoo
     // core runs on clk_core and crosses into it through Axi4CC.
     TangMega138kPro u_voodoo (
         .clk                 (ddr_clk_out),
-        .reset               (ddr_rst | ~init_calib_complete),
+        .reset               (ddr_dom_rst[1]),
         .coreClk             (clk_core),
         .coreReset           (core_rst_sync[2]),
         .pcieClk             (clk100),
