@@ -12,7 +12,7 @@ cd "$HW/$1" || exit 1
 exec 8>>.build.lock
 if ! flock -n 8; then echo "build dir $1 busy (another gw_sh build)" >> "$OUT/$2.status"; echo "DONE busy $(date)" >> "$OUT/$2.status"; exit 1; fi
 rm -rf impl
-for i in $(seq 1 20); do
+for i in $(seq 1 200); do  # Sipeed's float licence is shared: seats can be busy for an hour
   gw_sh build.tcl > "$OUT/$2.log" 2>&1
   if grep -qi "Server not responding\|License verification failed" "$OUT/$2.log"; then
     echo "license retry $i" >> "$OUT/$2.status"; sleep 30; continue
