@@ -230,6 +230,14 @@ case class FrameDmaWriter() extends Component {
   val resync = inSof && wordsDone =/= 0
   val tlpAddr = Mux(resync, slotBase, curAddr)
 
+  // End-of-TLP bookkeeping, one cycle ahead: these only change at the end of
+  // a TLP (>= 8 beats apart), and computing them in the last beat (20-bit
+  // add + compare + 32-bit add + mux) missed timing at 75 MHz (B60).
+  val doneNext = RegNext(wordsDone + wordsPerTlp)
+  val frameEndNext = RegNext(wordsDone + wordsPerTlp >= frameWords)
+  val slotWrapNext = RegNext(slot + 1 >= slots)
+  val nextSlotBase = RegNext(slotBase + stride)
+
   def mwrHeader(lengthDw: Int, addr: UInt, firstLastBe: Int): Bits =
     B(0x40000000L | lengthDw, 32 bits) ## (reqId ## B(0, 8 bits) ## B(firstLastBe, 8 bits)) ## (addr(31 downto 2) ## B"00")
 
@@ -270,20 +278,18 @@ case class FrameDmaWriter() extends Component {
           beat := beat + 1
         } otherwise {
           tlps := tlps + 1
-          val doneNow = wordsDone + wordsPerTlp
-          when(doneNow >= frameWords) {
+          when(frameEndNext) {
             // Frame complete: report it, move to the next slot.
             statusPending := True
             statusValue := ((framesDone + 1).resize(24) ## slot).asBits
             statusExtra := io.extraStatus
             framesDone := framesDone + 1
             wordsDone := 0
-            val wrap = slot + 1 >= slots
-            slot := Mux(wrap, U(0, 8 bits), slot + 1)
-            slotBase := Mux(wrap, base, slotBase + stride)
-            curAddr := Mux(wrap, base, slotBase + stride)
+            slot := Mux(slotWrapNext, U(0, 8 bits), slot + 1)
+            slotBase := Mux(slotWrapNext, base, nextSlotBase)
+            curAddr := Mux(slotWrapNext, base, nextSlotBase)
           } otherwise {
-            wordsDone := doneNow
+            wordsDone := doneNext
             curAddr := curAddr + wordsPerTlp * 32
           }
           state := S.idle

@@ -123,10 +123,15 @@ case class Axi4ToGowinDdrNative(
   // reloaded the FPGA 8 s into GLQuake (B41), so keep 8.
   val urgentSync = RegNext(io.urgent, init = False)
   // The gap is io.cmdGap (8 by default on the board: see TangMega138kPro).
+  // "Gap elapsed" is registered from the counter's next value: cmdGap === 0
+  // fed the command grant combinationally and missed 100 MHz (B60).
   val cmdGap = Reg(UInt(8 bits)) init (0)
-  val cmdGapOk = cmdGap === 0 || urgentSync
-  when(!cmdGapOk) { cmdGap := cmdGap - 1 }
-  when(io.ddr.cmdEn) { cmdGap := io.cmdGap }
+  val gapNext = UInt(8 bits)
+  gapNext := Mux(cmdGap === 0, cmdGap, cmdGap - 1)
+  when(io.ddr.cmdEn) { gapNext := io.cmdGap }
+  cmdGap := gapNext
+  val gapZero = RegNext(gapNext === 0, init = True)
+  val cmdGapOk = gapZero || urgentSync
   val readLimit = RegNext(
     Mux(io.maxReads === 0 || io.maxReads > readsInFlight, U(readsInFlight), io.maxReads.resized)
   ).resize(log2Up(readsInFlight + 1) bits)
