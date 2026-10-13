@@ -121,9 +121,9 @@ case class Axi4ToGowinDdrNative(
   // cycles corrupts bursts or kills JTAG, gap >= 8 was clean over 1 GiB).
   // The one-outstanding bridge never got close; with reads pipelined, gap 0
   // reloaded the FPGA 8 s into GLQuake (B41), so keep 8.
+  val urgentSync = RegNext(io.urgent, init = False)
   // The gap is io.cmdGap (8 by default on the board: see TangMega138kPro).
   val cmdGap = Reg(UInt(8 bits)) init (0)
-  val urgentSync = RegNext(io.urgent, init = False)
   val cmdGapOk = cmdGap === 0 || urgentSync
   when(!cmdGapOk) { cmdGap := cmdGap - 1 }
   when(io.ddr.cmdEn) { cmdGap := io.cmdGap }
@@ -180,7 +180,7 @@ case class Axi4ToGowinDdrNative(
     // Registered "a read slot is free" (inFlight after this cycle < limit):
     // the compare fed the command arbiter combinationally and missed 100 MHz.
     val slotFree = RegInit(True)
-    val wantsCmd = active && addrSettled && slotFree && meta.io.push.ready
+    val wantsCmd = active && addrSettled && (slotFree || urgentSync && inFlight =/= readsInFlight) && meta.io.push.ready
     val issue = Bool() // driven by the command arbiter below
 
     meta.io.push.valid := issue
@@ -350,7 +350,8 @@ case class Axi4ToGowinDdrNative(
   // ------------------------------------------------------ command arbiter
   val preferWrite = RegInit(False)
   val canIssue = io.ddr.cmdReady && cmdGapOk
-  val grantWrite = canIssue && wr.wantsCmd && (preferWrite || !rd.wantsCmd)
+  // While the display is short of pixels, reads go first.
+  val grantWrite = canIssue && wr.wantsCmd && ((preferWrite && !urgentSync) || !rd.wantsCmd)
   val grantRead = canIssue && rd.wantsCmd && !grantWrite
   wr.issue := grantWrite
   rd.issue := grantRead

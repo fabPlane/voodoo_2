@@ -59,12 +59,33 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     timeoutLog2 = 30
   )
 
-  val fbArbiter = BmbArbiter(
-    inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
-    outputParameter = Core.fbMemSharedBmbParams(c),
-    // Round-robin so HDMI scanout is not starved by a continuous write burst.
-    // Fixed priority (writes first) deadlocked scanout on the Console.
+  // Two levels: the colour-read port (HDMI scanout at top priority inside
+  // it, then colour reads and LFB reads) goes before the four rendering
+  // ports, which round-robin among themselves. With one 5-way round-robin
+  // the scanout got 1/5 of the turns and, once rendering got fast, ran short
+  // (half the frames blanked mid-frame, B50). Fixed priority with writes
+  // first deadlocked scanout on the Console; the scanout stops asking when
+  // its FIFO is full, so it cannot starve the others.
+  private val renderParams = Core.fbMemBmbParams(c)
+  private val renderOutParams = BmbParameter(
+    addressWidth = renderParams.access.addressWidth,
+    dataWidth = renderParams.access.dataWidth,
+    sourceWidth = renderParams.access.sourceWidth + 2,
+    contextWidth = renderParams.access.contextWidth,
+    lengthWidth = renderParams.access.lengthWidth,
+    canRead = true,
+    canWrite = true,
+    alignment = BmbParameter.BurstAlignement.BYTE
+  )
+  val renderArbiter = BmbArbiter(
+    inputsParameter = Seq.fill(4)(renderParams),
+    outputParameter = renderOutParams,
     lowerFirstPriority = false
+  )
+  val fbArbiter = BmbArbiter(
+    inputsParameter = Seq(renderParams, renderOutParams),
+    outputParameter = Core.fbMemSharedBmbParams(c),
+    lowerFirstPriority = true
   )
   val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2)
   val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false)
@@ -83,11 +104,12 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // core's internal arbiters, this 5-way arbiter and the AXI aligner formed
   // one ~50 ns combinational valid/ready chain on Gowin.
   private def cut(b: Bmb): Bmb = b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
-  fbArbiter.io.inputs(0) <> cut(core.io.fbMemWrite)
-  fbArbiter.io.inputs(1) <> cut(core.io.fbColorWriteMem)
-  fbArbiter.io.inputs(2) <> cut(core.io.fbAuxWriteMem)
-  fbArbiter.io.inputs(3) <> cut(core.io.fbColorReadMem)
-  fbArbiter.io.inputs(4) <> cut(core.io.fbAuxReadMem)
+  fbArbiter.io.inputs(0) <> cut(core.io.fbColorReadMem)
+  renderArbiter.io.inputs(0) <> cut(core.io.fbMemWrite)
+  renderArbiter.io.inputs(1) <> cut(core.io.fbColorWriteMem)
+  renderArbiter.io.inputs(2) <> cut(core.io.fbAuxWriteMem)
+  renderArbiter.io.inputs(3) <> cut(core.io.fbAuxReadMem)
+  fbArbiter.io.inputs(1) <> renderArbiter.io.output
   fbAxi.io.input <> cut(fbArbiter.io.output)
   texAxi.io.input <> cut(core.io.texMem)
   io.memFb << fbAxi.io.output
