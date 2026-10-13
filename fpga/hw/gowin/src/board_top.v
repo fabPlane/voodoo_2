@@ -2,7 +2,13 @@
 // Instantiates Gowin IP (generate these in the IP Core Generator; see ip.md)
 // and the SpinalHDL fabric TangMega138kPro.
 
-module board_top (
+module board_top #(
+    // DRAM on-die termination. Sipeed's DDR3 core sets RTT_NOM = RZQ/12
+    // (20 ohm) with dynamic ODT off, so every write burst pulls ~0.5 A
+    // through the DQ terminations; the dock reloads itself under DDR3
+    // traffic. 0 holds the DRAM ODT pin low (no termination) to test that.
+    parameter DDR_ODT_ENABLE = 1
+) (
     input  wire        clk50,
     input  wire        pcie_rstn,
     output wire [3:0]  led_n,
@@ -140,6 +146,9 @@ module board_top (
     wire        rd_data_end;
     wire        sr_ack, ref_ack;
 
+    wire ddr_odt_ip;
+    assign O_ddr_odt = DDR_ODT_ENABLE ? ddr_odt_ip : 1'b0;
+
     DDR3_Memory_Interface_Top u_ddr3 (
         .clk                 (clk50),
         .pll_stop            (ddr_pll_stop),
@@ -175,7 +184,7 @@ module board_top (
         .O_ddr_clk           (O_ddr_clk),
         .O_ddr_clk_n         (O_ddr_clk_n),
         .O_ddr_cke           (O_ddr_cke),
-        .O_ddr_odt           (O_ddr_odt),
+        .O_ddr_odt           (ddr_odt_ip),
         .O_ddr_reset_n       (O_ddr_reset_n),
         .O_ddr_dqm           (O_ddr_dqm),
         .IO_ddr_dq           (IO_ddr_dq),
