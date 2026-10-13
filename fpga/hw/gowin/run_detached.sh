@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run gw_sh build.tcl in fpga/hw/<dir> detached from the shell (survives
-# agent/tool timeouts), retrying on Sipeed float-licence drops.
+# agent/tool timeouts), retrying while no licence seat is free.
 #   setsid nohup hw/gowin/run_detached.sh <hw dir name> <tag> &
 # Log: $HOME/.cache/gowin-builds/<tag>.log, status (DONE line): <tag>.status
 set -u
@@ -12,11 +12,17 @@ cd "$HW/$1" || exit 1
 exec 8>>.build.lock
 if ! flock -n 8; then echo "build dir $1 busy (another gw_sh build)" >> "$OUT/$2.status"; echo "DONE busy $(date)" >> "$OUT/$2.status"; exit 1; fi
 rm -rf impl
-for i in $(seq 1 200); do  # Sipeed's float licence is shared: seats can be busy for an hour
+# Licences: $GOWINHOME/IDE/bin (gwlicense.ini -> our 1-seat floating server
+# on this PC) first; when that seat is busy or down, IDE/bin_sipeed (Sipeed's
+# shared server, seats can be busy for an hour).
+licence_failed() { grep -qi "Server not responding\|License verification failed\|No more license available\|License information lost" "$1"; }
+for i in $(seq 1 200); do
   gw_sh build.tcl > "$OUT/$2.log" 2>&1
-  if grep -qi "Server not responding\|License verification failed" "$OUT/$2.log"; then
-    echo "license retry $i" >> "$OUT/$2.status"; sleep 30; continue
+  licence_failed "$OUT/$2.log" || { echo "licence: ours" >> "$OUT/$2.status"; break; }
+  if [ -x "$GOWINHOME/IDE/bin_sipeed/gw_sh" ]; then
+    "$GOWINHOME/IDE/bin_sipeed/gw_sh" build.tcl > "$OUT/$2.log" 2>&1
+    licence_failed "$OUT/$2.log" || { echo "licence: sipeed" >> "$OUT/$2.status"; break; }
   fi
-  break
+  echo "license retry $i" >> "$OUT/$2.status"; sleep 30
 done
 echo "DONE $(date)" >> "$OUT/$2.status"
