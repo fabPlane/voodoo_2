@@ -383,7 +383,7 @@ index 1b34fa2..e38994d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..6967ed4 100644
+index 100f1c6..94814c8 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -466,7 +466,7 @@ index 100f1c6..6967ed4 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -200,7 +237,17 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +237,20 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -484,7 +484,10 @@ index 100f1c6..6967ed4 100644
 +  regBank.io.debug := regDebug
  
    pciFifo.io.pipelineBusy := pixelPipeline.io.debug.pipelineBusy
++  pciFifo.io.swapBusy := controlPlane.swapBuffer.io.waiting || regBank.commands.swapbufferCmd.valid
    pciFifo.io.commandReady := regBank.io.commandReady
+   pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
+   regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
 index 9effb48..2e25087 100644
 --- a/src/voodoo/CoreSim.scala
@@ -521,10 +524,19 @@ index 6051025..8664556 100644
  
    val memTiming = SimMemoryTiming(
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..b09f29d 100644
+index 226d60e..25d070d 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
-@@ -97,20 +97,57 @@ case class PciFifo(
+@@ -67,6 +67,8 @@ case class PciFifo(
+ 
+     // Drain blocking inputs
+     val pipelineBusy = in Bool ()
++    // A buffer swap is pending (swapbufferCMD accepted or waiting for retrace).
++    val swapBusy = in(Bool()) default (False)
+     val commandReady = in Vec (Bool(), commandAddresses.size)
+ 
+     // Status outputs
+@@ -97,20 +99,57 @@ case class PciFifo(
    // ========================================================================
    // Address categorization signals (assigned in addPrePopTask)
    // ========================================================================
@@ -589,7 +601,7 @@ index 226d60e..b09f29d 100644
  
    private case class StagedWrite() extends Bundle {
      val address = UInt(busAddrWidth bits)
-@@ -170,10 +207,10 @@ case class PciFifo(
+@@ -170,10 +209,10 @@ case class PciFifo(
      clearStaged(stagedWriteTx)
  
      when(queueableCpuWrite) {
@@ -604,7 +616,7 @@ index 226d60e..b09f29d 100644
        stagedWriteTx.syncRequired := syncRequired
        stagedWriteTx.isFloatAlias := isFloatAlias
        stagedWriteTx.floatTargetAddr := floatTargetAddr
-@@ -283,6 +320,13 @@ case class PciFifo(
+@@ -283,6 +322,13 @@ case class PciFifo(
    // ========================================================================
    // Drain blocking logic
    // ========================================================================
@@ -618,10 +630,29 @@ index 226d60e..b09f29d 100644
    private val drainControl = new Area {
      val canDrain = Bool()
      canDrain := True
-@@ -294,6 +338,25 @@ case class PciFifo(
+@@ -294,6 +340,44 @@ case class PciFifo(
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
        canDrain := False
      }
++    // Nothing behind a swapbufferCMD may drain until the swap has happened,
++    // as on SST-1: front/back follow the completed swap count, so a triangle
++    // drained while the swap waits for retrace would draw into the finished
++    // frame that is about to be shown (GLQuake: blocks of the next frame on
++    // screen while moving). The swap write itself still passes through the
++    // issue and regBank stages before swapBusy rises; hold those cycles too.
++    val swapAddr = io.wasEnqueuedAddr
++    val swapInIssue = issuedWrite.valid && !issuedWrite.isTexture && issuedWrite.address === swapAddr
++    val swapInRegStage = regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE &&
++      regCmdStage.address === swapAddr
++    val swapGuard = Reg(UInt(2 bits)) init 0
++    when(swapInRegStage && regCmdStage.ready) {
++      swapGuard := 3
++    } elsewhen (swapGuard =/= 0) {
++      swapGuard := swapGuard - 1
++    }
++    when(io.swapBusy || swapInIssue || swapInRegStage || swapGuard =/= 0) {
++      canDrain := False
++    }
 +    // The previous write (e.g. a triangle command) is still in the issue stage
 +    // and not yet visible in pipelineBusy: let it land first.
 +    when(pciFifo.io.pop.syncRequired && issuedWrite.valid) {
@@ -644,7 +675,7 @@ index 226d60e..b09f29d 100644
  
      val commandStreamBlocked = Bool()
      commandStreamBlocked := False
-@@ -303,7 +366,8 @@ case class PciFifo(
+@@ -303,7 +387,8 @@ case class PciFifo(
  
      val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
      fifoEmpty.simPublic()
@@ -654,7 +685,7 @@ index 226d60e..b09f29d 100644
      io.fifoEmpty := fifoEmpty
    }
    private val canDrain = drainControl.canDrain
-@@ -324,11 +388,12 @@ case class PciFifo(
+@@ -324,11 +409,12 @@ case class PciFifo(
      io.texDrain.pciAddr := drainedWrite.texPciAddr
      io.texDrain.data := drainedWrite.data
      io.texDrain.mask := drainedWrite.mask
@@ -671,7 +702,7 @@ index 226d60e..b09f29d 100644
    }
    val isTexDrain = drainRoute.isTexDrain
    val isRegDrain = drainRoute.isRegDrain
-@@ -341,31 +406,31 @@ case class PciFifo(
+@@ -341,31 +427,31 @@ case class PciFifo(
      // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
      // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
      val doWriteDirect = isWriteCmd && fifoBypass
@@ -720,7 +751,7 @@ index 226d60e..b09f29d 100644
        (isTexDrain && io.texDrain.ready)
    }
    private val doWriteDirect = regSideMux.doWriteDirect
-@@ -383,16 +448,16 @@ case class PciFifo(
+@@ -383,16 +469,16 @@ case class PciFifo(
      io.regSide.rsp.ready := True
  
      io.cpuSide.rsp.valid := RegNext(
@@ -741,7 +772,7 @@ index 226d60e..b09f29d 100644
        pendingRead := True
      }
      when(pendingRead && io.regSide.rsp.valid) {
-@@ -414,18 +479,18 @@ case class PciFifo(
+@@ -414,18 +500,18 @@ case class PciFifo(
    // Stall logic
    // ========================================================================
    private val cpuReady = new Area {
@@ -767,7 +798,7 @@ index 226d60e..b09f29d 100644
      }
    }
  
-@@ -453,33 +518,33 @@ case class PciFifo(
+@@ -453,33 +539,33 @@ case class PciFifo(
      println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
  
      // Default: unregistered addresses bypass FIFO
@@ -814,7 +845,7 @@ index 226d60e..b09f29d 100644
        }
      }
  
-@@ -490,50 +555,59 @@ case class PciFifo(
+@@ -490,50 +576,59 @@ case class PciFifo(
      if (commandAddresses.nonEmpty) {
        for ((addr, idx) <- commandAddresses.zipWithIndex) {
          when(pciFifo.io.pop.address === U(addr, busAddrWidth bits)) {
@@ -894,7 +925,7 @@ index 226d60e..b09f29d 100644
      }
  
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
-@@ -550,8 +624,8 @@ case class PciFifo(
+@@ -550,8 +645,8 @@ case class PciFifo(
        assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
      }
  
@@ -905,7 +936,7 @@ index 226d60e..b09f29d 100644
      }
  
      when(floatWriteRequest && !floatConvertInFlight) {
-@@ -581,12 +655,10 @@ case class PciFifo(
+@@ -581,12 +676,10 @@ case class PciFifo(
        assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
      }
  
@@ -3820,6 +3851,142 @@ index 10a5655..725256b 100644
    test("CDC scanout pads HDMI pixels outside logical framebuffer width") {
      val c = Config.voodoo1()
      val timing = VideoTiming(
+diff --git a/test/PciFifoSwapOrderTest.scala b/test/PciFifoSwapOrderTest.scala
+new file mode 100644
+index 0000000..344fd75
+--- /dev/null
++++ b/test/PciFifoSwapOrderTest.scala
+@@ -0,0 +1,130 @@
++//> using target.scope test
++
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import voodoo.bus.{PciFifo, RegisterCategory}
++
++/** A swapbufferCMD holds everything queued behind it until the swap has happened. Front/back
++  * follow the completed swap count, so a triangle drained while the swap still waits for retrace
++  * would draw into the finished frame that is about to be shown (GLQuake: blocks of the next
++  * frame on screen while moving).
++  */
++class PciFifoSwapOrderTest extends AnyFunSuite {
++  private val triangleCmdAddr = 0x100
++  private val swapCmdAddr = 0x128
++  private val swapWaitCycles = 300
++
++  private def mkDut() = {
++    val c = Config.voodoo1()
++    PciFifo(
++      busParams = RegisterBank.bmbParams(c),
++      categories = Map(
++        BigInt(triangleCmdAddr) -> RegisterCategory.fifoNoSync,
++        BigInt(swapCmdAddr) -> RegisterCategory.fifoWithSync
++      ),
++      floatAliases = Map.empty,
++      commandAddresses = Seq(BigInt(triangleCmdAddr), BigInt(swapCmdAddr))
++    )
++  }
++
++  private def run(withSwap: Boolean): Unit =
++    SimConfig.withIVerilog.compile(mkDut()).doSim { dut =>
++      dut.clockDomain.forkStimulus(10)
++      dut.io.cpuSide.cmd.valid #= false
++      dut.io.cpuSide.cmd.last #= true
++      dut.io.cpuSide.cmd.opcode #= 1
++      dut.io.cpuSide.cmd.address #= 0
++      dut.io.cpuSide.cmd.data #= 0
++      dut.io.cpuSide.cmd.mask #= 0xf
++      dut.io.cpuSide.cmd.length #= 3
++      dut.io.cpuSide.cmd.source #= 0
++      dut.io.cpuSide.rsp.ready #= true
++      dut.io.regSide.cmd.ready #= true
++      dut.io.regSide.rsp.valid #= false
++      dut.io.regSide.rsp.last #= true
++      dut.io.regSide.rsp.opcode #= 0
++      dut.io.regSide.rsp.data #= 0
++      dut.io.regSide.rsp.source #= 0
++      dut.io.texWrite.valid #= false
++      dut.io.texWrite.pciAddr #= 0
++      dut.io.texWrite.data #= 0
++      dut.io.texWrite.mask #= 0xf
++      dut.io.texDrain.ready #= true
++      dut.io.pipelineBusy #= false
++      dut.io.swapBusy #= false
++      dut.io.commandReady.foreach(_ #= true)
++      dut.io.wasEnqueuedAddr #= swapCmdAddr
++      dut.clockDomain.waitSampling(4)
++
++      // SwapBuffer model, as wired in Core: a swap write reaching the register bank at
++      // cycle T shows up as swapbufferCmd.valid at T+1 (command stream m2sPipe), then
++      // SwapBuffer waits for retrace; swapBusy covers both.
++      var cycle = 0L
++      var swapDrained = -1L
++      var swapDone = -1L
++      var busyLeft = 0
++      var startDelay = 0
++      val triDrains = scala.collection.mutable.ArrayBuffer.empty[Long]
++      fork {
++        while (true) {
++          dut.clockDomain.waitSampling()
++          cycle += 1
++          if (startDelay > 0) {
++            startDelay -= 1
++            if (startDelay == 0) busyLeft = swapWaitCycles
++          } else if (busyLeft > 0) {
++            busyLeft -= 1
++            if (busyLeft == 0) swapDone = cycle
++          }
++          if (dut.io.regSide.cmd.valid.toBoolean && dut.io.regSide.cmd.ready.toBoolean &&
++              dut.io.regSide.cmd.opcode.toInt == 1) {
++            dut.io.regSide.cmd.address.toInt match {
++              case `swapCmdAddr`     => swapDrained = cycle; startDelay = 1
++              case `triangleCmdAddr` => triDrains += cycle
++              case _                 =>
++            }
++          }
++          dut.io.swapBusy #= busyLeft > 0
++        }
++      }
++
++      def write(addr: Int, data: Long): Unit = {
++        dut.io.cpuSide.cmd.valid #= true
++        dut.io.cpuSide.cmd.address #= addr
++        dut.io.cpuSide.cmd.data #= data
++        dut.clockDomain.waitSamplingWhere(dut.io.cpuSide.cmd.ready.toBoolean)
++        dut.io.cpuSide.cmd.valid #= false
++      }
++
++      if (withSwap) write(swapCmdAddr, 1) // vsync enabled
++      // The next frame's triangles, back to back behind the swap.
++      val triCount = 4
++      for (_ <- 0 until triCount) write(triangleCmdAddr, 0)
++
++      dut.clockDomain.waitSamplingWhere(triDrains.size == triCount || cycle > 4 * swapWaitCycles)
++      assert(triDrains.size == triCount, s"only ${triDrains.size} of $triCount triangle commands drained")
++      if (withSwap) {
++        assert(swapDrained >= 0, "swap command never reached the register bank")
++        assert(swapDone >= 0, "swap never completed")
++        for (at <- triDrains)
++          assert(
++            at > swapDone,
++            s"triangle command drained at cycle $at while the swap drained at $swapDrained " +
++              s"was still pending (done at $swapDone)"
++          )
++      } else {
++        assert(triDrains.head < swapWaitCycles / 10, "triangle commands stalled without a swap")
++      }
++    }
++
++  test("triangle commands wait for the swap queued before them") {
++    run(withSwap = true)
++  }
++
++  test("triangle commands drain without a preceding swap") {
++    run(withSwap = false)
++  }
++}
 diff --git a/test/PciFifoTextureOrderTest.scala b/test/PciFifoTextureOrderTest.scala
 new file mode 100644
 index 0000000..22d0579
