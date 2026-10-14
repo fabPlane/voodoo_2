@@ -65,9 +65,9 @@ uint64_t g_budgetPolls = 0, g_slowReads = 0, g_maxReadNs = 0;
 // board spends the time the host waits for.
 bool g_busySample = false;
 // VOODOO_PERF (with VOODOO_PCI_PROFILE, B70+ bitstreams): read the 16 perf
-// counters at 0x280-0x2cc after each swap and print the per-frame deltas.
+// counters at 0x280-0x2e4 after each swap and print the per-frame deltas.
 bool g_perf = false;
-uint32_t g_lastPerf[20];
+uint32_t g_lastPerf[26];
 uint64_t g_busyN = 0, g_busyCnt[32];
 const char *const kBusyNames[32] = {
     "setupV", "raster", "tmuInV", "tmuBusy", "fbAccBusy", "ccInV", "fogBusy", "fbAccInV",
@@ -337,9 +337,9 @@ void reportFrame() {
   uint32_t dIn = (in - g_lastPixIn) & 0xffffff, dOut = (out - g_lastPixOut) & 0xffffff;
   g_lastPixIn = in;
   g_lastPixOut = out;
-  uint32_t perf[20], dp[20];
+  uint32_t perf[26], dp[26];
   if (g_perf) {
-    for (int i = 0; i < 20; ++i) {
+    for (int i = 0; i < 26; ++i) {
       perf[i] = g_bar.read32(0x280 + 4 * i);
       dp[i] = perf[i] - g_lastPerf[i];
       g_lastPerf[i] = perf[i];
@@ -365,10 +365,12 @@ void reportFrame() {
               " fill hit %u miss %u stall %.0f%%; write stall %.0f%%;"
               " blocked colRd %.0f%% auxRd %.0f%% colWr %.0f%% auxWr %.0f%%;"
               " cmds colRd %u auxRd %u colWr %u auxWr %u;"
-              " tex words %u misses %u fill %.0f%% samples %u (%.2f words/sample)\n",
+              " tex words %u misses %u fill %.0f%% samples %u (%.2f words/sample);"
+              " wb drains %u (full %u rotate %u flush %u, single-word %u) %.1f words/drain\n",
               (unsigned long long)g_frameNo, dp[0] / 1e6, pc(13), pc(14), pc(15), dp[1], dp[2],
               pc(3), pc(4), pc(5), pc(6), pc(7), pc(8), dp[9], dp[10], dp[11], dp[12], dp[16],
-              dp[17], pc(18), dp[19], dp[19] ? double(dp[16]) / dp[19] : 0.0);
+              dp[17], pc(18), dp[19], dp[19] ? double(dp[16]) / dp[19] : 0.0, dp[20], dp[21], dp[22],
+              dp[23], dp[25], dp[20] ? double(dp[24]) / dp[20] : 0.0);
     }
     if (g_busySample && g_busyN) {
       fprintf(stderr, "[busy] frame %llu: %llu samples:", (unsigned long long)g_frameNo,

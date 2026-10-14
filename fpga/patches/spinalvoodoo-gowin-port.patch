@@ -383,7 +383,7 @@ index 1b34fa2..e38994d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..6d0b380 100644
+index 100f1c6..4f89a86 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -466,7 +466,7 @@ index 100f1c6..6d0b380 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -200,9 +237,34 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +237,41 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -494,6 +494,13 @@ index 100f1c6..6d0b380 100644
 +      st.memColorWriteCmdCount, st.memAuxWriteCmdCount
 +    )
 +    for ((w, i) <- words.zipWithIndex) regDebug.perf(i) := w
++    // 20-25: write-buffer drains (all, reason full / rotate / flush), dirty
++    // words drained, single-word drains.
++    val drains = Seq(
++      st.writeDrainCount, st.writeDrainReasonFullCount, st.writeDrainReasonRotateCount,
++      st.writeDrainReasonFlushCount, st.writeDrainDirtyWordTotal, st.writeSingleWordDrainCount
++    )
++    for ((w, i) <- drains.zipWithIndex) regDebug.perf(20 + i) := w
 +  }
 +  regBank.io.debug := regDebug
  
@@ -965,7 +972,7 @@ index 226d60e..25d070d 100644
  
      if (formalStrong) {
 diff --git a/src/voodoo/core/CoreTypes.scala b/src/voodoo/core/CoreTypes.scala
-index 2f55df7..d4f82d3 100644
+index 2f55df7..4d53813 100644
 --- a/src/voodoo/core/CoreTypes.scala
 +++ b/src/voodoo/core/CoreTypes.scala
 @@ -386,6 +386,9 @@ case class CoreWritePathMap() extends Bundle {
@@ -974,7 +981,7 @@ index 2f55df7..d4f82d3 100644
    val pipelineBusy = Bool()
 +  // hwDebugRegs perf counters 0x280-0x2bc (free-running, wrap). PixelPipeline
 +  // fills perfPipelineSlots; Core fills the rest (see Core.scala).
-+  val perf = Vec(UInt(32 bits), 20)
++  val perf = Vec(UInt(32 bits), 26)
    val busy = CoreBusyMap()
    val writePath = CoreWritePathMap()
    val pipelineBusySources = Bits(32 bits)
@@ -1081,7 +1088,7 @@ index c23fa0b..5757812 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..7d34210 100644
+index 7797711..6ee7d61 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -288,7 +288,9 @@ case class PixelPipeline(c: Config) extends Component {
@@ -1148,7 +1155,7 @@ index 7797711..7d34210 100644
  
    // Framebuffer writeback can drain to external memory after the ordered draw pipeline is idle.
    // Status/sync must not wait on writeback-only busy, but LFB reads still must for coherency.
-@@ -707,6 +719,28 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +719,29 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -1169,7 +1176,8 @@ index 7797711..7d34210 100644
 +        16 -> tmuPerf(0), 17 -> tmuPerf(1), 18 -> tmuPerf(2), 19 -> tmuPerf(3)
 +      )
 +    else Map.empty
-+  for (i <- 0 until 20) io.debug.perf(i) := perfOwn.getOrElse(i, U(0, 32 bits))
++  // 20-25 are filled in by Core (fb write-buffer drain counters).
++  for (i <- 0 until 26) io.debug.perf(i) := perfOwn.getOrElse(i, U(0, 32 bits))
 +  // Framebuffer reader / access words come from FramebufferMemSubsystem in Core.
 +  for (w <- Seq(io.debug.fbAccess, io.debug.fbColorCache, io.debug.fbColorCacheReq,
 +      io.debug.fbColorCacheExpected, io.debug.fbColorCacheOccupancy, io.debug.fbAuxCache,
@@ -1583,10 +1591,10 @@ index aeba713..06fa63b 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..1cc81e7 100644
+index c5a4cd8..f460d8e 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
-@@ -1095,13 +1095,42 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1095,44 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -1619,8 +1627,10 @@ index c5a4cd8..1cc81e7 100644
 +      // 2 fill misses, 3 fill stall cycles, 4 write stall cycles, 5-8 colour /
 +      // aux read / write blocked cycles, 9-12 colour / aux read / write
 +      // commands, 13 pipeline busy, 14 TMU input stall, 15 fb access input stall,
-+      // 16-19 texture cache word lookups / misses / fill cycles / samples.
-+      for (i <- 0 until 20) {
++      // 16-19 texture cache word lookups / misses / fill cycles / samples,
++      // 20-25 fb write-buffer drains: all / full / rotate / flush, dirty words,
++      // single-word drains (0x2d0-0x2e4).
++      for (i <- 0 until 26) {
 +        val r = busif
 +          .newRegAt(0x280 + 4 * i, s"perfCounter$i")
 +          .field(UInt(32 bits), AccessType.RO, 0, "Performance counter")
@@ -1630,7 +1640,7 @@ index c5a4cd8..1cc81e7 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1149,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1151,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -1639,7 +1649,7 @@ index c5a4cd8..1cc81e7 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1161,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1163,7 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
