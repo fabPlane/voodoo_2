@@ -59,6 +59,17 @@ bool g_logSync = false;
 bool g_flow = true;
 uint32_t g_budget = 0;  // writes the PCI FIFO can take without stalling
 uint64_t g_budgetPolls = 0, g_slowReads = 0, g_maxReadNs = 0;
+// VOODOO_BUSY_SAMPLE (with VOODOO_PCI_PROFILE, hwDebugRegs bitstreams): while
+// stalled on a full PCI FIFO, also read debugBusy (0x240) on every poll and
+// report per frame how often each pipeline-stage bit was set, i.e. where the
+// board spends the time the host waits for.
+bool g_busySample = false;
+uint64_t g_busyN = 0, g_busyCnt[32];
+const char *const kBusyNames[32] = {
+    "setupV", "raster", "tmuInV", "tmuBusy", "fbAccBusy", "ccInV", "fogBusy", "fbAccInV",
+    "wrColInV", "wrAuxInV", "ffRun", "swapWait", "lfbBusy", "ffOutV", "ffOutR", "ffWrV",
+    "ffWrR", "preDitMV", "preDitMR", "preDitPV", "preDitPR", "ditOutV", "ditOutR", "ditJoinV",
+    "ditJoinR", "colForkV", "colForkR", "auxForkV", "auxForkR", "wrColR", "wrAuxR", "ffAuxWr"};
 uint32_t g_maxReadAddr = 0;
 
 // VOODOO_PCI_PROFILE: per-frame accounting, reported at each swapbufferCMD.
@@ -132,6 +143,7 @@ extern "C" int sim_init(void) {
   g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
+  g_busySample = g_profile && getenv("VOODOO_BUSY_SAMPLE") != nullptr;
   if (const char *g = getenv("VOODOO_PCI_WRITE_GAP_NS")) g_writeGapNs = strtoull(g, nullptr, 0);
   if (const char *m = getenv("VOODOO_PCI_MIN_FRAME_MS")) g_minFrameNs = strtoull(m, nullptr, 0) * 1000000ull;
   logOp("init dry=%d\n", g_dry);
@@ -184,6 +196,13 @@ void waitForRoom() {
       g_budgetPolls++;
       g_budget = timedRead(0) & kPciFifoFreeMask;
       g_budget = g_budget > 4 ? g_budget - 4 : 0;
+      if (g_busySample && g_budget == 0) {
+        uint32_t b = timedRead(0x240);
+        if (b != 0xffffffffu) {
+          g_busyN++;
+          for (int i = 0; i < 32; ++i) g_busyCnt[i] += (b >> i) & 1;
+        }
+      }
     }
     g_frame.stallNs += nowNs() - t0;
   }
@@ -326,7 +345,17 @@ void reportFrame() {
             ms(f.writeNs), ms(host), ms(done - now), (unsigned long long)f.regWrites,
             (unsigned long long)f.lfbWrites, (unsigned long long)f.texWrites,
             (unsigned long long)f.tris, (unsigned long long)f.fastfills, dIn, dOut);
+    if (g_busySample && g_busyN) {
+      fprintf(stderr, "[busy] frame %llu: %llu samples:", (unsigned long long)g_frameNo,
+              (unsigned long long)g_busyN);
+      for (int i = 0; i < 32; ++i)
+        if (g_busyCnt[i] * 50 >= g_busyN)  // >= 2%
+          fprintf(stderr, " %s=%.0f%%", kBusyNames[i], 100.0 * g_busyCnt[i] / g_busyN);
+      fprintf(stderr, "\n");
+    }
   }
+  g_busyN = 0;
+  for (auto &c : g_busyCnt) c = 0;
   g_frame.start = nowNs();
 }
 

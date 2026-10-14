@@ -383,7 +383,7 @@ index 1b34fa2..e38994d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..94814c8 100644
+index 100f1c6..6d0b380 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -466,7 +466,7 @@ index 100f1c6..94814c8 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -200,9 +237,20 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +237,34 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -481,6 +481,20 @@ index 100f1c6..94814c8 100644
 +  regDebug.fbAuxCacheOccupancy := framebufferMem.io.readerDebug(3)
 +  regDebug.fbColorCacheReq := framebufferMem.io.readerDebug(4)
 +  regDebug.fbColorCacheExpected := framebufferMem.io.readerDebug(5)
++  if (c.hwDebugRegs) {
++    // Perf counters 0-12 (13-15 come from PixelPipeline); 0x280 + 4 * index.
++    val cycles = Reg(UInt(32 bits)) init (0)
++    cycles := cycles + 1
++    val st = framebufferMem.io.stats
++    val words = Seq(
++      cycles, st.fillHits, st.fillMisses, st.fillStallCycles, st.writeStallCycles,
++      st.memColorReadBlockedCycles, st.memAuxReadBlockedCycles,
++      st.memColorWriteBlockedCycles, st.memAuxWriteBlockedCycles,
++      st.memColorReadCmdCount, st.memAuxReadCmdCount,
++      st.memColorWriteCmdCount, st.memAuxWriteCmdCount
++    )
++    for ((w, i) <- words.zipWithIndex) regDebug.perf(i) := w
++  }
 +  regBank.io.debug := regDebug
  
    pciFifo.io.pipelineBusy := pixelPipeline.io.debug.pipelineBusy
@@ -950,6 +964,20 @@ index 226d60e..25d070d 100644
      }
  
      if (formalStrong) {
+diff --git a/src/voodoo/core/CoreTypes.scala b/src/voodoo/core/CoreTypes.scala
+index 2f55df7..b08418b 100644
+--- a/src/voodoo/core/CoreTypes.scala
++++ b/src/voodoo/core/CoreTypes.scala
+@@ -386,6 +386,9 @@ case class CoreWritePathMap() extends Bundle {
+ 
+ case class CoreDebug() extends Bundle {
+   val pipelineBusy = Bool()
++  // hwDebugRegs perf counters 0x280-0x2bc (free-running, wrap). PixelPipeline
++  // fills perfPipelineSlots; Core fills the rest (see Core.scala).
++  val perf = Vec(UInt(32 bits), 16)
+   val busy = CoreBusyMap()
+   val writePath = CoreWritePathMap()
+   val pipelineBusySources = Bits(32 bits)
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
 index c23fa0b..5757812 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
@@ -1053,10 +1081,34 @@ index c23fa0b..5757812 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..e3cbf12 100644
+index 7797711..a5c5ead 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
-@@ -367,8 +367,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -288,6 +288,7 @@ case class PixelPipeline(c: Config) extends Component {
+ 
+   val tmuOutput = Stream(Tmu.Output(c))
+   val tmuInputValid = Bool()
++  val tmuInputStall = Bool()
+   val tmuBusy = Bool()
+ 
+   if (c.enableTmu) {
+@@ -312,6 +313,7 @@ case class PixelPipeline(c: Config) extends Component {
+     tmuInput >/-> tmu.io.input
+     tmuOutput << tmu.io.output
+     tmuInputValid := tmu.io.input.valid
++    tmuInputStall := tmu.io.input.valid && !tmu.io.input.ready
+     tmuBusy := tmu.io.busy
+   } else {
+     tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
+@@ -334,6 +336,7 @@ case class PixelPipeline(c: Config) extends Component {
+     }
+     io.texRead.rsp.ready := True
+     tmuInputValid := False
++    tmuInputStall := False
+     tmuBusy := False
+   }
+ 
+@@ -367,8 +370,10 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1069,7 +1121,7 @@ index 7797711..e3cbf12 100644
  
    val ckBits = colorCombine.io.output.payload.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,8 +655,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,8 +658,9 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -1080,7 +1132,7 @@ index 7797711..e3cbf12 100644
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,7 +669,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,7 +672,10 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1092,10 +1144,27 @@ index 7797711..e3cbf12 100644
  
    // Framebuffer writeback can drain to external memory after the ordered draw pipeline is idle.
    // Status/sync must not wait on writeback-only busy, but LFB reads still must for coherency.
-@@ -707,6 +713,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +716,27 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
++
++  // Perf counters 13-15: cycles busy, cycles the TMU input was held (texture
++  // misses), cycles the framebuffer-access input was held (fb reads).
++  private def cycleCounter(cond: Bool): UInt = {
++    val r = Reg(UInt(32 bits)) init (0)
++    when(cond) { r := r + 1 }
++    r
++  }
++  val perfOwn: Map[Int, UInt] =
++    if (c.hwDebugRegs)
++      Map(
++        13 -> cycleCounter(pipelineBusySignal),
++        14 -> cycleCounter(tmuInputStall),
++        15 -> cycleCounter(fbAccess.io.input.valid && !fbAccess.io.input.ready)
++      )
++    else Map.empty
++  for (i <- 0 until 16) io.debug.perf(i) := perfOwn.getOrElse(i, U(0, 32 bits))
 +  // Framebuffer reader / access words come from FramebufferMemSubsystem in Core.
 +  for (w <- Seq(io.debug.fbAccess, io.debug.fbColorCache, io.debug.fbColorCacheReq,
 +      io.debug.fbColorCacheExpected, io.debug.fbColorCacheOccupancy, io.debug.fbAuxCache,
@@ -1509,10 +1578,10 @@ index aeba713..06fa63b 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..dda7ec3 100644
+index c5a4cd8..fa2dedc 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
-@@ -1095,13 +1095,31 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1095,41 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -1541,11 +1610,21 @@ index c5a4cd8..dda7ec3 100644
 +          .field(Bits(32 bits), AccessType.RO, 0, "Framebuffer reader debug word")
 +        r := w
 +      }
++      // Perf counters 0x280-0x2bc (CoreDebug.perf): 0 cycles, 1 fill hits,
++      // 2 fill misses, 3 fill stall cycles, 4 write stall cycles, 5-8 colour /
++      // aux read / write blocked cycles, 9-12 colour / aux read / write
++      // commands, 13 pipeline busy, 14 TMU input stall, 15 fb access input stall.
++      for (i <- 0 until 16) {
++        val r = busif
++          .newRegAt(0x280 + 4 * i, s"perfCounter$i")
++          .field(UInt(32 bits), AccessType.RO, 0, "Performance counter")
++        r := io.debug.perf(i)
++      }
 +    }
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1138,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1148,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -1554,7 +1633,7 @@ index c5a4cd8..dda7ec3 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1150,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1160,7 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
