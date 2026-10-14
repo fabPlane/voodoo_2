@@ -986,7 +986,7 @@ index 2f55df7..4d53813 100644
    val writePath = CoreWritePathMap()
    val pipelineBusySources = Bits(32 bits)
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..5757812 100644
+index c23fa0b..388f42e 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -5,7 +5,7 @@ import spinal.core.sim._
@@ -1008,7 +1008,7 @@ index c23fa0b..5757812 100644
    }
  
    private def makeFbWriteArbiter() =
-@@ -80,7 +83,15 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -80,7 +83,20 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
      if (useCachedReaders) FramebufferPlaneReader(c).setName("fbAuxReader") else null
    val colorReaderDirect =
      if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbColorReader") else null
@@ -1017,7 +1017,12 @@ index c23fa0b..5757812 100644
 +  // or (c.scanoutLineFetcher) a plain line fetcher with no cache state.
 +  val scanoutReaderCached =
 +    if (!c.scanoutLineFetcher) FramebufferPlaneReader(c, skipAnyMismatch = false).setName("fbScanoutReader") else null
-+  val scanoutFetcher = if (c.scanoutLineFetcher) ScanoutLineFetcher(c, fifoWords = 1024).setName("fbScanoutFetcher") else null
++  // 64-byte pieces: the scanout shares one in-order 32-bit read channel with
++  // the render fills (Gowin), and a fill queued behind a 256-byte piece
++  // waited up to 64 core cycles (B74: DDR idle, reads latency-bound).
++  val scanoutFetcher =
++    if (c.scanoutLineFetcher) ScanoutLineFetcher(c, fifoWords = 1024, maxBurstBytes = 64).setName("fbScanoutFetcher")
++    else null
 +  private def scanoutPrefetch = if (c.scanoutLineFetcher) scanoutFetcher.io.prefetchReq else scanoutReaderCached.io.prefetchReq
 +  private def scanoutReq = if (c.scanoutLineFetcher) scanoutFetcher.io.readReq else scanoutReaderCached.io.readReq
 +  private def scanoutRsp = if (c.scanoutLineFetcher) scanoutFetcher.io.readRsp else scanoutReaderCached.io.readRsp
@@ -1025,7 +1030,7 @@ index c23fa0b..5757812 100644
    val auxReaderDirect =
      if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbAuxReader") else null
    val colorWritePort = FramebufferPlaneBuffer(c).setName("fbColorBuffer")
-@@ -95,9 +106,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -95,9 +111,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
    }
  
    if (useCachedReaders) {
@@ -1037,7 +1042,7 @@ index c23fa0b..5757812 100644
      io.auxReadRsp << auxReaderCached.io.readRsp
      colorReaderCached.io.prefetchReq <> io.prefetchColor
      auxReaderCached.io.prefetchReq <> io.prefetchAux
-@@ -110,9 +121,24 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -110,9 +126,24 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
      io.prefetchAux.ready := True
    }
  
@@ -1065,7 +1070,7 @@ index c23fa0b..5757812 100644
  
    disableReadPort(colorWritePort)
    disableReadPort(auxWritePort)
-@@ -142,8 +168,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -142,8 +173,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
        fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
        auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
      }
@@ -1076,7 +1081,7 @@ index c23fa0b..5757812 100644
      fbColorReadArbiter.io.inputs(2).cmd << io.lfbReadBus.cmd
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
-@@ -200,8 +226,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -200,8 +231,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
        fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
        auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
      }
