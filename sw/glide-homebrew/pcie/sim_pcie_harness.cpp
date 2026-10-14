@@ -64,6 +64,10 @@ uint64_t g_budgetPolls = 0, g_slowReads = 0, g_maxReadNs = 0;
 // report per frame how often each pipeline-stage bit was set, i.e. where the
 // board spends the time the host waits for.
 bool g_busySample = false;
+// VOODOO_PERF (with VOODOO_PCI_PROFILE, B70+ bitstreams): read the 16 perf
+// counters at 0x280-0x2bc after each swap and print the per-frame deltas.
+bool g_perf = false;
+uint32_t g_lastPerf[16];
 uint64_t g_busyN = 0, g_busyCnt[32];
 const char *const kBusyNames[32] = {
     "setupV", "raster", "tmuInV", "tmuBusy", "fbAccBusy", "ccInV", "fogBusy", "fbAccInV",
@@ -144,6 +148,7 @@ extern "C" int sim_init(void) {
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
   g_busySample = g_profile && getenv("VOODOO_BUSY_SAMPLE") != nullptr;
+  g_perf = g_profile && getenv("VOODOO_PERF") != nullptr;
   if (const char *g = getenv("VOODOO_PCI_WRITE_GAP_NS")) g_writeGapNs = strtoull(g, nullptr, 0);
   if (const char *m = getenv("VOODOO_PCI_MIN_FRAME_MS")) g_minFrameNs = strtoull(m, nullptr, 0) * 1000000ull;
   logOp("init dry=%d\n", g_dry);
@@ -332,6 +337,14 @@ void reportFrame() {
   uint32_t dIn = (in - g_lastPixIn) & 0xffffff, dOut = (out - g_lastPixOut) & 0xffffff;
   g_lastPixIn = in;
   g_lastPixOut = out;
+  uint32_t perf[16], dp[16];
+  if (g_perf) {
+    for (int i = 0; i < 16; ++i) {
+      perf[i] = g_bar.read32(0x280 + 4 * i);
+      dp[i] = perf[i] - g_lastPerf[i];
+      g_lastPerf[i] = perf[i];
+    }
+  }
   uint64_t done = nowNs();
   if (f.start && g_frameNo++ > 0) {
     auto ms = [](uint64_t ns) { return ns / 1e6; };
@@ -345,6 +358,16 @@ void reportFrame() {
             ms(f.writeNs), ms(host), ms(done - now), (unsigned long long)f.regWrites,
             (unsigned long long)f.lfbWrites, (unsigned long long)f.texWrites,
             (unsigned long long)f.tris, (unsigned long long)f.fastfills, dIn, dOut);
+    if (g_perf && dp[0]) {
+      auto pc = [&](int i) { return 100.0 * dp[i] / dp[0]; };
+      fprintf(stderr,
+              "[perf] frame %llu: %.1f Mcyc busy %.0f%%; tmuInStall %.0f%% fbAccInStall %.0f%%;"
+              " fill hit %u miss %u stall %.0f%%; write stall %.0f%%;"
+              " blocked colRd %.0f%% auxRd %.0f%% colWr %.0f%% auxWr %.0f%%;"
+              " cmds colRd %u auxRd %u colWr %u auxWr %u\n",
+              (unsigned long long)g_frameNo, dp[0] / 1e6, pc(13), pc(14), pc(15), dp[1], dp[2],
+              pc(3), pc(4), pc(5), pc(6), pc(7), pc(8), dp[9], dp[10], dp[11], dp[12]);
+    }
     if (g_busySample && g_busyN) {
       fprintf(stderr, "[busy] frame %llu: %llu samples:", (unsigned long long)g_frameNo,
               (unsigned long long)g_busyN);
