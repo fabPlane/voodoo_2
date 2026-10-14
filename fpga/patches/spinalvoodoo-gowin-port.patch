@@ -1138,6 +1138,19 @@ index 4831d83..0eacc56 100644
  
    val rspRoute = io.texMem.rsp.source(cmdRouteWidth - 1 downto 0)
    val rspSource = (io.texMem.rsp.source >> cmdRouteWidth).resized
+diff --git a/src/voodoo/de10/CoreDe10.scala b/src/voodoo/de10/CoreDe10.scala
+index d1bc1f7..da61a2b 100644
+--- a/src/voodoo/de10/CoreDe10.scala
++++ b/src/voodoo/de10/CoreDe10.scala
+@@ -410,7 +410,7 @@ case class CoreDe10(c: Config) extends Component {
+     io.memTex <> memBackend.io.memTex
+   )
+ 
+-  core.io.statusInputs.vRetrace := core.io.hdmi.status.newFrame
++  core.io.statusInputs.vRetrace := core.io.hdmi.status.frameDone
+   core.io.statusInputs.memFifoFree := 0xffff
+   core.io.statusInputs.pciInterrupt := False
+   core.io.hdmi.clock := io.hdmi.clock
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala b/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
 index bf8fd33..787dc1c 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
@@ -1550,10 +1563,18 @@ index c5a4cd8..dda7ec3 100644
  
    // ========================================================================
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
-index de14d02..4677973 100644
+index de14d02..3e5def1 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
 +++ b/src/voodoo/hdmi/HdmiScanout.scala
-@@ -112,7 +112,7 @@ case class HdmiScanoutStatus(c: Config) extends Bundle {
+@@ -107,12 +107,15 @@ case class HdmiScanoutStatus(c: Config) extends Bundle {
+   val swapPending = Bool()
+   val swapCount = UInt(2 bits)
+   val newFrame = Bool()
++  // Memory-side vertical retrace: the displayed buffer has been read for this
++  // frame, so a pending swap may complete (drive vRetrace from this).
++  val frameDone = Bool()
+   val active = Bool()
+   val x = UInt(10 bits)
    val y = UInt(10 bits)
  }
  
@@ -1562,7 +1583,15 @@ index de14d02..4677973 100644
    val clock = Bool()
    val reset = Bool()
    val video = ParallelRgbVideo()
-@@ -315,9 +315,15 @@ case class HdmiCdcFramebufferScanout(
+@@ -304,6 +307,7 @@ case class HdmiFramebufferScanout(c: Config, timing: VideoTiming = VideoTiming.c
+   io.status.swapPending := swapPending
+   io.status.swapCount := swapCount
+   io.status.newFrame := scan.io.newFrame
++  io.status.frameDone := scan.io.newFrame
+   io.status.active := contentActive
+   io.status.x := scan.io.x.resize(10 bits)
+   io.status.y := scan.io.y.resize(10 bits)
+@@ -315,9 +319,15 @@ case class HdmiCdcFramebufferScanout(
      fifoDepth: Int = 4096,
      prefillLevel: Int = 2048,
      refillLowLevel: Int = 1024,
@@ -1579,7 +1608,7 @@ index de14d02..4677973 100644
    require(prefillLevel > 0 && prefillLevel < fifoDepth)
    require(refillLowLevel > 0 && refillLowLevel < refillHighLevel)
    require(refillHighLevel < fifoDepth)
-@@ -346,7 +352,10 @@ case class HdmiCdcFramebufferScanout(
+@@ -346,7 +356,10 @@ case class HdmiCdcFramebufferScanout(
      config = ClockDomain.current.config
    )
  
@@ -1591,7 +1620,7 @@ index de14d02..4677973 100644
  
    val prefetchX = Reg(UInt(hWidth bits)) init (0)
    val prefetchY = Reg(UInt(vWidth bits)) init (0)
-@@ -354,7 +363,11 @@ case class HdmiCdcFramebufferScanout(
+@@ -354,7 +367,22 @@ case class HdmiCdcFramebufferScanout(
    val outstanding = Reg(UInt(log2Up(fifoDepth + 1) bits)) init (0)
    val scanoutRun = RegInit(False)
    val refillActive = RegInit(True)
@@ -1601,10 +1630,21 @@ index de14d02..4677973 100644
 +  val pfBase = Reg(UInt(c.addressWidth)) init (0)
 +  val linesQueued = Reg(UInt(log2Up(prefetchAheadLines + 1) bits)) init (0)
 +  val linePrefetched = linesQueued =/= 0
++  // Frame boundary. The prefetch side stops after announcing a frame's last
++  // line; once the read side has issued every read of the frame, frameDone
++  // pulses (a pending swap completes on it) and baseWait cycles later the next
++  // frame's base is latched, so it already reflects that swap. Latching the
++  // base when the prefetch wrapped (up to the FIFO depth ahead of the display)
++  // while swaps completed on the HDMI newFrame showed the buffer being drawn
++  // for one frame after every vsync'd swap (GLQuake: stray unfaded geometry
++  // over the menu, blocks of the next frame while moving).
++  val pfAtFrameEnd = RegInit(False)
++  val baseWait = Reg(UInt(3 bits)) init (0)
++  val frameDone = RegInit(False)
  
    val projected = UInt((log2Up(fifoDepth + 1) + 1) bits)
    projected := (pixelFifo.io.pushOccupancy.resize(projected.getWidth) + outstanding.resize(
-@@ -370,15 +383,15 @@ case class HdmiCdcFramebufferScanout(
+@@ -370,15 +398,15 @@ case class HdmiCdcFramebufferScanout(
    val atEndOfDisplayLine = prefetchX === (displayWidth - 1).resized
    val atEndOfDisplayFrame = atEndOfDisplayLine && prefetchY === (displayHeight - 1).resized
    val lineStartAddress = FramebufferAddressMath.planeAddress(
@@ -1624,12 +1664,14 @@ index de14d02..4677973 100644
      io.regs.pixelStride
    )
  
-@@ -386,12 +399,14 @@ case class HdmiCdcFramebufferScanout(
+@@ -386,12 +414,16 @@ case class HdmiCdcFramebufferScanout(
      prefetchX := 0
      prefetchY := 0
      prefetchBase := io.regs.frontBase
 +    pfY := 0
 +    pfBase := io.regs.frontBase
++    pfAtFrameEnd := False
++    baseWait := 0
      scanoutRun := False
      refillActive := True
 -    linePrefetched := False
@@ -1640,31 +1682,42 @@ index de14d02..4677973 100644
        refillActive := True
        when(pixelFifo.io.pushOccupancy >= prefillLevel) {
          scanoutRun := True
-@@ -409,7 +424,7 @@ case class HdmiCdcFramebufferScanout(
+@@ -409,7 +441,8 @@ case class HdmiCdcFramebufferScanout(
      }
    }
  
 -  io.prefetchReq.valid := displayEnabled && refillActive && !linePrefetched
-+  io.prefetchReq.valid := displayEnabled && refillActive && linesQueued < prefetchAheadLines
++  io.prefetchReq.valid := displayEnabled && refillActive && linesQueued < prefetchAheadLines &&
++    !pfAtFrameEnd && baseWait === 0
    io.prefetchReq.startAddress := lineStartAddress
    io.prefetchReq.endAddress := lineEndAddress
  
-@@ -421,8 +436,23 @@ case class HdmiCdcFramebufferScanout(
-     io.regs.pixelStride
+@@ -422,7 +455,33 @@ case class HdmiCdcFramebufferScanout(
    )
  
-+  // The prefetch side latches the next frame's base when it wraps; the read
-+  // side, always behind it, takes that base when it wraps.
    when(io.prefetchReq.fire) {
 -    linePrefetched := True
 +    when(pfY === (displayHeight - 1).resized) {
 +      pfY := 0
-+      pfBase := io.regs.frontBase
++      pfAtFrameEnd := True
 +    } otherwise {
 +      pfY := pfY + 1
 +    }
 +  }
 +  val lineRead = io.readReq.fire && atEndOfDisplayLine
++  frameDone := False
++  when(displayEnabled && io.readReq.fire && atEndOfDisplayFrame) {
++    frameDone := True
++    pfAtFrameEnd := False
++    baseWait := baseWait.maxValue
++  }
++  when(baseWait =/= 0) {
++    baseWait := baseWait - 1
++    when(baseWait === 1) {
++      pfBase := io.regs.frontBase
++      prefetchBase := io.regs.frontBase
++    }
++  }
 +  when(!displayEnabled) {
 +    linesQueued := 0
 +  } elsewhen (io.prefetchReq.fire && !lineRead) {
@@ -1674,13 +1727,12 @@ index de14d02..4677973 100644
    }
  
    when(io.readReq.fire) {
-@@ -430,22 +460,45 @@ case class HdmiCdcFramebufferScanout(
+@@ -430,22 +489,44 @@ case class HdmiCdcFramebufferScanout(
        prefetchX := 0
        when(atEndOfDisplayFrame) {
          prefetchY := 0
 -        prefetchBase := io.regs.frontBase
 -        linePrefetched := False
-+        prefetchBase := pfBase
        } otherwise {
          prefetchY := prefetchY + 1
 -        linePrefetched := False
@@ -1725,7 +1777,7 @@ index de14d02..4677973 100644
      is(B"10") { outstanding := outstanding + 1 }
      is(B"01") { outstanding := outstanding - 1 }
      default {}
-@@ -470,23 +523,35 @@ case class HdmiCdcFramebufferScanout(
+@@ -470,23 +551,35 @@ case class HdmiCdcFramebufferScanout(
  
      val useFramebuffer = !testPatternEnable
      val startArmed = BufferCC(scanoutRun, False)
@@ -1769,7 +1821,7 @@ index de14d02..4677973 100644
        io.video.rgb := Rgb888.black()
      }
      io.video.de := scan.io.active
-@@ -496,6 +561,7 @@ case class HdmiCdcFramebufferScanout(
+@@ -496,11 +589,13 @@ case class HdmiCdcFramebufferScanout(
  
    val newFrameCore = PulseCCByToggle(hdmi.scan.io.newFrame, hdmiClockDomain, coreClockDomain)
  
@@ -1777,6 +1829,12 @@ index de14d02..4677973 100644
    io.status.displayedBuffer := 0
    io.status.displayedBase := prefetchBase
    io.status.swapPending := False
+   io.status.swapCount := 0
+   io.status.newFrame := newFrameCore
++  io.status.frameDone := frameDone
+   io.status.active := BufferCC(hdmi.contentActive, False)
+   io.status.x := BufferCC(hdmi.scan.io.x.resize(10 bits), U(0, 10 bits))
+   io.status.y := BufferCC(hdmi.scan.io.y.resize(10 bits), U(0, 10 bits))
 diff --git a/src/voodoo/pixel/Fog.scala b/src/voodoo/pixel/Fog.scala
 index 1a3a34c..e46f94b 100644
 --- a/src/voodoo/pixel/Fog.scala
@@ -3588,7 +3646,7 @@ index 0295f4c..f468360 100644
 +  }
  }
 diff --git a/test/HdmiScanoutTest.scala b/test/HdmiScanoutTest.scala
-index 10a5655..725256b 100644
+index 10a5655..58d59ee 100644
 --- a/test/HdmiScanoutTest.scala
 +++ b/test/HdmiScanoutTest.scala
 @@ -617,6 +617,259 @@ class HdmiScanoutTest extends AnyFunSuite {
@@ -3851,6 +3909,126 @@ index 10a5655..725256b 100644
    test("CDC scanout pads HDMI pixels outside logical framebuffer width") {
      val c = Config.voodoo1()
      val timing = VideoTiming(
+@@ -702,4 +955,119 @@ class HdmiScanoutTest extends AnyFunSuite {
+         assert(!seenAddresses.contains(0x1006L))
+       }
+   }
++
++  test("CDC scanout never reads the buffer a swap on frameDone handed to the renderer") {
++    // SwapBuffer completes a vsync'd swap on vRetrace = status.frameDone, and the
++    // renderer then draws into the old front buffer. The scanout must not read
++    // that buffer again: neither the rest of the frame nor the next one.
++    val c = Config.voodoo1()
++    val timing = VideoTiming(
++      activeWidth = 4,
++      activeHeight = 2,
++      hFrontPorch = 1,
++      hSync = 1,
++      hBackPorch = 1,
++      vFrontPorch = 1,
++      vSync = 1,
++      vBackPorch = 1
++    )
++    val bufA = 0x1000L
++    val bufB = 0x2000L
++    def bufferOf(address: Long) = if (address >= bufB) bufB else bufA
++
++    SimConfig.withIVerilog
++      .compile(
++        HdmiCdcFramebufferScanout(
++          c,
++          timing,
++          fifoDepth = 16,
++          prefillLevel = 4,
++          refillLowLevel = 4,
++          refillHighLevel = 12,
++          prefetchAheadLines = 2
++        )
++      )
++      .doSim { dut =>
++        dut.io.hdmiClock #= false
++        dut.io.hdmiReset #= true
++        dut.clockDomain.forkStimulus(10)
++        fork {
++          while (true) {
++            dut.io.hdmiClock #= false
++            sleep(5)
++            dut.io.hdmiClock #= true
++            sleep(5)
++          }
++        }
++
++        var front = bufA
++        def setBuffers(): Unit = {
++          dut.io.regs.frontBase #= front
++          dut.io.regs.backBase #= (if (front == bufA) bufB else bufA)
++        }
++        setBuffers()
++        dut.io.regs.pixelStride #= 64
++        dut.io.regs.displayWidth #= timing.activeWidth
++        dut.io.regs.displayHeight #= timing.activeHeight
++        dut.io.regs.framebufferEnable #= true
++        dut.io.regs.testPatternEnable #= false
++        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.prefetchReq.ready #= true
++        dut.io.readReq.ready #= true
++        dut.io.readRsp.valid #= false
++        dut.io.readRsp.payload.data #= 0
++
++        val pending = mutable.Queue[Int]()
++        var drawing = -1L // buffer handed to the renderer by the last swap
++        var swapPending = false
++        var swaps = 0
++        var cycle = 0
++        var nextSwapAt = 50
++        val violations = mutable.ArrayBuffer[String]()
++        val readsAfterSwap = mutable.Map[Long, Int]().withDefaultValue(0)
++        fork {
++          while (true) {
++            dut.clockDomain.waitSampling()
++            cycle += 1
++            if (dut.io.readRsp.valid.toBoolean && dut.io.readRsp.ready.toBoolean) {
++              dut.io.readRsp.valid #= false
++            }
++            if (!dut.io.readRsp.valid.toBoolean && pending.nonEmpty) {
++              dut.io.readRsp.payload.data #= pending.dequeue()
++              dut.io.readRsp.valid #= true
++            }
++            if (dut.io.readReq.valid.toBoolean && dut.io.readReq.ready.toBoolean) {
++              val b = bufferOf(dut.io.readReq.payload.address.toLong)
++              pending.enqueue(0xffff)
++              if (b == drawing) violations += f"cycle $cycle: read from 0x$b%x while it is drawn"
++              if (drawing >= 0) readsAfterSwap(b) += 1
++            }
++            if (dut.io.prefetchReq.valid.toBoolean && dut.io.prefetchReq.ready.toBoolean) {
++              val b = bufferOf(dut.io.prefetchReq.payload.startAddress.toLong)
++              if (b == drawing) violations += f"cycle $cycle: prefetch from 0x$b%x while it is drawn"
++            }
++            // SwapBuffer: the swap completes on the retrace pulse; front/back
++            // follow the swap count from the next cycle.
++            if (swapPending && dut.io.status.frameDone.toBoolean) {
++              drawing = front
++              front = if (front == bufA) bufB else bufA
++              setBuffers()
++              swapPending = false
++              swaps += 1
++              nextSwapAt = cycle + 20 + (swaps * 37) % 90
++            }
++            if (!swapPending && cycle >= nextSwapAt) swapPending = true
++          }
++        }
++
++        dut.clockDomain.waitSampling(4)
++        dut.io.hdmiReset #= false
++        dut.clockDomain.waitSamplingWhere(swaps >= 12 || cycle > 40000)
++        dut.clockDomain.waitSampling(200)
++        assert(swaps >= 12, s"only $swaps swaps completed")
++        assert(violations.isEmpty, violations.take(5).mkString("; "))
++        assert(readsAfterSwap(bufA) > 0 && readsAfterSwap(bufB) > 0, "scanout stopped following swaps")
++        assert(!dut.io.underflow.toBoolean)
++      }
++  }
+ }
 diff --git a/test/PciFifoSwapOrderTest.scala b/test/PciFifoSwapOrderTest.scala
 new file mode 100644
 index 0000000..344fd75
@@ -4130,10 +4308,12 @@ index 0000000..22d0579
 +}
 diff --git a/test/ScanoutLineFetcherTest.scala b/test/ScanoutLineFetcherTest.scala
 new file mode 100644
-index 0000000..e902b3b
+index 0000000..01ec722
 --- /dev/null
 +++ b/test/ScanoutLineFetcherTest.scala
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,153 @@
++//> using target.scope test
++
 +package voodoo
 +
 +import org.scalatest.funsuite.AnyFunSuite

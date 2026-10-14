@@ -351,7 +351,7 @@ case class CoreArtix(c: Config) extends Component {
   io.memFb << fbAxi.io.output
   io.memTex << texAxi.io.output
 
-  core.io.statusInputs.vRetrace := core.io.hdmi.status.newFrame
+  core.io.statusInputs.vRetrace := core.io.hdmi.status.frameDone
   core.io.statusInputs.memFifoFree := 0xffff
   core.io.statusInputs.pciInterrupt := False
   core.io.hdmi.clock := io.hdmi.clock

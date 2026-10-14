@@ -116,7 +116,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   texReloc.io.input << texAxi.io.output
   io.memTex << texReloc.io.output
 
-  core.io.statusInputs.vRetrace := core.io.hdmi.status.newFrame
+  core.io.statusInputs.vRetrace := core.io.hdmi.status.frameDone
   core.io.statusInputs.memFifoFree := 0xffff
   core.io.statusInputs.pciInterrupt := False
   core.io.hdmi.clock := io.hdmi.clock
