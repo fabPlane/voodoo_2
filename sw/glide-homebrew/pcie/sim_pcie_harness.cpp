@@ -68,6 +68,7 @@ bool g_busySample = false;
 // counters at 0x280-0x2e4 after each swap and print the per-frame deltas.
 bool g_perf = false;
 uint32_t g_lastPerf[26];
+uint32_t g_lastDdr[8];
 uint64_t g_busyN = 0, g_busyCnt[32];
 const char *const kBusyNames[32] = {
     "setupV", "raster", "tmuInV", "tmuBusy", "fbAccBusy", "ccInV", "fogBusy", "fbAccInV",
@@ -345,6 +346,19 @@ void reportFrame() {
       g_lastPerf[i] = perf[i];
     }
   }
+  // DDR adapter counters (window 31: write 0x74 = snapshot, read 0x78-0x94;
+  // B74+). The read after the write gives the snapshot time to land.
+  uint32_t dd[8] = {0};
+  if (g_perf) {
+    const uint32_t w31 = 31u << 20;
+    g_bar.write32(w31 + 0x74, 1);
+    (void)g_bar.read32(w31 + 0x78);
+    for (int i = 0; i < 8; ++i) {
+      uint32_t v = g_bar.read32(w31 + 0x78 + 4 * i);
+      dd[i] = v - g_lastDdr[i];
+      g_lastDdr[i] = v;
+    }
+  }
   uint64_t done = nowNs();
   if (f.start && g_frameNo++ > 0) {
     auto ms = [](uint64_t ns) { return ns / 1e6; };
@@ -371,6 +385,14 @@ void reportFrame() {
               pc(3), pc(4), pc(5), pc(6), pc(7), pc(8), dp[9], dp[10], dp[11], dp[12], dp[16],
               dp[17], pc(18), dp[19], dp[19] ? double(dp[16]) / dp[19] : 0.0, dp[20], dp[21], dp[22],
               dp[23], dp[25], dp[20] ? double(dp[24]) / dp[20] : 0.0);
+    }
+    if (g_perf && dd[0]) {
+      auto pd = [&](int i) { return 100.0 * dd[i] / dd[0]; };
+      fprintf(stderr,
+              "[ddr] frame %llu: %.1f Mcyc; rd %u wr %u cmds (%.0f%% of cycles); ctrl busy %.0f%%;"
+              " rd waits %.0f%% wr waits %.0f%%; rd latency %.1f cyc; rd slots full %.0f%%\n",
+              (unsigned long long)g_frameNo, dd[0] / 1e6, dd[1], dd[2], 100.0 * (dd[1] + dd[2]) / dd[0],
+              pd(3), pd(4), pd(5), dd[1] ? double(dd[6]) / dd[1] : 0.0, pd(7));
     }
     if (g_busySample && g_busyN) {
       fprintf(stderr, "[busy] frame %llu: %llu samples:", (unsigned long long)g_frameNo,

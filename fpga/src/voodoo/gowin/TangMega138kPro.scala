@@ -129,6 +129,12 @@ case class TangMega138kPro(c: Config) extends Component {
     // synchronizer.
     val ddrThrottle = Reg(Bits(32 bits)) init (B(8, 32 bits))
     when(bar.io.localWrite && bar.io.localAddr === 0x64) { ddrThrottle := bar.io.localWdata }
+    // 0x74 (write anything): snapshot the DDR adapter's counters into
+    // 0x78-0x94 (Axi4ToGowinDdrNative.io.stats order); read them ~1 us later.
+    val ddrSnapToggle = RegInit(False)
+    when(bar.io.localWrite && bar.io.localAddr === 0x74) { ddrSnapToggle := !ddrSnapToggle }
+    val ddrStatsIn = Vec(Bits(32 bits), 8)
+    val ddrStats = ddrStatsIn.map(BufferCC(_, init = B(0, 32 bits)))
     // On-chip supply / temperature monitor. Also sent with every frame-DMA
     // status write, so the host logs it without touching the BAR:
     // 0x68 / extra 0: vcc [15:0] | temp [31:16]; 0x6C / extra 1: vccMin |
@@ -149,6 +155,7 @@ case class TangMega138kPro(c: Config) extends Component {
     when(bar.io.localAddr === 0x68) { bar.io.localRdata := adcNow }
     when(bar.io.localAddr === 0x6c) { bar.io.localRdata := adcExtremes }
     when(bar.io.localAddr === 0x70) { bar.io.localRdata := adcSamples }
+    for (i <- 0 until 8) when(bar.io.localAddr === 0x78 + 4 * i) { bar.io.localRdata := ddrStats(i) }
   }
 
   val adcMon = new ClockingArea(coreCd) {
@@ -228,6 +235,17 @@ case class TangMega138kPro(c: Config) extends Component {
   private val throttle = BufferCC(pcie.ddrThrottle, init = B(8, 32 bits))
   ddr.io.cmdGap := throttle(7 downto 0).asUInt
   ddr.io.maxReads := throttle(11 downto 8).asUInt
+  // [15:12]: arbitration policy (Axi4ToGowinDdrNative.io.policy).
+  ddr.io.policy := throttle(15 downto 12)
+  // Counter snapshot for window 31 0x78-0x94: copied when the PCIe side's
+  // toggle (0x74) changes, then stable while the host reads it.
+  private val snapToggle = BufferCC(pcie.ddrSnapToggle, init = False)
+  private val snapPrev = RegNext(snapToggle, init = False)
+  private val ddrShadow = Vec(Reg(Bits(32 bits)) init (0), 8)
+  when(snapToggle =/= snapPrev) {
+    for (i <- 0 until 8) ddrShadow(i) := ddr.io.stats(i).asBits
+  }
+  pcie.ddrStatsIn := ddrShadow
   // Scanout FIFO (4096 pixels) below 3/4: let the display's reads through
   // the DDR throttle, ahead of writes (black frames at gap 32 otherwise; at
   // 1/2 a mid-frame underflow still blanked frames during texture uploads).

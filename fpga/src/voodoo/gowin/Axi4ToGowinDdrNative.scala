@@ -44,12 +44,15 @@ case class GowinDdrNative(
   * `rdMeta` saying which AXI port, ID and 32-bit words of the line it
   * answers. Writes collect one native line (masked lanes) and are issued with
   * their data; B is returned after the last line of the burst is issued.
-  * Reads and writes share the command port, alternating when both wait.
+  * Reads and writes share the command port, alternating when both wait
+  * (io.policy bit 0: reads first, a write waits at most 32 cycles).
   *
   * Ordering: the controller executes commands in order, and each port's
   * BmbToAxi4SharedBridge waits for outstanding responses before switching
   * between reads and writes, so a read never overtakes an earlier write it
-  * depends on. Framebuffer wins over texture for new bursts.
+  * depends on, whatever the arbitration policy. fb and tex alternate for
+  * new read bursts (fb first while the scanout is urgent, or always with
+  * io.policy bit 1).
   *
   * wr_data_mask is active-high inhibit, the inverse of AXI wstrb.
   * nativeDataWidth is 256 on the 32-bit Pro Dock and 128 on the Console.
@@ -90,6 +93,15 @@ case class Axi4ToGowinDdrNative(
     // reads are not starved by the throttle (the scanout's own rate was
     // always there in the stable builds; only rendering needs pacing).
     val urgent = in Bool ()
+    // Run-time arbitration policy (quasi-static): bit 0 reads before writes
+    // (a write still goes after waiting 32 cycles), bit 1 fb reads strictly
+    // before tex reads (the pre-B72 order).
+    val policy = in Bits (4 bits)
+    // Free-running DDR-clock counters: 0 cycles, 1 read cmds, 2 write cmds,
+    // 3 cycles the controller was not ready, 4 cycles a read waited for the
+    // command slot, 5 same for a write, 6 sum of reads in flight per cycle
+    // (Little: / read cmds = mean read latency), 7 cycles all read slots full.
+    val stats = out(Vec(UInt(32 bits), 8))
   }
 
   private def toNative(a: UInt): UInt = {
@@ -201,7 +213,8 @@ case class Axi4ToGowinDdrNative(
     // pixel pipeline stalled on it. fb still goes first while the display is
     // short of pixels.
     val lastWasTex = RegInit(False)
-    val takeTex = io.tex.ar.valid && (!io.fb.ar.valid || (!lastWasTex && !urgentSync))
+    val policySync = RegNext(io.policy) init (0)
+    val takeTex = io.tex.ar.valid && (!io.fb.ar.valid || (!lastWasTex && !urgentSync && !policySync(1)))
     when(!active) {
       when(io.ddr.initCalibComplete) {
         when(io.fb.ar.valid && !takeTex) {
@@ -371,12 +384,33 @@ case class Axi4ToGowinDdrNative(
   val preferWrite = RegInit(False)
   val canIssue = io.ddr.cmdReady && cmdGapOk
   // While the display is short of pixels, reads go first.
-  val grantWrite = canIssue && wr.wantsCmd && ((preferWrite && !urgentSync) || !rd.wantsCmd)
+  val readFirst = RegNext(io.policy(0)) init (False)
+  val writeWait = Reg(UInt(6 bits)) init (0)
+  val writeStarved = writeWait(5)
+  val writeTurn = Mux(readFirst, writeStarved, preferWrite) && !urgentSync
+  val grantWrite = canIssue && wr.wantsCmd && (writeTurn || !rd.wantsCmd)
   val grantRead = canIssue && rd.wantsCmd && !grantWrite
   wr.issue := grantWrite
   rd.issue := grantRead
   when(grantWrite) { preferWrite := False }
   when(grantRead) { preferWrite := True }
+  when(grantWrite || !wr.wantsCmd) { writeWait := 0 }
+    .elsewhen(!writeStarved) { writeWait := writeWait + 1 }
+
+  private def counter(inc: UInt): UInt = {
+    val r = Reg(UInt(32 bits)) init (0)
+    r := r + inc.resized
+    r
+  }
+  private def cnt(cond: Bool): UInt = counter(cond.asUInt)
+  io.stats(0) := cnt(True)
+  io.stats(1) := cnt(grantRead)
+  io.stats(2) := cnt(grantWrite)
+  io.stats(3) := cnt(!io.ddr.cmdReady)
+  io.stats(4) := cnt(rd.wantsCmd && !grantRead)
+  io.stats(5) := cnt(wr.wantsCmd && !grantWrite)
+  io.stats(6) := counter(rd.inFlight)
+  io.stats(7) := cnt(rd.active && !rd.slotFree)
 
   io.ddr.cmdEn := grantWrite || grantRead
   io.ddr.cmd := Mux(grantWrite, U(GowinDdrNative.cmdWrite, 3 bits), U(GowinDdrNative.cmdRead, 3 bits))

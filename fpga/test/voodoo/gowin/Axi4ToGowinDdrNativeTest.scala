@@ -126,9 +126,10 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
     }
   }
 
-  test("both ports keep several reads in flight; every word comes back to its port in order") {
-    compiled.doSim("pipelined", seed = 2) { dut =>
+  for (pol <- Seq(0, 3)) test(s"both ports keep several reads in flight; every word comes back to its port in order (policy $pol)") {
+    compiled.doSim(s"pipelined$pol", seed = 2) { dut =>
       dut.clockDomain.forkStimulus(10)
+      dut.io.policy #= pol
       val mem = mutable.HashMap[BigInt, BigInt]()
       val rnd = new scala.util.Random(11)
       dut.io.ddr.cmdReady #= true
