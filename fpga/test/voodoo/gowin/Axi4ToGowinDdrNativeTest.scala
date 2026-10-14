@@ -276,4 +276,67 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       assert(maxInFlightThrottled <= 1, s"$maxInFlightThrottled reads in flight with maxReads 1")
     }
   }
+
+  test("a texture read is not starved by back-to-back framebuffer reads") {
+    compiled.doSim("fairness", seed = 3) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.rdData #= 0
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      for (axi <- Seq(dut.io.fb, dut.io.tex)) {
+        axi.aw.valid #= false
+        axi.w.valid #= false
+        axi.b.ready #= true
+        axi.ar.valid #= false
+        axi.r.ready #= true
+      }
+      var cycle = 0L
+      val pending = mutable.Queue[Long]()
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        if (dut.io.ddr.cmdEn.toBoolean && dut.io.ddr.cmd.toInt != 0) pending.enqueue(cycle + 12)
+        dut.io.ddr.rdDataValid #= false
+        if (pending.nonEmpty && pending.head <= cycle) {
+          pending.dequeue()
+          dut.io.ddr.rdDataValid #= true
+          dut.io.ddr.rdDataEnd #= true
+        }
+      }
+      // The framebuffer port (scanout + render fills) always has a 64-beat read waiting.
+      fork {
+        var a = 0L
+        while (true) {
+          dut.io.fb.ar.valid #= true
+          dut.io.fb.ar.addr #= a
+          dut.io.fb.ar.len #= 63
+          dut.io.fb.ar.size #= 2
+          dut.io.fb.ar.burst #= 1
+          dut.io.fb.ar.id #= 1
+          dut.clockDomain.waitSamplingWhere(dut.io.fb.ar.ready.toBoolean)
+          a = (a + 256) & 0xfffff
+        }
+      }
+      dut.clockDomain.waitSampling(50)
+      for (i <- 0 until 5) {
+        dut.io.tex.ar.valid #= true
+        dut.io.tex.ar.addr #= 0x100000 + 32 * i
+        dut.io.tex.ar.len #= 7
+        dut.io.tex.ar.size #= 2
+        dut.io.tex.ar.burst #= 1
+        dut.io.tex.ar.id #= 2
+        val start = cycle
+        dut.clockDomain.waitSamplingWhere(dut.io.tex.ar.ready.toBoolean || cycle - start > 2000)
+        assert(dut.io.tex.ar.ready.toBoolean, s"texture read $i still waiting after ${cycle - start} cycles")
+        assert(cycle - start < 100, s"texture read $i waited ${cycle - start} cycles")
+        dut.io.tex.ar.valid #= false
+        dut.clockDomain.waitSampling(30)
+      }
+    }
+  }
 }

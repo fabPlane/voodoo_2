@@ -195,9 +195,17 @@ case class Axi4ToGowinDdrNative(
     meta.io.push.lastWordIdx := lastWordIdx
     meta.io.push.last := lastLine
 
+    // fb and tex alternate when both want a read. With fb strictly first, a
+    // texture miss waited behind the scanout's line fetches and the render
+    // fills (~170 core cycles per miss under GLQuake, B71) while the whole
+    // pixel pipeline stalled on it. fb still goes first while the display is
+    // short of pixels.
+    val lastWasTex = RegInit(False)
+    val takeTex = io.tex.ar.valid && (!io.fb.ar.valid || (!lastWasTex && !urgentSync))
     when(!active) {
       when(io.ddr.initCalibComplete) {
-        when(io.fb.ar.valid) {
+        when(io.fb.ar.valid && !takeTex) {
+          lastWasTex := False
           io.fb.ar.ready := True
           addrSettled := False
           active := True
@@ -206,6 +214,7 @@ case class Axi4ToGowinDdrNative(
           beatsLeft := (io.fb.ar.len.resize(9) + 1).resized
           if (fbConfig.useId) id := io.fb.ar.id.resized
         } elsewhen (io.tex.ar.valid) {
+          lastWasTex := True
           io.tex.ar.ready := True
           addrSettled := False
           active := True
