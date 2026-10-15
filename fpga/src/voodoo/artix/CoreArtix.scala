@@ -284,7 +284,10 @@ object BmbToAxi4Mem {
 
 /** `splitPages`: needed where bursts can cross a 4 KiB page (framebuffer
   * reader spans). Texture fetches are small aligned reads and skip it. */
-case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = true) extends Component {
+/** `pendingMax`: transactions in flight per source in the AXI bridge; its
+  * response-info queues are flip-flops, so the default 31 cost ~1.3k
+  * registers per port on Gowin. The DDR adapter keeps 8 reads in flight. */
+case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = true, pendingMax: Int = 31) extends Component {
   val io = new Bundle {
     val input = slave(Bmb(p))
     val output = master(Axi4(BmbToAxi4Mem.axiConfig(p, burstLog2)))
@@ -292,7 +295,7 @@ case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = t
 
   val aligner = BmbAligner(p, burstLog2)
   val fixer = BmbLengthFixer(aligner.op.toBmbParameter(), burstLog2)
-  val bridge = BmbToAxi4SharedBridge(fixer.op.toBmbParameter())
+  val bridge = BmbToAxi4SharedBridge(fixer.op.toBmbParameter(), pendingMax = pendingMax)
 
   if (splitPages) {
     val pageSplit = BmbPageSplitter(p)

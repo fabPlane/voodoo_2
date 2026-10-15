@@ -25,6 +25,9 @@ object CoreGowin {
   // GLQuake pixel). Long bursts (scanout, write-buffer drains) are split into
   // 32-byte pieces, which the one-native-command-at-a-time bridge did anyway.
   val axiBurstLog2 = 5
+  // Transactions in flight per AXI port bridge (BmbToAxi4Mem): the DDR adapter
+  // keeps 8 reads in flight; the default 31 cost ~1.3k flip-flops per port.
+  val axiPendingMax = 8
 
   // The 5-way fb arbiter appends its input index to the BMB source, so the
   // shared side (and the AXI ID) must be the wider fbMemSharedBmbParams;
@@ -104,8 +107,8 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     outputParameter = Core.fbMemSharedBmbParams(c),
     lowerFirstPriority = true
   )
-  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2)
-  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false)
+  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.axiPendingMax)
+  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false, pendingMax = CoreGowin.axiPendingMax)
   val texReloc = Axi4AddressRelocate(
     CoreGowin.texAxiConfig(c, axiBurstLog2),
     GowinAddressMap.texMemBase
@@ -121,7 +124,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // core's internal arbiters, this 5-way arbiter and the AXI aligner formed
   // one ~50 ns combinational valid/ready chain on Gowin.
   private def cut(b: Bmb): Bmb = b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
-  val colAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
+  val colAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.axiPendingMax)
   colAxi.io.input <> cut(core.io.fbColorReadMem)
   io.memCol << colAxi.io.output
   private val unusedFbIn = fbArbiter.io.inputs(0)
@@ -135,11 +138,11 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   fbAxi.io.input <> cut(fbArbiter.io.output)
   texAxi.io.input <> cut(core.io.texMem)
   io.memFb << fbAxi.io.output
-  val auxAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
+  val auxAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.axiPendingMax)
   auxAxi.io.input <> cut(core.io.fbAuxReadMem)
   io.memAux << auxAxi.io.output
   if (c.separateScanoutMem) {
-    val scanAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
+    val scanAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.axiPendingMax)
     scanAxi.io.input <> cut(core.io.fbScanoutMem)
     io.memScan << scanAxi.io.output
   }
