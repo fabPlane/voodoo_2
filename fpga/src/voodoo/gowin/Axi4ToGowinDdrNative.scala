@@ -69,13 +69,18 @@ case class Axi4ToGowinDdrNative(
     scanConfig: Axi4Config = null,
     // Optional fourth, read-only port (framebuffer depth fills on the Pro
     // Dock): its own R channel next to the fb port's (colour fills, LFB).
-    auxConfig: Axi4Config = null
+    auxConfig: Axi4Config = null,
+    // Optional fifth, read-only port (colour fills + LFB reads on the Pro
+    // Dock), so the fb port only carries render writes.
+    colConfig: Axi4Config = null
 ) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
   require(scanConfig == null || scanConfig.dataWidth == 32)
   require(auxConfig == null || auxConfig.dataWidth == 32)
+  require(colConfig == null || colConfig.dataWidth == 32)
   val hasScan = scanConfig != null
   val hasAux = auxConfig != null
+  val hasCol = colConfig != null
   require(nativeDataWidth % 32 == 0 && nativeDataWidth >= 32)
   require(isPow2(readsInFlight) && readsInFlight >= 2)
   val nativeWords = nativeDataWidth / 32
@@ -92,13 +97,15 @@ case class Axi4ToGowinDdrNative(
   private val idWidth = (if (fbConfig.useId) fbConfig.idWidth else 0) max
     (if (texConfig.useId) texConfig.idWidth else 0) max
     (if (hasScan && scanConfig.useId) scanConfig.idWidth else 0) max
-    (if (hasAux && auxConfig.useId) auxConfig.idWidth else 0) max 1
+    (if (hasAux && auxConfig.useId) auxConfig.idWidth else 0) max
+    (if (hasCol && colConfig.useId) colConfig.idWidth else 0) max 1
 
   val io = new Bundle {
     val fb = slave(Axi4(fbConfig))
     val tex = slave(Axi4(texConfig))
     val scan = if (hasScan) slave(Axi4(scanConfig)) else null
     val aux = if (hasAux) slave(Axi4(auxConfig)) else null
+    val col = if (hasCol) slave(Axi4(colConfig)) else null
     val ddr = master(GowinDdrNative(addrWidth = nativeAddrWidth, dataWidth = nativeDataWidth))
     // Run-time throttles (quasi-static): idle cycles after every native
     // command, and the most reads in flight (0 = readsInFlight).
@@ -115,9 +122,9 @@ case class Axi4ToGowinDdrNative(
     // Free-running DDR-clock counters: 0 cycles, 1 read cmds, 2 write cmds,
     // 3 sum of returned read lines waiting for the AXI R side per cycle
     // (/ read cmds = mean wait after the data came back), 4 cycles fb AR
-    // waited, 5 cycles the head returned line waited for the scan port's R,
+    // waited, 5 cycles the head returned line waited for the aux port's R,
     // 6 sum of reads in flight per cycle (/ read cmds = mean read latency),
-    // 7 cycles the head returned line waited for the fb port's R.
+    // 7 cycles the head returned line waited for the col port's R.
     val stats = out(Vec(UInt(32 bits), 8))
   }
 
@@ -166,7 +173,7 @@ case class Axi4ToGowinDdrNative(
   ).resize(log2Up(readsInFlight + 1) bits)
 
   // Default AXI outputs.
-  for (axi <- Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux)) {
+  for (axi <- Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux) ++ Option(io.col)) {
     axi.aw.ready := False
     axi.w.ready := False
     axi.b.valid := False
@@ -179,9 +186,9 @@ case class Axi4ToGowinDdrNative(
   }
 
   // ---------------------------------------------------------------- reads
-  // Read port: 0 fb, 1 tex, 2 scan, 3 aux.
+  // Read port: 0 fb, 1 tex, 2 scan, 3 aux, 4 col.
   case class ReadMeta() extends Bundle {
-    val port = UInt(2 bits)
+    val port = UInt(3 bits)
     val id = UInt(idWidth bits)
     val firstIdx = UInt(wordIdxBits bits)
     val lastWordIdx = UInt(wordIdxBits bits)
@@ -190,7 +197,7 @@ case class Axi4ToGowinDdrNative(
 
   val rd = new Area {
     val active = RegInit(False)
-    val port = Reg(UInt(2 bits)) init (0)
+    val port = Reg(UInt(3 bits)) init (0)
     val addr = Reg(UInt(32 bits)) init (0)
     val beatsLeft = Reg(UInt(9 bits)) init (0)
     val id = Reg(UInt(idWidth bits)) init (0)
@@ -234,15 +241,16 @@ case class Axi4ToGowinDdrNative(
     case class ReadPort(idx: Int, ar: Stream[Axi4Ar], cfg: Axi4Config)
     val readPorts = Seq(ReadPort(0, io.fb.ar, fbConfig), ReadPort(1, io.tex.ar, texConfig)) ++
       (if (hasScan) Seq(ReadPort(2, io.scan.ar, scanConfig)) else Nil) ++
-      (if (hasAux) Seq(ReadPort(3, io.aux.ar, auxConfig)) else Nil)
-    val portValid = Vec(Bool(), 4)
-    for (i <- 0 until 4) portValid(i) := readPorts.find(_.idx == i).map(_.ar.valid).getOrElse(False)
-    val lastGrant = Reg(UInt(2 bits)) init (0)
-    val rrGrant = UInt(2 bits)
+      (if (hasAux) Seq(ReadPort(3, io.aux.ar, auxConfig)) else Nil) ++
+      (if (hasCol) Seq(ReadPort(4, io.col.ar, colConfig)) else Nil)
+    val portValid = Vec(Bool(), 8)
+    for (i <- 0 until 8) portValid(i) := readPorts.find(_.idx == i).map(_.ar.valid).getOrElse(False)
+    val lastGrant = Reg(UInt(3 bits)) init (0)
+    val rrGrant = UInt(3 bits)
     rrGrant := lastGrant
-    for (k <- 4 to 1 by -1) when(portValid(lastGrant + U(k % 4, 2 bits))) { rrGrant := lastGrant + U(k % 4, 2 bits) }
-    val urgentPort = if (hasScan) U(2, 2 bits) else U(0, 2 bits)
-    val grant = UInt(2 bits)
+    for (k <- 8 to 1 by -1) when(portValid(lastGrant + U(k % 8, 3 bits))) { rrGrant := lastGrant + U(k % 8, 3 bits) }
+    val urgentPort = if (hasScan) U(2, 3 bits) else U(0, 3 bits)
+    val grant = UInt(3 bits)
     grant := rrGrant
     when(urgentSync && portValid(urgentPort)) { grant := urgentPort }
       .elsewhen(policySync(1) && portValid(0) && rrGrant === 1) { grant := 0 }
@@ -260,7 +268,7 @@ case class Axi4ToGowinDdrNative(
             beatsLeft := (rp.ar.len.resize(9) + 1).resized
             if (rp.cfg.useId) id := rp.ar.id.resized
           }
-          if (readPorts.size < 4) default {}
+          default {}
         }
       }
     } elsewhen (issue) {
@@ -282,8 +290,9 @@ case class Axi4ToGowinDdrNative(
     val words = data.io.pop.payload.subdivideIn(32 bits)
     val headValid = meta.io.pop.valid && data.io.pop.valid
     val endOfLine = idx === head.lastWordIdx
-    val ports = Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux)
-    val portIdx = Seq(0, 1) ++ (if (hasScan) Seq(2) else Nil) ++ (if (hasAux) Seq(3) else Nil)
+    val ports = Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux) ++ Option(io.col)
+    val portIdx = Seq(0, 1) ++ (if (hasScan) Seq(2) else Nil) ++ (if (hasAux) Seq(3) else Nil) ++
+      (if (hasCol) Seq(4) else Nil)
     val rReady = Bool()
     rReady := io.fb.r.ready
     for ((axi, p) <- ports.zip(portIdx)) {
@@ -314,6 +323,8 @@ case class Axi4ToGowinDdrNative(
   if (hasScan && scanConfig.useId) io.scan.r.id := rd.head.id.resized
   if (hasAux && auxConfig.useId) io.aux.r.id := rd.head.id.resized
   if (hasAux && auxConfig.useId) io.aux.b.id := 0
+  if (hasCol && colConfig.useId) io.col.r.id := rd.head.id.resized
+  if (hasCol && colConfig.useId) io.col.b.id := 0
   if (hasScan) {
     if (scanConfig.useId) io.scan.b.id := 0
   }
@@ -440,9 +451,9 @@ case class Axi4ToGowinDdrNative(
   io.stats(2) := cnt(grantWrite)
   io.stats(3) := counter(rd.data.io.occupancy)
   io.stats(4) := cnt(io.fb.ar.valid && !io.fb.ar.ready)
-  io.stats(5) := cnt(rd.headValid && !rd.rReady && rd.head.port === 2)
+  io.stats(5) := cnt(rd.headValid && !rd.rReady && rd.head.port === 3)
   io.stats(6) := counter(rd.inFlight)
-  io.stats(7) := cnt(rd.headValid && !rd.rReady && rd.head.port === 0)
+  io.stats(7) := cnt(rd.headValid && !rd.rReady && rd.head.port === 4)
 
   io.ddr.cmdEn := grantWrite || grantRead
   io.ddr.cmd := Mux(grantWrite, U(GowinDdrNative.cmdWrite, 3 bits), U(GowinDdrNative.cmdRead, 3 bits))

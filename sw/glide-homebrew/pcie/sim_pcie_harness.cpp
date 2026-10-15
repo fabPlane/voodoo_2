@@ -390,7 +390,7 @@ void reportFrame() {
       auto pd = [&](int i) { return 100.0 * dd[i] / dd[0]; };
       fprintf(stderr,
               "[ddr] frame %llu: %.1f Mcyc; rd %u wr %u cmds (%.0f%% of cycles); rd data waits %.1f cyc;"
-              " fb AR stalled %.0f%% head waits scan R %.0f%%; rd latency %.1f cyc; head waits fb R %.0f%%\n",
+              " fb AR stalled %.0f%% head waits aux R %.0f%%; rd latency %.1f cyc; head waits col R %.0f%%\n",
               (unsigned long long)g_frameNo, dd[0] / 1e6, dd[1], dd[2], 100.0 * (dd[1] + dd[2]) / dd[0],
               dd[1] ? double(dd[3]) / dd[1] : 0.0, pd(4), pd(5), dd[1] ? double(dd[6]) / dd[1] : 0.0, pd(7));
     }
