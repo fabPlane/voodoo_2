@@ -544,8 +544,50 @@ index 6051025..8664556 100644
      )
  
    val memTiming = SimMemoryTiming(
+diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
+index 3a197b9..ee31d21 100644
+--- a/src/voodoo/bus/BmbBusInterface.scala
++++ b/src/voodoo/bus/BmbBusInterface.scala
+@@ -189,6 +189,37 @@ case class BmbBusInterface(
+     (VoodooRegInst(reg), bufferedCommandStream(addr, pulseStream))
+   }
+ 
++  /** Two command registers feeding one payload Stream (triangleCMD /
++    * ftriangleCMD): one snapshot buffer instead of one per register.
++    * `buildPayload` gets True when the write hit `addrB`. Both addresses
++    * report the same ready, and PciFifo holds a command write while any
++    * other command write is still on its way to the register bank, so the
++    * shared buffer cannot be overrun.
++    */
++  def newCommandRegPairWithPayload[T <: Data](
++      addrA: BigInt,
++      nameA: String,
++      addrB: BigInt,
++      nameB: String,
++      category: RegisterCategory,
++      payloadType: HardType[T]
++  )(
++      buildPayload: (Bool, T) => Unit
++  ): (RegInst, RegInst, Stream[T]) = {
++    registerCategories(addrA) = category
++    registerCategories(addrB) = category
++    val regA = newRegAt(addrA, nameA, null)
++    val regB = newRegAt(addrB, nameB, null)
++
++    val src = Stream(payloadType())
++    src.valid := regA.hitDoWrite || regB.hitDoWrite
++    buildPayload(regB.hitDoWrite, src.payload)
++
++    val buffered = bufferedCommandStream(addrA, src)
++    commandStreamReady(addrB) = src.ready
++    (regA, regB, buffered)
++  }
++
+   /** Create a command register that produces a payload-carrying Stream
+     *
+     * The payload is sampled in the same cycle as the register write and then buffered using the
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..25d070d 100644
+index 226d60e..c81fc68 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
 @@ -67,6 +67,8 @@ case class PciFifo(
@@ -866,20 +908,22 @@ index 226d60e..25d070d 100644
        }
      }
  
-@@ -490,50 +576,59 @@ case class PciFifo(
+@@ -488,52 +574,61 @@ case class PciFifo(
+       s"[PciFifo] Command stream addresses: ${commandAddresses.map(a => f"0x$a%03x").mkString(", ")}"
+     )
      if (commandAddresses.nonEmpty) {
++      // commandReady only reflects writes that already reached the regBank; hold a
++      // command write while any command write is still in the issue / regBank
++      // stages so it can't be dropped (two command registers may share one
++      // buffer, e.g. triangleCMD / ftriangleCMD). Command writes are rare.
++      def isCommand(a: UInt): Bool = commandAddresses.map(x => a === U(x, busAddrWidth bits)).orR
++      val commandInFlight =
++        (issuedWrite.valid && !issuedWrite.isTexture && isCommand(issuedWrite.address)) ||
++          (regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE && isCommand(regCmdStage.address))
        for ((addr, idx) <- commandAddresses.zipWithIndex) {
          when(pciFifo.io.pop.address === U(addr, busAddrWidth bits)) {
 -          commandStreamBlocked := !io.commandReady(idx)
-+          // commandReady only reflects writes that already reached the regBank; hold a
-+          // second write to the same command register while one is still in the
-+          // issue / regBank stages so it can't be dropped.
-+          val sameInFlight =
-+            (issuedWrite.valid && !issuedWrite.isTexture &&
-+              issuedWrite.address === U(addr, busAddrWidth bits)) ||
-+              (regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE &&
-+                regCmdStage.address === U(addr, busAddrWidth bits))
-+          commandStreamBlocked := !io.commandReady(idx) || sameInFlight
++          commandStreamBlocked := !io.commandReady(idx) || commandInFlight
          }
        }
      }
@@ -1596,10 +1640,59 @@ index aeba713..06fa63b 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..f460d8e 100644
+index c5a4cd8..c6bb381 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
-@@ -1095,13 +1095,44 @@ case class RegisterBank(config: Config) extends Component {
+@@ -649,28 +649,26 @@ case class RegisterBank(config: Config) extends Component {
+   // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
+   // ========================================================================
+   val commands = new Area {
+-    val (triangleCmdReg, triangleCmdStream) =
+-      busif.newCommandRegWithPayload(
++    // triangleCMD (0x080) and ftriangleCMD (0x100) share one snapshot
++    // buffer: each per-register buffer held two copies of the whole triangle
++    // (~8.6k of the register bank's ~13k flip-flops on the Gowin build).
++    val (triangleCmdReg, ftriangleCmdReg, triangleCmdStream) =
++      busif.newCommandRegPairWithPayload(
+         0x080,
+         "triangleCMD",
+-        RegisterCategory.fifoNoSync,
+-        HardType(TriangleSetup.Input(config))
+-      ) { (reg, payload) =>
+-        Component.current.addPrePopTask { () =>
+-          payload.assignFromBits(buildTriangleCommandInput(io.bus.cmd.data(31), False).asBits)
+-        }
+-      }
+-    val (ftriangleCmdReg, ftriangleCmdStream) =
+-      busif.newCommandRegWithPayload(
+         0x100,
+         "ftriangleCMD",
+         RegisterCategory.fifoNoSync,
+         HardType(TriangleSetup.Input(config))
+-      ) { (reg, payload) =>
++      ) { (isFloat, payload) =>
+         Component.current.addPrePopTask { () =>
+-          payload.assignFromBits(buildTriangleCommandInput(io.bus.cmd.data(31), True).asBits)
++          payload.assignFromBits(buildTriangleCommandInput(io.bus.cmd.data(31), isFloat).asBits)
+         }
+       }
++    // Kept for the PixelPipeline / test interface; never valid.
++    val ftriangleCmdStream = Stream(TriangleSetup.Input(config))
++    ftriangleCmdStream.valid := False
++    ftriangleCmdStream.payload.assignFromBits(B(0, widthOf(ftriangleCmdStream.payload) bits))
+     val (nopCmdReg, nopCmdStream) =
+       busif.newCommandRegWithPayload(
+         0x120,
+@@ -691,7 +689,7 @@ case class RegisterBank(config: Config) extends Component {
+         when(swapbufferCmdStream.fire) {
+           triangleDrawTraceId := triangleDrawTraceId + 1
+         }
+-        when(triangleCmdStream.valid || ftriangleCmdStream.valid) {
++        when(triangleCmdStream.valid) {
+           trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
+         }
+       }
+@@ -1095,13 +1093,44 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -1645,7 +1738,7 @@ index c5a4cd8..f460d8e 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1151,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1149,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -1654,7 +1747,7 @@ index c5a4cd8..f460d8e 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1163,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1161,7 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
