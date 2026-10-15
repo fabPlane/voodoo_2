@@ -1093,17 +1093,10 @@ index c23fa0b..388f42e 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..c58fae9 100644
+index 7797711..6ee7d61 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
-@@ -282,13 +282,15 @@ case class PixelPipeline(c: Config) extends Component {
-   val rasterFork = StreamFork2(rasterYPipe, synchronous = true)
-   val postTmuQueue = rasterFork._2
-     .translateWith(Rasterizer.PostTmu.fromOutput(c, rasterFork._2.payload))
--    .queue(64)
-+    .queue(128)
-     .stage()
-     .stage()
+@@ -288,7 +288,9 @@ case class PixelPipeline(c: Config) extends Component {
  
    val tmuOutput = Stream(Tmu.Output(c))
    val tmuInputValid = Bool()
@@ -1113,28 +1106,16 @@ index 7797711..c58fae9 100644
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -309,9 +311,18 @@ case class PixelPipeline(c: Config) extends Component {
-     tmuInput.translateFrom(rasterFork._1.stage())((out, in) =>
-       out := Tmu.Input.fromRasterizer(c, in)
-     )
--    tmuInput >/-> tmu.io.input
-+    // Let the rasterizer run up to ~64 pixels ahead of the TMU (the TMU
-+    // itself keeps only 7 in flight): its span prefetch then reaches the
-+    // framebuffer readers well before the span's pixels do, hiding the DDR
-+    // round trip (~57 core cycles) that every span otherwise stalled on
-+    // (B74/B75: fb fill stall ~80% summed over both readers). postTmuQueue
-+    // above holds the same pixels for the join, so it is twice as deep.
-+    val tmuInputQueued = tmuInput.queue(64)
-+    tmuInputQueued >/-> tmu.io.input
+@@ -312,6 +314,8 @@ case class PixelPipeline(c: Config) extends Component {
+     tmuInput >/-> tmu.io.input
      tmuOutput << tmu.io.output
--    tmuInputValid := tmu.io.input.valid
-+    tmuInputValid := tmu.io.input.valid || tmuInputQueued.valid
+     tmuInputValid := tmu.io.input.valid
 +    tmuInputStall := tmu.io.input.valid && !tmu.io.input.ready
 +    tmuPerf := tmu.io.texPerf
      tmuBusy := tmu.io.busy
    } else {
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
-@@ -334,6 +345,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,6 +338,8 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -1143,7 +1124,7 @@ index 7797711..c58fae9 100644
      tmuBusy := False
    }
  
-@@ -367,8 +380,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,8 +373,10 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1156,7 +1137,7 @@ index 7797711..c58fae9 100644
  
    val ckBits = colorCombine.io.output.payload.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,8 +668,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,8 +661,9 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -1167,7 +1148,7 @@ index 7797711..c58fae9 100644
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,7 +682,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,7 +675,10 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1179,7 +1160,7 @@ index 7797711..c58fae9 100644
  
    // Framebuffer writeback can drain to external memory after the ordered draw pipeline is idle.
    // Status/sync must not wait on writeback-only busy, but LFB reads still must for coherency.
-@@ -707,6 +726,29 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +719,29 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
