@@ -56,6 +56,13 @@ case class FbMemPathHarness(withArbiter: Boolean = false, withCc: Boolean = fals
   ddrCd(texIdle.setIdle())
   ddrCd(ad.io.tex << texIdle)
   io.ddr <> ad.io.ddr
+  // Run-time throttle / policy inputs added after this harness was written.
+  ddrCd {
+    ad.io.cmdGap := 0
+    ad.io.maxReads := 0
+    ad.io.urgent := False
+    ad.io.policy := 0
+  }
 }
 
 class FbMemPathTest extends AnyFunSuite {

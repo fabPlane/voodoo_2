@@ -34,6 +34,8 @@ object CoreGowin {
     BmbToAxi4Mem.axiConfig(Core.fbMemSharedBmbParams(c), burstLog2)
   def texAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
     BmbToAxi4Mem.axiConfig(Core.texMemBmbParams(c), burstLog2)
+  def scanAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
+    BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
 }
 
 case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) extends Component {
@@ -41,6 +43,8 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     val bar = slave(AxiLite4(AxiLite4ToBmbBridge.axiConfig(CoreGowin.barAddressWidth)))
     val memFb = master(Axi4(CoreGowin.fbAxiConfig(c, axiBurstLog2)))
     val memTex = master(Axi4(CoreGowin.texAxiConfig(c, axiBurstLog2)))
+    // HDMI scanout reads (Config.separateScanoutMem).
+    val memScan = if (c.separateScanoutMem) master(Axi4(CoreGowin.scanAxiConfig(c, axiBurstLog2))) else null
     val hdmi = master(HdmiScanoutPort(c))
     val hostWedged = out Bool ()
     // Host has a raw-DDR window selected: drain the fb write buffer and drop
@@ -113,6 +117,11 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   fbAxi.io.input <> cut(fbArbiter.io.output)
   texAxi.io.input <> cut(core.io.texMem)
   io.memFb << fbAxi.io.output
+  if (c.separateScanoutMem) {
+    val scanAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
+    scanAxi.io.input <> cut(core.io.fbScanoutMem)
+    io.memScan << scanAxi.io.output
+  }
   texReloc.io.input << texAxi.io.output
   io.memTex << texReloc.io.output
 

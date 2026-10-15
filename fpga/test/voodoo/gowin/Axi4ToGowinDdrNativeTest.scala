@@ -340,4 +340,86 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       }
     }
   }
+
+  private lazy val compiledScan = SimConfig.withVerilator.compile(Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg))
+
+  test("three read ports (fb, tex, scan) in flight together; each gets its own words in order") {
+    compiledScan.doSim("scan", seed = 4) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      val rnd = new scala.util.Random(21)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      dut.io.policy #= 0
+      val ports = Seq(dut.io.fb, dut.io.tex, dut.io.scan)
+      for (axi <- ports) {
+        axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
+        axi.ar.valid #= false; axi.r.ready #= false
+      }
+      // Memory: 32-byte native line at word address a holds words f(byte address).
+      def f(byteAddr: Long): Long = ((byteAddr * 2654435761L) ^ 0x1234567L) & 0xffffffffL
+      val pending = mutable.Queue[(BigInt, Long)]()
+      var cycle = 0L
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        dut.io.ddr.cmdReady #= rnd.nextInt(4) != 0
+        dut.io.urgent #= rnd.nextInt(16) == 0
+        if (dut.io.ddr.cmdEn.toBoolean && dut.io.ddr.cmd.toInt != 0) {
+          val due = cycle + 8 + rnd.nextInt(16)
+          pending.enqueue((dut.io.ddr.addr.toBigInt, pending.lastOption.map(_._2 max due).getOrElse(due)))
+        }
+        dut.io.ddr.rdDataValid #= false
+        if (pending.nonEmpty && pending.head._2 <= cycle) {
+          val (na, _) = pending.dequeue()
+          val lineByte = (na.toLong >> 0) * 4 // native address -> byte address (4 bytes per address)
+          var line = BigInt(0)
+          for (w <- 0 until 8) line |= BigInt(f(lineByte + 4 * w)) << (32 * w)
+          dut.io.ddr.rdData #= line
+          dut.io.ddr.rdDataValid #= true
+          dut.io.ddr.rdDataEnd #= true
+        }
+      }
+      val done = Array.fill(3)(false)
+      val errors = mutable.ArrayBuffer[String]()
+      for ((axi, p) <- ports.zipWithIndex) fork {
+        val bursts = (0 until 30).map { i =>
+          val beats = Seq(1, 3, 8, 16, 16, 40)(rnd.nextInt(6))
+          (0x100000L * (p + 1) + 32 * rnd.nextInt(256) + 4 * rnd.nextInt(8), beats)
+        }
+        val expect = mutable.Queue[Long]()
+        for ((a, beats) <- bursts; i <- 0 until beats) expect.enqueue(f(a + 4 * i))
+        val total = expect.size
+        val collector = fork {
+          var n = 0
+          while (n < total) {
+            axi.r.ready #= rnd.nextInt(3) != 0
+            dut.clockDomain.waitSampling()
+            if (axi.r.valid.toBoolean && axi.r.ready.toBoolean) {
+              val got = axi.r.data.toLong; val want = expect.dequeue()
+              if (got != want && errors.size < 5) errors += f"port $p word $n: got $got%08x want $want%08x"
+              n += 1
+            }
+          }
+          axi.r.ready #= false
+        }
+        for ((a, beats) <- bursts) {
+          axi.ar.valid #= true; axi.ar.addr #= a; axi.ar.len #= beats - 1
+          axi.ar.size #= 2; axi.ar.burst #= 1; axi.ar.id #= p + 1
+          dut.clockDomain.waitSamplingWhere(axi.ar.ready.toBoolean)
+          axi.ar.valid #= false
+          if (rnd.nextBoolean()) dut.clockDomain.waitSampling(rnd.nextInt(5))
+        }
+        collector.join()
+        done(p) = true
+      }
+      dut.clockDomain.waitSamplingWhere(done.forall(identity) || cycle > 200000)
+      assert(done.forall(identity), s"ports finished: ${done.toSeq}")
+      assert(errors.isEmpty, errors.mkString("; "))
+    }
+  }
 }

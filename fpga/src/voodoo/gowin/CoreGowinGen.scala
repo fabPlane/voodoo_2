@@ -79,6 +79,7 @@ object GowinGenSupport {
       // The cached scanout reader stalled for good under GLQuake (B53, B58:
       // black HDMI while rendering went on); fetch whole lines instead.
       scanoutLineFetcher = true,
+      separateScanoutMem = true,
       hdmiPrefill = 8192,
       hdmiRefillLow = 8192,
       hdmiRefillHigh = 14336,

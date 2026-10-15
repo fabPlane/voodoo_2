@@ -349,7 +349,7 @@ index d163ab7..4a8a8ed 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..e38994d 100644
+index 1b34fa2..47cf5b9 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -362,7 +362,7 @@ index 1b34fa2..e38994d 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,19 @@ case class Config(
+@@ -31,6 +34,22 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -376,6 +376,9 @@ index 1b34fa2..e38994d 100644
 +    // Scanout reads lines through ScanoutLineFetcher instead of a cached
 +    // FramebufferPlaneReader.
 +    scanoutLineFetcher: Boolean = false,
++    // The scanout reads through its own memory port (Core.io.fbScanoutMem)
++    // instead of sharing the colour-read port with render fills.
++    separateScanoutMem: Boolean = false,
 +    hdmiPrefill: Int = 2048,
 +    hdmiRefillLow: Int = 1024,
 +    hdmiRefillHigh: Int = 3072,
@@ -383,7 +386,7 @@ index 1b34fa2..e38994d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..30a2884 100644
+index 100f1c6..583ea49 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -414,7 +417,15 @@ index 100f1c6..30a2884 100644
    def texMemBmbParams(c: Config) = BmbParameter(
      addressWidth = c.addressWidth.value,
      dataWidth = 32,
-@@ -92,6 +113,10 @@ case class Core(c: Config) extends Component {
+@@ -67,6 +88,7 @@ case class Core(c: Config) extends Component {
+ 
+     // Framebuffer memory buses
+     val fbMemWrite = master(Bmb(Core.fbMemBmbParams(c)))
++    val fbScanoutMem = if (c.separateScanoutMem) master(Bmb(Core.fbMemBmbParams(c))) else null
+     val fbColorWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
+     val fbAuxWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
+     val fbColorReadMem = master(Bmb(Core.fbMemBmbParams(c)))
+@@ -92,6 +114,10 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -425,7 +436,7 @@ index 100f1c6..30a2884 100644
      // Integrated scanout path. Board wrappers provide the physical HDMI transmitter/clocking.
      val hdmi = master(HdmiScanoutPort(c))
  
-@@ -110,7 +135,14 @@ case class Core(c: Config) extends Component {
+@@ -110,7 +136,14 @@ case class Core(c: Config) extends Component {
    val pixelPipeline = PixelPipeline(c)
    val framebufferMem = FramebufferMemSubsystem(c)
    val textureMem = TextureMemSubsystem(c)
@@ -441,7 +452,7 @@ index 100f1c6..30a2884 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -164,7 +196,9 @@ case class Core(c: Config) extends Component {
+@@ -164,7 +197,9 @@ case class Core(c: Config) extends Component {
    pixelPipeline.io.ftriangleCmd << regBank.commands.ftriangleCmd
    pixelPipeline.io.fastfillCmd << regBank.commands.fastfillCmd
    pixelPipeline.io.paletteWrite << regBank.io.paletteWrite
@@ -452,7 +463,7 @@ index 100f1c6..30a2884 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,8 +207,11 @@ case class Core(c: Config) extends Component {
+@@ -173,8 +208,11 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -466,7 +477,15 @@ index 100f1c6..30a2884 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -200,9 +237,34 @@ case class Core(c: Config) extends Component {
+@@ -183,6 +221,7 @@ case class Core(c: Config) extends Component {
+   framebufferMem.io.lfbReadBus <> pixelPipeline.io.lfbReadBus
+   framebufferMem.io.flush := io.flushFbCaches
+   framebufferMem.io.fbMemWrite <> io.fbMemWrite
++  if (c.separateScanoutMem) framebufferMem.io.fbScanoutMem <> io.fbScanoutMem
+   framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
+   framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
+   framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
+@@ -200,9 +239,34 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -1028,7 +1047,7 @@ index 2f55df7..4d53813 100644
    val writePath = CoreWritePathMap()
    val pipelineBusySources = Bits(32 bits)
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..388f42e 100644
+index c23fa0b..605879b 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -5,7 +5,7 @@ import spinal.core.sim._
@@ -1040,7 +1059,11 @@ index c23fa0b..388f42e 100644
  
  case class FramebufferMemSubsystem(c: Config) extends Component {
    val io = new Bundle {
-@@ -31,6 +31,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -28,9 +28,13 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+     val fbAuxWriteMem = master(Bmb(voodoo.Core.fbMemBmbParams(c)))
+     val fbColorReadMem = master(Bmb(voodoo.Core.fbMemBmbParams(c)))
+     val fbAuxReadMem = master(Bmb(voodoo.Core.fbMemBmbParams(c)))
++    val fbScanoutMem = if (c.separateScanoutMem) master(Bmb(voodoo.Core.fbMemBmbParams(c))) else null
  
      val status = out(FramebufferMemStatus())
      val stats = out(FramebufferMemStats())
@@ -1050,7 +1073,7 @@ index c23fa0b..388f42e 100644
    }
  
    private def makeFbWriteArbiter() =
-@@ -80,7 +83,20 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -80,7 +84,20 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
      if (useCachedReaders) FramebufferPlaneReader(c).setName("fbAuxReader") else null
    val colorReaderDirect =
      if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbColorReader") else null
@@ -1072,7 +1095,7 @@ index c23fa0b..388f42e 100644
    val auxReaderDirect =
      if (!useCachedReaders) FramebufferPlaneDirectReader(c).setName("fbAuxReader") else null
    val colorWritePort = FramebufferPlaneBuffer(c).setName("fbColorBuffer")
-@@ -95,9 +111,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -95,9 +112,9 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
    }
  
    if (useCachedReaders) {
@@ -1084,7 +1107,7 @@ index c23fa0b..388f42e 100644
      io.auxReadRsp << auxReaderCached.io.readRsp
      colorReaderCached.io.prefetchReq <> io.prefetchColor
      auxReaderCached.io.prefetchReq <> io.prefetchAux
-@@ -110,9 +126,24 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -110,9 +127,24 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
      io.prefetchAux.ready := True
    }
  
@@ -1112,18 +1135,58 @@ index c23fa0b..388f42e 100644
  
    disableReadPort(colorWritePort)
    disableReadPort(auxWritePort)
-@@ -142,8 +173,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -120,6 +152,7 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+   auxWritePort.io.writeReq << io.auxWrite.s2mPipe()
+ 
+   val fbWriteArbiter = if (c.useFbWriteBuffer) makeFbWriteArbiter() else null
++  require(!c.separateScanoutMem || c.useFbWriteBuffer, "separateScanoutMem needs useFbWriteBuffer")
+   val fbColorWriteBridge = if (!c.useFbWriteBuffer) makeFbSingleWriteBridge() else null
+   val fbAuxWriteBridge = if (!c.useFbWriteBuffer) makeFbSingleWriteBridge() else null
+   val fbColorReadArbiter = makeFbColorReadArbiter()
+@@ -142,8 +175,40 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
        fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
        auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
      }
 -    fbColorReadArbiter.io.inputs(0).cmd << scanoutReaderCached.io.mem.cmd.s2mPipe()
 -    scanoutReaderCached.io.mem.rsp << fbColorReadArbiter.io.inputs(0).rsp.s2mPipe()
-+    fbColorReadArbiter.io.inputs(0).cmd << scanoutMem.cmd.s2mPipe()
-+    scanoutMem.rsp << fbColorReadArbiter.io.inputs(0).rsp.s2mPipe()
++    if (c.separateScanoutMem) {
++      // Own memory port: scanout data no longer queues in front of the
++      // render fills in the shared in-order read path (Gowin B80: reads
++      // spent ~140 of ~176 DDR cycles waiting for that path).
++      // Same parameters apart from a narrower source: connect field by field.
++      val cmdIn = scanoutMem.cmd.s2mPipe()
++      val cmdOut = io.fbScanoutMem.cmd
++      cmdOut.valid := cmdIn.valid
++      cmdIn.ready := cmdOut.ready
++      cmdOut.last := cmdIn.last
++      cmdOut.fragment.opcode := cmdIn.fragment.opcode
++      cmdOut.fragment.address := cmdIn.fragment.address
++      cmdOut.fragment.length := cmdIn.fragment.length
++      cmdOut.fragment.data := cmdIn.fragment.data
++      cmdOut.fragment.mask := cmdIn.fragment.mask
++      cmdOut.fragment.source := cmdIn.fragment.source.resized
++      cmdOut.fragment.context.assignFromBits(cmdIn.fragment.context.asBits.resized)
++      val rspIn = io.fbScanoutMem.rsp.s2mPipe()
++      val rspOut = scanoutMem.rsp
++      rspOut.valid := rspIn.valid
++      rspIn.ready := rspOut.ready
++      rspOut.last := rspIn.last
++      rspOut.fragment.opcode := rspIn.fragment.opcode
++      rspOut.fragment.data := rspIn.fragment.data
++      rspOut.fragment.source := rspIn.fragment.source.resized
++      rspOut.fragment.context.assignFromBits(rspIn.fragment.context.asBits.resized)
++      val unused = fbColorReadArbiter.io.inputs(0)
++      unused.cmd.valid := False
++      unused.cmd.payload.assignFromBits(B(0, widthOf(unused.cmd.payload) bits))
++      unused.rsp.ready := True
++    } else {
++      fbColorReadArbiter.io.inputs(0).cmd << scanoutMem.cmd.s2mPipe()
++      scanoutMem.rsp << fbColorReadArbiter.io.inputs(0).rsp.s2mPipe()
++    }
      fbColorReadArbiter.io.inputs(2).cmd << io.lfbReadBus.cmd
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
-@@ -200,8 +231,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -200,8 +265,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
        fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
        auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
      }

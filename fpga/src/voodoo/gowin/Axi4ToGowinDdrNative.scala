@@ -62,9 +62,15 @@ case class Axi4ToGowinDdrNative(
     texConfig: Axi4Config,
     nativeDataWidth: Int = GowinAddressMap.ddrNativeDataWidth,
     nativeAddrWidth: Int = GowinAddressMap.ddrNativeAddrWidth,
-    readsInFlight: Int = 8
+    readsInFlight: Int = 8,
+    // Optional third, read-only port (the HDMI scanout on the Pro Dock):
+    // its data then drains through its own AXI R channel / clock crossing
+    // instead of queueing in the framebuffer port's in front of render fills.
+    scanConfig: Axi4Config = null
 ) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
+  require(scanConfig == null || scanConfig.dataWidth == 32)
+  val hasScan = scanConfig != null
   require(nativeDataWidth % 32 == 0 && nativeDataWidth >= 32)
   require(isPow2(readsInFlight) && readsInFlight >= 2)
   val nativeWords = nativeDataWidth / 32
@@ -79,11 +85,13 @@ case class Axi4ToGowinDdrNative(
   val lastIdx = nativeWords - 1
   require(nativeWordBytes >= 1 && (nativeWordBytes & (nativeWordBytes - 1)) == 0)
   private val idWidth = (if (fbConfig.useId) fbConfig.idWidth else 0) max
-    (if (texConfig.useId) texConfig.idWidth else 0) max 1
+    (if (texConfig.useId) texConfig.idWidth else 0) max
+    (if (hasScan && scanConfig.useId) scanConfig.idWidth else 0) max 1
 
   val io = new Bundle {
     val fb = slave(Axi4(fbConfig))
     val tex = slave(Axi4(texConfig))
+    val scan = if (hasScan) slave(Axi4(scanConfig)) else null
     val ddr = master(GowinDdrNative(addrWidth = nativeAddrWidth, dataWidth = nativeDataWidth))
     // Run-time throttles (quasi-static): idle cycles after every native
     // command, and the most reads in flight (0 = readsInFlight).
@@ -150,7 +158,7 @@ case class Axi4ToGowinDdrNative(
   ).resize(log2Up(readsInFlight + 1) bits)
 
   // Default AXI outputs.
-  for (axi <- Seq(io.fb, io.tex)) {
+  for (axi <- Seq(io.fb, io.tex) ++ Option(io.scan)) {
     axi.aw.ready := False
     axi.w.ready := False
     axi.b.valid := False
@@ -163,8 +171,9 @@ case class Axi4ToGowinDdrNative(
   }
 
   // ---------------------------------------------------------------- reads
+  // Read port: 0 fb, 1 tex, 2 scan.
   case class ReadMeta() extends Bundle {
-    val useTex = Bool()
+    val port = UInt(2 bits)
     val id = UInt(idWidth bits)
     val firstIdx = UInt(wordIdxBits bits)
     val lastWordIdx = UInt(wordIdxBits bits)
@@ -173,7 +182,7 @@ case class Axi4ToGowinDdrNative(
 
   val rd = new Area {
     val active = RegInit(False)
-    val useTex = Reg(Bool()) init (False)
+    val port = Reg(UInt(2 bits)) init (0)
     val addr = Reg(UInt(32 bits)) init (0)
     val beatsLeft = Reg(UInt(9 bits)) init (0)
     val id = Reg(UInt(idWidth bits)) init (0)
@@ -202,40 +211,51 @@ case class Axi4ToGowinDdrNative(
     val issue = Bool() // driven by the command arbiter below
 
     meta.io.push.valid := issue
-    meta.io.push.useTex := useTex
+    meta.io.push.port := port
     meta.io.push.id := id
     meta.io.push.firstIdx := firstIdx
     meta.io.push.lastWordIdx := lastWordIdx
     meta.io.push.last := lastLine
 
-    // fb and tex alternate when both want a read. With fb strictly first, a
+    // Ports take turns when several want a read. With fb strictly first, a
     // texture miss waited behind the scanout's line fetches and the render
     // fills (~170 core cycles per miss under GLQuake, B71) while the whole
-    // pixel pipeline stalled on it. fb still goes first while the display is
-    // short of pixels.
+    // pixel pipeline stalled on it. While the display is short of pixels its
+    // port goes first (the scan port when there is one, else fb).
     val lastWasTex = RegInit(False)
     val policySync = RegNext(io.policy) init (0)
+    val scanValid = if (hasScan) io.scan.ar.valid else False
     val takeTex = io.tex.ar.valid && (!io.fb.ar.valid || (!lastWasTex && !urgentSync && !policySync(1)))
+    val lastWasScan = RegInit(False)
+    // scan: first when urgent, otherwise every other grant while others wait.
+    val takeScan = scanValid && (urgentSync || !lastWasScan || !(io.fb.ar.valid || io.tex.ar.valid))
+    def accept(p: Int, ar: Stream[Axi4Ar], cfg: Axi4Config): Unit = {
+      ar.ready := True
+      addrSettled := False
+      active := True
+      port := p
+      addr := ar.addr.resized
+      beatsLeft := (ar.len.resize(9) + 1).resized
+      if (cfg.useId) id := ar.id.resized
+    }
     when(!active) {
       when(io.ddr.initCalibComplete) {
-        when(io.fb.ar.valid && !takeTex) {
-          lastWasTex := False
-          io.fb.ar.ready := True
-          addrSettled := False
-          active := True
-          useTex := False
-          addr := io.fb.ar.addr.resized
-          beatsLeft := (io.fb.ar.len.resize(9) + 1).resized
-          if (fbConfig.useId) id := io.fb.ar.id.resized
-        } elsewhen (io.tex.ar.valid) {
-          lastWasTex := True
-          io.tex.ar.ready := True
-          addrSettled := False
-          active := True
-          useTex := True
-          addr := io.tex.ar.addr.resized
-          beatsLeft := (io.tex.ar.len.resize(9) + 1).resized
-          if (texConfig.useId) id := io.tex.ar.id.resized
+        if (hasScan) {
+          when(takeScan) {
+            lastWasScan := True
+            accept(2, io.scan.ar, scanConfig)
+          }
+        }
+        when(!takeScan) {
+          when(io.fb.ar.valid && !takeTex) {
+            lastWasTex := False
+            lastWasScan := False
+            accept(0, io.fb.ar, fbConfig)
+          } elsewhen (io.tex.ar.valid) {
+            lastWasTex := True
+            lastWasScan := False
+            accept(1, io.tex.ar, texConfig)
+          }
         }
       }
     } elsewhen (issue) {
@@ -257,16 +277,15 @@ case class Axi4ToGowinDdrNative(
     val words = data.io.pop.payload.subdivideIn(32 bits)
     val headValid = meta.io.pop.valid && data.io.pop.valid
     val endOfLine = idx === head.lastWordIdx
-    val rReady = Mux(head.useTex, io.tex.r.ready, io.fb.r.ready)
-    when(headValid) {
-      when(head.useTex) {
-        io.tex.r.valid := True
-        io.tex.r.data := words(idx)
-        io.tex.r.last := head.last && endOfLine
-      } otherwise {
-        io.fb.r.valid := True
-        io.fb.r.data := words(idx)
-        io.fb.r.last := head.last && endOfLine
+    val ports = Seq(io.fb, io.tex) ++ Option(io.scan)
+    val rReady = Bool()
+    rReady := io.fb.r.ready
+    for ((axi, p) <- ports.zipWithIndex) {
+      when(head.port === p) { rReady := axi.r.ready }
+      when(headValid && head.port === p) {
+        axi.r.valid := True
+        axi.r.data := words(idx)
+        axi.r.last := head.last && endOfLine
       }
     }
     val lineDone = headValid && rReady && endOfLine
@@ -286,6 +305,10 @@ case class Axi4ToGowinDdrNative(
   }
   if (fbConfig.useId) io.fb.r.id := rd.head.id.resized
   if (texConfig.useId) io.tex.r.id := rd.head.id.resized
+  if (hasScan && scanConfig.useId) io.scan.r.id := rd.head.id.resized
+  if (hasScan) {
+    if (scanConfig.useId) io.scan.b.id := 0
+  }
 
   // ---------------------------------------------------------------- writes
   val wr = new Area {
