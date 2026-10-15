@@ -1206,7 +1206,7 @@ index c23fa0b..605879b 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..b69990b 100644
+index 7797711..4407fd6 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
@@ -1218,7 +1218,7 @@ index 7797711..b69990b 100644
      val fbStats = in(FramebufferMemStats())
      val texRead = master(Bmb(Tmu.bmbParams(c)))
      val lfbReadBus = master(Bmb(Lfb.fbReadBmbParams(c)))
-@@ -246,7 +248,13 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -246,7 +248,10 @@ case class PixelPipeline(c: Config) extends Component {
      .on(Seq(io.triangleCmd, io.ftriangleCmd))
    triangleSetup.i << triangleSetupInput
  
@@ -1226,14 +1226,11 @@ index 7797711..b69990b 100644
 +  // fbReadHazardGuard: assigned below, once the pipeline busy terms exist.
 +  val hazardHold = Bool()
 +  val drainedForHazard = Bool()
-+  // Registered: the guard compares the head triangle's bounding box with
-+  // the dirty region, which otherwise sat in the setup -> rasterizer path.
-+  val setupStaged = triangleSetup.o.m2sPipe()
-+  rasterizer.i << setupStaged.haltWhen(hazardHold)
++  rasterizer.i << triangleSetup.o.haltWhen(hazardHold)
    rasterizer.enableClipping := io.controls.fastfill.fbzMode.enableClipping
    rasterizer.clipLeft := io.controls.clip.left
    rasterizer.clipRight := io.controls.clip.right
-@@ -288,7 +296,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -288,7 +293,9 @@ case class PixelPipeline(c: Config) extends Component {
  
    val tmuOutput = Stream(Tmu.Output(c))
    val tmuInputValid = Bool()
@@ -1243,7 +1240,7 @@ index 7797711..b69990b 100644
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -312,6 +322,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -312,6 +319,8 @@ case class PixelPipeline(c: Config) extends Component {
      tmuInput >/-> tmu.io.input
      tmuOutput << tmu.io.output
      tmuInputValid := tmu.io.input.valid
@@ -1252,7 +1249,7 @@ index 7797711..b69990b 100644
      tmuBusy := tmu.io.busy
    } else {
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
-@@ -334,6 +346,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,6 +343,8 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -1261,7 +1258,7 @@ index 7797711..b69990b 100644
      tmuBusy := False
    }
  
-@@ -367,8 +381,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,8 +378,10 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1274,18 +1271,18 @@ index 7797711..b69990b 100644
  
    val ckBits = colorCombine.io.output.payload.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,8 +669,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,8 +666,9 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
 +  // triangleSetup.busy also covers the multi-cycle setup before o.valid.
    val pipelineBusySignal =
 -    triangleSetup.o.valid || rasterizer.running || tmuInputValid ||
-+    triangleSetup.busy || setupStaged.valid || rasterizer.running || tmuInputValid ||
++    triangleSetup.busy || rasterizer.running || tmuInputValid ||
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,12 +683,66 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +680,75 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1318,23 +1315,32 @@ index 7797711..b69990b 100644
 +  drainedForHazard := RegNext(!busyAfterSetup && !io.fbStatus.colorBusy) init (False)
 +
 +  val readHazard = new Area {
-+    val tri = setupStaged.payload
++    // The head triangle is held for its first cycle while its bounding box
++    // and blend flag are captured into small registers (registering the
++    // whole setup output cost >1k flip-flops and did not route, B89); the
++    // compare then works on registers, off the setup -> rasterizer path.
++    val head = triangleSetup.o
++    val tri = head.payload
 +    def lo(v: AFix): SInt = (v.floor(0).asSInt.resize(16 bits) - 1)
 +    def hi(v: AFix): SInt = (v.floor(0).asSInt.resize(16 bits) + 2)
-+    val minX = lo(tri.xrange(0)); val maxX = hi(tri.xrange(1))
-+    val minY = lo(tri.yrange(0)); val maxY = hi(tri.yrange(1))
 +    val fbz = io.controls.syncRender.fbzMode
-+    val readsColor = tri.config.alphaMode.alphaBlendEnable || fbz.enableDitherSubtract
++    val minX = RegNext(lo(tri.xrange(0))); val maxX = RegNext(hi(tri.xrange(1)))
++    val minY = RegNext(lo(tri.yrange(0))); val maxY = RegNext(hi(tri.yrange(1)))
++    val readsColor = RegNext(tri.config.alphaMode.alphaBlendEnable || fbz.enableDitherSubtract)
 +    val writesColor = fbz.rgbBufferMask
++    val headSeen = RegNext(head.valid && !head.ready, init = False) // same head as last cycle
++    val firstCycle = head.valid && !headSeen
 +    // Area written since memory was last current (all pixels drained).
 +    val dirtyValid = RegInit(False)
 +    val dMinX, dMaxX, dMinY, dMaxY = Reg(SInt(16 bits)) init (0)
 +    val overlap = dirtyValid && !(maxX < dMinX || minX > dMaxX || maxY < dMinY || minY > dMaxY)
-+    val hold = if (c.fbReadHazardGuard) setupStaged.valid && readsColor && overlap && !drainedForHazard else False
++    val hold = if (c.fbReadHazardGuard)
++      head.valid && (firstCycle || (readsColor && overlap && !drainedForHazard))
++    else False
 +    hazardHold := hold
-+    io.fbFlushReq := RegNext(hold) init (False)
++    io.fbFlushReq := RegNext(head.valid && !firstCycle && readsColor && overlap && !drainedForHazard) init (False)
 +    when(drainedForHazard) { dirtyValid := False }
-+    when(setupStaged.fire && writesColor) {
++    when(head.fire && writesColor) {
 +      val fresh = drainedForHazard || !dirtyValid
 +      dirtyValid := True
 +      dMinX := Mux(fresh || minX < dMinX, minX, dMinX)
@@ -1353,7 +1359,7 @@ index 7797711..b69990b 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +778,29 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +784,29 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
