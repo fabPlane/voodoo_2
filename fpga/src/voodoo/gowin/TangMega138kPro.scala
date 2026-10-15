@@ -228,7 +228,7 @@ case class TangMega138kPro(c: Config) extends Component {
   // Scanout reads: own clock crossing, so their data never waits in the fb R
   // FIFO in front of render fills.
   val scanCc = if (c.separateScanoutMem) Axi4CC(CoreGowin.scanAxiConfig(c), coreCd, ClockDomain.current,
-    arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = 4, bFifoSize = 4) else null
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = 256, wFifoSize = 4, bFifoSize = 4) else null
   if (c.separateScanoutMem) scanCc.io.input << core.io.memScan
   // Register the channels between the CDC FIFOs and the adapter: the
   // request pop-side valid and the R push-side ready otherwise fed the

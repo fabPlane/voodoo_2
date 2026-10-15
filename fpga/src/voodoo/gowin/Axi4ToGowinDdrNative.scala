@@ -108,8 +108,9 @@ case class Axi4ToGowinDdrNative(
     // Free-running DDR-clock counters: 0 cycles, 1 read cmds, 2 write cmds,
     // 3 sum of returned read lines waiting for the AXI R side per cycle
     // (/ read cmds = mean wait after the data came back), 4 cycles fb AR
-    // waited, 5 cycles fb AW waited, 6 sum of reads in flight per cycle
-    // (/ read cmds = mean read latency), 7 cycles all read slots full.
+    // waited, 5 cycles the head returned line waited for the scan port's R,
+    // 6 sum of reads in flight per cycle (/ read cmds = mean read latency),
+    // 7 cycles the head returned line waited for the fb port's R.
     val stats = out(Vec(UInt(32 bits), 8))
   }
 
@@ -432,9 +433,9 @@ case class Axi4ToGowinDdrNative(
   io.stats(2) := cnt(grantWrite)
   io.stats(3) := counter(rd.data.io.occupancy)
   io.stats(4) := cnt(io.fb.ar.valid && !io.fb.ar.ready)
-  io.stats(5) := cnt(io.fb.aw.valid && !io.fb.aw.ready)
+  io.stats(5) := cnt(rd.headValid && !rd.rReady && rd.head.port === 2)
   io.stats(6) := counter(rd.inFlight)
-  io.stats(7) := cnt(rd.active && !rd.slotFree)
+  io.stats(7) := cnt(rd.headValid && !rd.rReady && rd.head.port === 0)
 
   io.ddr.cmdEn := grantWrite || grantRead
   io.ddr.cmd := Mux(grantWrite, U(GowinDdrNative.cmdWrite, 3 bits), U(GowinDdrNative.cmdRead, 3 bits))
