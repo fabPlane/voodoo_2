@@ -349,7 +349,7 @@ index d163ab7..4a8a8ed 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..47cf5b9 100644
+index 1b34fa2..bdf5504 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -362,7 +362,7 @@ index 1b34fa2..47cf5b9 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,22 @@ case class Config(
+@@ -31,6 +34,28 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -379,6 +379,12 @@ index 1b34fa2..47cf5b9 100644
 +    // The scanout reads through its own memory port (Core.io.fbScanoutMem)
 +    // instead of sharing the colour-read port with render fills.
 +    separateScanoutMem: Boolean = false,
++    // Hold a colour-reading (blending) triangle that overlaps the area
++    // written since memory was last known current until those writes are in
++    // memory: the span prefetch otherwise reads colour before the earlier
++    // pixels have left the pipeline (B85: GLQuake's lightmap pass blended
++    // over stale texture-pass colour once colour fills were fast).
++    fbReadHazardGuard: Boolean = true,
 +    hdmiPrefill: Int = 2048,
 +    hdmiRefillLow: Int = 1024,
 +    hdmiRefillHigh: Int = 3072,
@@ -386,7 +392,7 @@ index 1b34fa2..47cf5b9 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..583ea49 100644
+index 100f1c6..76bf948 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -463,7 +469,7 @@ index 100f1c6..583ea49 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,8 +208,11 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +208,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -477,9 +483,11 @@ index 100f1c6..583ea49 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -183,6 +221,7 @@ case class Core(c: Config) extends Component {
+   framebufferMem.io.prefetchColor <> pixelPipeline.io.prefetchColor
+   framebufferMem.io.prefetchAux <> pixelPipeline.io.prefetchAux
    framebufferMem.io.lfbReadBus <> pixelPipeline.io.lfbReadBus
-   framebufferMem.io.flush := io.flushFbCaches
+-  framebufferMem.io.flush := io.flushFbCaches
++  framebufferMem.io.flush := io.flushFbCaches || pixelPipeline.io.fbFlushReq
    framebufferMem.io.fbMemWrite <> io.fbMemWrite
 +  if (c.separateScanoutMem) framebufferMem.io.fbScanoutMem <> io.fbScanoutMem
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
@@ -1198,10 +1206,31 @@ index c23fa0b..605879b 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..6ee7d61 100644
+index 7797711..29fa87e 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
-@@ -288,7 +288,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
+     val tmuInvalidate = in Bool ()
+     val pciFifoEmpty = in Bool ()
+     val fbStatus = in(FramebufferMemStatus())
++    // Drain the framebuffer write buffers (Config.fbReadHazardGuard).
++    val fbFlushReq = out Bool ()
+     val fbStats = in(FramebufferMemStats())
+     val texRead = master(Bmb(Tmu.bmbParams(c)))
+     val lfbReadBus = master(Bmb(Lfb.fbReadBmbParams(c)))
+@@ -246,7 +248,10 @@ case class PixelPipeline(c: Config) extends Component {
+     .on(Seq(io.triangleCmd, io.ftriangleCmd))
+   triangleSetup.i << triangleSetupInput
+ 
+-  rasterizer.i << triangleSetup.o
++  // fbReadHazardGuard: assigned below, once the pipeline busy terms exist.
++  val hazardHold = Bool()
++  val drainedForHazard = Bool()
++  rasterizer.i << triangleSetup.o.haltWhen(hazardHold)
+   rasterizer.enableClipping := io.controls.fastfill.fbzMode.enableClipping
+   rasterizer.clipLeft := io.controls.clip.left
+   rasterizer.clipRight := io.controls.clip.right
+@@ -288,7 +293,9 @@ case class PixelPipeline(c: Config) extends Component {
  
    val tmuOutput = Stream(Tmu.Output(c))
    val tmuInputValid = Bool()
@@ -1211,7 +1240,7 @@ index 7797711..6ee7d61 100644
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -312,6 +314,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -312,6 +319,8 @@ case class PixelPipeline(c: Config) extends Component {
      tmuInput >/-> tmu.io.input
      tmuOutput << tmu.io.output
      tmuInputValid := tmu.io.input.valid
@@ -1220,7 +1249,7 @@ index 7797711..6ee7d61 100644
      tmuBusy := tmu.io.busy
    } else {
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
-@@ -334,6 +338,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,6 +343,8 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -1229,7 +1258,7 @@ index 7797711..6ee7d61 100644
      tmuBusy := False
    }
  
-@@ -367,8 +373,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,8 +378,10 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1242,7 +1271,7 @@ index 7797711..6ee7d61 100644
  
    val ckBits = colorCombine.io.output.payload.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,8 +661,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,8 +666,9 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -1253,7 +1282,7 @@ index 7797711..6ee7d61 100644
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,7 +675,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +680,66 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1265,7 +1294,63 @@ index 7797711..6ee7d61 100644
  
    // Framebuffer writeback can drain to external memory after the ordered draw pipeline is idle.
    // Status/sync must not wait on writeback-only busy, but LFB reads still must for coherency.
-@@ -707,6 +719,29 @@ case class PixelPipeline(c: Config) extends Component {
+   val lfbReadSafeBusySignal = pipelineBusySignal || io.fbStatus.colorBusy || io.fbStatus.auxBusy
+ 
++  // Everything after triangle setup, plus the colour write buffer's drain.
++  // With fbFlushReq asserted, colorBusy also covers a not yet drained run.
++  val busyAfterSetup =
++    rasterizer.running || rasterYPipe.valid || tmuInputValid || tmuBusy || fbAccess.io.busy ||
++      colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
++      writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
++      writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
++      fastfillWriter.io.running || fastfillWriter.io.wordValid ||
++      fastfillWriter.io.colorWrite.valid || fastfillWriter.io.auxWrite.valid ||
++      preDitherMerged.valid || preDitherPiped.valid ||
++      ditherOutput.valid || ditherJoined.valid ||
++      forColorWrite.valid || forAuxWrite.valid ||
++      colorWriteInput.valid || auxWriteInput.valid || lfb.io.busy
++  // Registered: rasterizer.running follows its input valid (gated by the
++  // hold) and colorBusy follows the flush request. A triangle fired the cycle
++  // before is already busy then, so this cannot report drained too early.
++  drainedForHazard := RegNext(!busyAfterSetup && !io.fbStatus.colorBusy) init (False)
++
++  val readHazard = new Area {
++    val tri = triangleSetup.o.payload
++    def lo(v: AFix): SInt = (v.floor(0).asSInt.resize(16 bits) - 1)
++    def hi(v: AFix): SInt = (v.floor(0).asSInt.resize(16 bits) + 2)
++    val minX = lo(tri.xrange(0)); val maxX = hi(tri.xrange(1))
++    val minY = lo(tri.yrange(0)); val maxY = hi(tri.yrange(1))
++    val fbz = io.controls.syncRender.fbzMode
++    val readsColor = tri.config.alphaMode.alphaBlendEnable || fbz.enableDitherSubtract
++    val writesColor = fbz.rgbBufferMask
++    // Area written since memory was last current (all pixels drained).
++    val dirtyValid = RegInit(False)
++    val dMinX, dMaxX, dMinY, dMaxY = Reg(SInt(16 bits)) init (0)
++    val overlap = dirtyValid && !(maxX < dMinX || minX > dMaxX || maxY < dMinY || minY > dMaxY)
++    val hold = if (c.fbReadHazardGuard) triangleSetup.o.valid && readsColor && overlap && !drainedForHazard else False
++    hazardHold := hold
++    io.fbFlushReq := RegNext(hold) init (False)
++    when(drainedForHazard) { dirtyValid := False }
++    when(triangleSetup.o.fire && writesColor) {
++      val fresh = drainedForHazard || !dirtyValid
++      dirtyValid := True
++      dMinX := Mux(fresh || minX < dMinX, minX, dMinX)
++      dMaxX := Mux(fresh || maxX > dMaxX, maxX, dMaxX)
++      dMinY := Mux(fresh || minY < dMinY, minY, dMinY)
++      dMaxY := Mux(fresh || maxY > dMaxY, maxY, dMaxY)
++    }
++    // Fast fills and LFB writes bypass triangle setup: treat as full screen.
++    when(fastfillWriter.io.running || lfb.io.busy) {
++      dirtyValid := True
++      dMinX := S(-32768, 16 bits); dMaxX := S(32767, 16 bits)
++      dMinY := S(-32768, 16 bits); dMaxY := S(32767, 16 bits)
++    }
++  }
++
+   val pipelineBusySources = Bits(32 bits)
+   pipelineBusySources := 0
+   pipelineBusySources(0) := triangleSetup.o.valid
+@@ -707,6 +775,29 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
