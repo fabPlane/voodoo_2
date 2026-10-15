@@ -96,11 +96,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   val fbArbiter = BmbArbiter(
     inputsParameter = Seq(renderParams, renderOutParams),
     outputParameter = Core.fbMemSharedBmbParams(c),
-    // Round robin between colour fills / LFB reads and render writes (B87):
-    // with colour reads strictly first, colour writes were blocked ~41% of
-    // cycles (B84). Writes landing earlier also keeps the span prefetch from
-    // reading ahead of them (see B85/B86).
-    lowerFirstPriority = false
+    lowerFirstPriority = true
   )
   val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2)
   val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false)
