@@ -389,10 +389,10 @@ void reportFrame() {
     if (g_perf && dd[0]) {
       auto pd = [&](int i) { return 100.0 * dd[i] / dd[0]; };
       fprintf(stderr,
-              "[ddr] frame %llu: %.1f Mcyc; rd %u wr %u cmds (%.0f%% of cycles); ctrl busy %.0f%%;"
-              " rd waits %.0f%% wr waits %.0f%%; rd latency %.1f cyc; rd slots full %.0f%%\n",
+              "[ddr] frame %llu: %.1f Mcyc; rd %u wr %u cmds (%.0f%% of cycles); rd data waits %.1f cyc;"
+              " fb AR stalled %.0f%% fb AW stalled %.0f%%; rd latency %.1f cyc; rd slots full %.0f%%\n",
               (unsigned long long)g_frameNo, dd[0] / 1e6, dd[1], dd[2], 100.0 * (dd[1] + dd[2]) / dd[0],
-              pd(3), pd(4), pd(5), dd[1] ? double(dd[6]) / dd[1] : 0.0, pd(7));
+              dd[1] ? double(dd[3]) / dd[1] : 0.0, pd(4), pd(5), dd[1] ? double(dd[6]) / dd[1] : 0.0, pd(7));
     }
     if (g_busySample && g_busyN) {
       fprintf(stderr, "[busy] frame %llu: %llu samples:", (unsigned long long)g_frameNo,
