@@ -422,4 +422,89 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       assert(errors.isEmpty, errors.mkString("; "))
     }
   }
+
+  test("data written through the fb port reads back correctly through the col port") {
+    compiledScan.doSim("wrcol", seed = 5) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      val rnd = new scala.util.Random(33)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      dut.io.policy #= 0
+      for (axi <- Seq(dut.io.fb, dut.io.tex, dut.io.scan, dut.io.aux, dut.io.col)) {
+        axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
+        axi.ar.valid #= false; axi.r.ready #= false
+      }
+      val mem = mutable.HashMap[BigInt, BigInt]()
+      val pending = mutable.Queue[(BigInt, Long)]()
+      var cycle = 0L
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        dut.io.ddr.cmdReady #= rnd.nextInt(4) != 0
+        dut.io.ddr.wrDataRdy #= rnd.nextInt(4) != 0
+        if (dut.io.ddr.cmdEn.toBoolean) {
+          val a = dut.io.ddr.addr.toBigInt
+          if (dut.io.ddr.cmd.toInt == 0) {
+            val data = dut.io.ddr.wrData.toBigInt; val mask = dut.io.ddr.wrDataMask.toBigInt
+            var line = mem.getOrElse(a, BigInt(0))
+            for (b <- 0 until 32 if !mask.testBit(b)) {
+              val byte = (data >> (8 * b)) & 0xff
+              line = (line & ~(BigInt(0xff) << (8 * b))) | (byte << (8 * b))
+            }
+            mem(a) = line
+          } else {
+            val due = cycle + 8 + rnd.nextInt(16)
+            pending.enqueue((a, pending.lastOption.map(_._2 max due).getOrElse(due)))
+          }
+        }
+        dut.io.ddr.rdDataValid #= false
+        if (pending.nonEmpty && pending.head._2 <= cycle) {
+          val (a, _) = pending.dequeue()
+          dut.io.ddr.rdData #= mem.getOrElse(a, BigInt(0))
+          dut.io.ddr.rdDataValid #= true
+          dut.io.ddr.rdDataEnd #= true
+        }
+      }
+      def word(addr: Long, gen: Int): Long = ((addr * 2654435761L) ^ (gen * 0x9e3779b9L)) & 0xffffffffL
+      val errors = mutable.ArrayBuffer[String]()
+      for (gen <- 0 until 20) {
+        val beats = Seq(1, 2, 7, 8, 13, 16, 32)(rnd.nextInt(7))
+        val a = 0x40000L + 4 * rnd.nextInt(2048)
+        // write through fb
+        dut.io.fb.aw.valid #= true; dut.io.fb.aw.addr #= a; dut.io.fb.aw.len #= beats - 1
+        dut.io.fb.aw.size #= 2; dut.io.fb.aw.burst #= 1; dut.io.fb.aw.id #= 1
+        dut.clockDomain.waitSamplingWhere(dut.io.fb.aw.ready.toBoolean)
+        dut.io.fb.aw.valid #= false
+        for (i <- 0 until beats) {
+          dut.io.fb.w.valid #= true; dut.io.fb.w.data #= word(a + 4 * i, gen)
+          dut.io.fb.w.strb #= 0xf; dut.io.fb.w.last #= i == beats - 1
+          dut.clockDomain.waitSamplingWhere(dut.io.fb.w.ready.toBoolean)
+        }
+        dut.io.fb.w.valid #= false
+        dut.clockDomain.waitSamplingWhere(dut.io.fb.b.valid.toBoolean)
+        // read back through col
+        dut.io.col.ar.valid #= true; dut.io.col.ar.addr #= a; dut.io.col.ar.len #= beats - 1
+        dut.io.col.ar.size #= 2; dut.io.col.ar.burst #= 1; dut.io.col.ar.id #= 2
+        dut.clockDomain.waitSamplingWhere(dut.io.col.ar.ready.toBoolean)
+        dut.io.col.ar.valid #= false
+        dut.io.col.r.ready #= true
+        var n = 0
+        while (n < beats) {
+          dut.clockDomain.waitSampling()
+          if (dut.io.col.r.valid.toBoolean) {
+            val got = dut.io.col.r.data.toLong; val want = word(a + 4 * n, gen)
+            if (got != want && errors.size < 5) errors += f"gen $gen beat $n addr ${a + 4 * n}%x: got $got%08x want $want%08x"
+            n += 1
+          }
+        }
+        dut.io.col.r.ready #= false
+      }
+      assert(errors.isEmpty, errors.mkString("; "))
+    }
+  }
 }

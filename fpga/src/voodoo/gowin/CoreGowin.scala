@@ -41,11 +41,6 @@ object CoreGowin {
   // for the fb R side ~18% of DDR cycles).
   def auxAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
     BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
-  // Colour fills + LFB reads (core.io.fbColorReadMem) read through their own
-  // port too (B84: colour writes blocked ~41% behind them on the fb port);
-  // memFb then only carries render writes.
-  def colAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
-    BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
 }
 
 case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) extends Component {
@@ -56,7 +51,6 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     // HDMI scanout reads (Config.separateScanoutMem).
     val memScan = if (c.separateScanoutMem) master(Axi4(CoreGowin.scanAxiConfig(c, axiBurstLog2))) else null
     val memAux = master(Axi4(CoreGowin.auxAxiConfig(c, axiBurstLog2)))
-    val memCol = master(Axi4(CoreGowin.colAxiConfig(c, axiBurstLog2)))
     val hdmi = master(HdmiScanoutPort(c))
     val hostWedged = out Bool ()
     // Host has a raw-DDR window selected: drain the fb write buffer and drop
@@ -121,26 +115,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // core's internal arbiters, this 5-way arbiter and the AXI aligner formed
   // one ~50 ns combinational valid/ready chain on Gowin.
   private def cut(b: Bmb): Bmb = b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
-  // Colour reads must not overtake render writes still on their way to
-  // DDR (GLQuake's lightmap pass blends over the texture pass it just
-  // wrote): with colour fills on their own port (B85) they raced ahead and
-  // whole frames came out as noise. Hold a colour read while any write on
-  // the fb port is unacknowledged (since B85 that port carries only render
-  // writes, so every response there is a write response).
-  val fbWritesOutstanding = CounterUpDown(
-    stateCount = 64,
-    incWhen = fbArbiter.io.output.cmd.fire && fbArbiter.io.output.cmd.last,
-    decWhen = fbArbiter.io.output.rsp.fire && fbArbiter.io.output.rsp.last
-  )
-  val colRead = cut(core.io.fbColorReadMem)
-  val colAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
-  colAxi.io.input.cmd << colRead.cmd.haltWhen(fbWritesOutstanding =/= 0)
-  colRead.rsp << colAxi.io.input.rsp
-  io.memCol << colAxi.io.output
-  private val unusedFbIn = fbArbiter.io.inputs(0)
-  unusedFbIn.cmd.valid := False
-  unusedFbIn.cmd.payload.assignFromBits(B(0, widthOf(unusedFbIn.cmd.payload) bits))
-  unusedFbIn.rsp.ready := True
+  fbArbiter.io.inputs(0) <> cut(core.io.fbColorReadMem)
   renderArbiter.io.inputs(0) <> cut(core.io.fbMemWrite)
   renderArbiter.io.inputs(1) <> cut(core.io.fbColorWriteMem)
   renderArbiter.io.inputs(2) <> cut(core.io.fbAuxWriteMem)
