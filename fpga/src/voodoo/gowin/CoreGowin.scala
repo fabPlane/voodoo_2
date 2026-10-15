@@ -121,8 +121,21 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // core's internal arbiters, this 5-way arbiter and the AXI aligner formed
   // one ~50 ns combinational valid/ready chain on Gowin.
   private def cut(b: Bmb): Bmb = b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
+  // Colour reads must not overtake render writes still on their way to
+  // DDR (GLQuake's lightmap pass blends over the texture pass it just
+  // wrote): with colour fills on their own port (B85) they raced ahead and
+  // whole frames came out as noise. Hold a colour read while any write on
+  // the fb port is unacknowledged (since B85 that port carries only render
+  // writes, so every response there is a write response).
+  val fbWritesOutstanding = CounterUpDown(
+    stateCount = 64,
+    incWhen = fbArbiter.io.output.cmd.fire && fbArbiter.io.output.cmd.last,
+    decWhen = fbArbiter.io.output.rsp.fire && fbArbiter.io.output.rsp.last
+  )
+  val colRead = cut(core.io.fbColorReadMem)
   val colAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
-  colAxi.io.input <> cut(core.io.fbColorReadMem)
+  colAxi.io.input.cmd << colRead.cmd.haltWhen(fbWritesOutstanding =/= 0)
+  colRead.rsp << colAxi.io.input.rsp
   io.memCol << colAxi.io.output
   private val unusedFbIn = fbArbiter.io.inputs(0)
   unusedFbIn.cmd.valid := False
