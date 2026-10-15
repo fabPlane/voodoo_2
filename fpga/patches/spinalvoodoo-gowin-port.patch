@@ -383,7 +383,7 @@ index 1b34fa2..e38994d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..4f89a86 100644
+index 100f1c6..30a2884 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -466,7 +466,7 @@ index 100f1c6..4f89a86 100644
    hdmiScanout.io.readRsp << framebufferMem.io.scanoutReadRsp
    framebufferMem.io.auxReadReq << pixelPipeline.io.auxReadReq
    pixelPipeline.io.auxReadRsp << framebufferMem.io.auxReadRsp
-@@ -200,9 +237,41 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +237,34 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -486,21 +486,14 @@ index 100f1c6..4f89a86 100644
 +    val cycles = Reg(UInt(32 bits)) init (0)
 +    cycles := cycles + 1
 +    val st = framebufferMem.io.stats
++    // 9-12 (memory command counts) and 20-25 (write-buffer drain detail)
++    // read 0: dropped for logic area once they had answered their question.
 +    val words = Seq(
 +      cycles, st.fillHits, st.fillMisses, st.fillStallCycles, st.writeStallCycles,
 +      st.memColorReadBlockedCycles, st.memAuxReadBlockedCycles,
-+      st.memColorWriteBlockedCycles, st.memAuxWriteBlockedCycles,
-+      st.memColorReadCmdCount, st.memAuxReadCmdCount,
-+      st.memColorWriteCmdCount, st.memAuxWriteCmdCount
++      st.memColorWriteBlockedCycles, st.memAuxWriteBlockedCycles
 +    )
 +    for ((w, i) <- words.zipWithIndex) regDebug.perf(i) := w
-+    // 20-25: write-buffer drains (all, reason full / rotate / flush), dirty
-+    // words drained, single-word drains.
-+    val drains = Seq(
-+      st.writeDrainCount, st.writeDrainReasonFullCount, st.writeDrainReasonRotateCount,
-+      st.writeDrainReasonFlushCount, st.writeDrainDirtyWordTotal, st.writeSingleWordDrainCount
-+    )
-+    for ((w, i) <- drains.zipWithIndex) regDebug.perf(20 + i) := w
 +  }
 +  regBank.io.debug := regDebug
  
@@ -545,10 +538,10 @@ index 6051025..8664556 100644
  
    val memTiming = SimMemoryTiming(
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
-index 3a197b9..ee31d21 100644
+index 3a197b9..0f33de9 100644
 --- a/src/voodoo/bus/BmbBusInterface.scala
 +++ b/src/voodoo/bus/BmbBusInterface.scala
-@@ -189,6 +189,37 @@ case class BmbBusInterface(
+@@ -189,6 +189,42 @@ case class BmbBusInterface(
      (VoodooRegInst(reg), bufferedCommandStream(addr, pulseStream))
    }
  
@@ -578,8 +571,13 @@ index 3a197b9..ee31d21 100644
 +    src.valid := regA.hitDoWrite || regB.hitDoWrite
 +    buildPayload(regB.hitDoWrite, src.payload)
 +
-+    val buffered = bufferedCommandStream(addrA, src)
-+    commandStreamReady(addrB) = src.ready
++    // One snapshot slot. Its ready is "slot empty" (registered): PciFifo
++    // checks it when it pops a command write and holds every other command
++    // write until that one has landed, so the slot is still empty then.
++    val buffered = src.m2sPipe()
++    val slotFree = !buffered.valid
++    commandStreamReady(addrA) = slotFree
++    commandStreamReady(addrB) = slotFree
 +    (regA, regB, buffered)
 +  }
 +
@@ -1640,7 +1638,7 @@ index aeba713..06fa63b 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..c6bb381 100644
+index c5a4cd8..e60ac18 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -649,28 +649,26 @@ case class RegisterBank(config: Config) extends Component {
@@ -1692,7 +1690,7 @@ index c5a4cd8..c6bb381 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1093,44 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1093,32 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -1707,20 +1705,8 @@ index c5a4cd8..c6bb381 100644
 +    if (config.hwDebugRegs) debugBusyReg() else GenerationFlags.simulation { debugBusyReg() }
 +
 +    if (config.hwDebugRegs) {
-+      // Framebuffer reader state (FramebufferPlaneReader cacheDebug / occupancy
-+      // words) for diagnosing a hung board: 0x260 colour, 0x264 colour occ,
-+      // 0x268 aux, 0x26c aux occ, 0x270 scanout, 0x274 scanout occ.
-+      val readerWords = Seq(
-+        io.debug.fbColorCache, io.debug.fbColorCacheOccupancy,
-+        io.debug.fbAuxCache, io.debug.fbAuxCacheOccupancy,
-+        io.debug.fbColorCacheReq, io.debug.fbColorCacheExpected
-+      )
-+      for ((w, i) <- readerWords.zipWithIndex) {
-+        val r = busif
-+          .newRegAt(0x260 + 4 * i, s"fbReaderDebug$i")
-+          .field(Bits(32 bits), AccessType.RO, 0, "Framebuffer reader debug word")
-+        r := w
-+      }
++      // (0x260-0x274, framebuffer reader debug words for hang diagnosis,
++      // removed for logic area; see git history.)
 +      // Perf counters 0x280-0x2bc (CoreDebug.perf): 0 cycles, 1 fill hits,
 +      // 2 fill misses, 3 fill stall cycles, 4 write stall cycles, 5-8 colour /
 +      // aux read / write blocked cycles, 9-12 colour / aux read / write
@@ -1738,7 +1724,7 @@ index c5a4cd8..c6bb381 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1149,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1137,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -1747,7 +1733,7 @@ index c5a4cd8..c6bb381 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1161,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1149,7 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
