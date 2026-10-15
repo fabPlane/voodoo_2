@@ -211,7 +211,8 @@ case class TangMega138kPro(c: Config) extends Component {
   }
   val fbDdrConfig = raw.merge.outConfig
   val ddr = Axi4ToGowinDdrNative(fbDdrConfig, CoreGowin.texAxiConfig(c),
-    scanConfig = if (c.separateScanoutMem) CoreGowin.scanAxiConfig(c) else null)
+    scanConfig = if (c.separateScanoutMem) CoreGowin.scanAxiConfig(c) else null,
+    auxConfig = CoreGowin.auxAxiConfig(c))
   // W / R buffering per direction: 32 words, four 32-byte bursts.
   private val burstBeats = 32
   val fbCc = Axi4CC(fbDdrConfig, coreCd, ClockDomain.current,
@@ -230,6 +231,9 @@ case class TangMega138kPro(c: Config) extends Component {
   val scanCc = if (c.separateScanoutMem) Axi4CC(CoreGowin.scanAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = 256, wFifoSize = 4, bFifoSize = 4) else null
   if (c.separateScanoutMem) scanCc.io.input << core.io.memScan
+  val auxCc = Axi4CC(CoreGowin.auxAxiConfig(c), coreCd, ClockDomain.current,
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = 4, bFifoSize = 4)
+  auxCc.io.input << core.io.memAux
   // Register the channels between the CDC FIFOs and the adapter: the
   // request pop-side valid and the R push-side ready otherwise fed the
   // adapter's state / address decode combinationally.
@@ -238,6 +242,7 @@ case class TangMega138kPro(c: Config) extends Component {
   ddr.io.fb << staged(fbCc.io.output)
   ddr.io.tex << staged(texCc.io.output)
   if (c.separateScanoutMem) ddr.io.scan << staged(scanCc.io.output)
+  ddr.io.aux << staged(auxCc.io.output)
   io.ddr <> ddr.io.ddr
   private val throttle = BufferCC(pcie.ddrThrottle, init = B(8, 32 bits))
   ddr.io.cmdGap := throttle(7 downto 0).asUInt

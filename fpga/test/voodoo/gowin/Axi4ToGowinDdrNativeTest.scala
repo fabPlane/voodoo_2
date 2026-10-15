@@ -341,9 +341,9 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
     }
   }
 
-  private lazy val compiledScan = SimConfig.withVerilator.compile(Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg))
+  private lazy val compiledScan = SimConfig.withVerilator.compile(Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg, auxConfig = cfg))
 
-  test("three read ports (fb, tex, scan) in flight together; each gets its own words in order") {
+  test("four read ports (fb, tex, scan, aux) in flight together; each gets its own words in order") {
     compiledScan.doSim("scan", seed = 4) { dut =>
       dut.clockDomain.forkStimulus(10)
       val rnd = new scala.util.Random(21)
@@ -356,7 +356,7 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       dut.io.maxReads #= 0
       dut.io.urgent #= false
       dut.io.policy #= 0
-      val ports = Seq(dut.io.fb, dut.io.tex, dut.io.scan)
+      val ports = Seq(dut.io.fb, dut.io.tex, dut.io.scan, dut.io.aux)
       for (axi <- ports) {
         axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
         axi.ar.valid #= false; axi.r.ready #= false
@@ -384,7 +384,7 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
           dut.io.ddr.rdDataEnd #= true
         }
       }
-      val done = Array.fill(3)(false)
+      val done = Array.fill(4)(false)
       val errors = mutable.ArrayBuffer[String]()
       for ((axi, p) <- ports.zipWithIndex) fork {
         val bursts = (0 until 30).map { i =>

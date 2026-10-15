@@ -36,6 +36,11 @@ object CoreGowin {
     BmbToAxi4Mem.axiConfig(Core.texMemBmbParams(c), burstLog2)
   def scanAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
     BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
+  // Depth (aux) fills read through their own AXI port / DDR adapter port,
+  // next to the fb port's colour fills (B83: the head returned line waited
+  // for the fb R side ~18% of DDR cycles).
+  def auxAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
+    BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
 }
 
 case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) extends Component {
@@ -45,6 +50,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     val memTex = master(Axi4(CoreGowin.texAxiConfig(c, axiBurstLog2)))
     // HDMI scanout reads (Config.separateScanoutMem).
     val memScan = if (c.separateScanoutMem) master(Axi4(CoreGowin.scanAxiConfig(c, axiBurstLog2))) else null
+    val memAux = master(Axi4(CoreGowin.auxAxiConfig(c, axiBurstLog2)))
     val hdmi = master(HdmiScanoutPort(c))
     val hostWedged = out Bool ()
     // Host has a raw-DDR window selected: drain the fb write buffer and drop
@@ -63,9 +69,10 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     timeoutLog2 = 30
   )
 
-  // Two levels: the colour-read port (HDMI scanout at top priority inside
-  // it, then colour reads and LFB reads) goes before the four rendering
-  // ports, which round-robin among themselves. With one 5-way round-robin
+  // Two levels: the colour-read port (colour fills and LFB reads; the HDMI
+  // scanout too unless Config.separateScanoutMem) goes before the three
+  // write ports, which round-robin among themselves. Depth fills have their
+  // own AXI port (memAux) since B84. With one 5-way round-robin
   // the scanout got 1/5 of the turns and, once rendering got fast, ran short
   // (half the frames blanked mid-frame, B50). Fixed priority with writes
   // first deadlocked scanout on the Console; the scanout stops asking when
@@ -82,7 +89,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     alignment = BmbParameter.BurstAlignement.BYTE
   )
   val renderArbiter = BmbArbiter(
-    inputsParameter = Seq.fill(4)(renderParams),
+    inputsParameter = Seq.fill(3)(renderParams),
     outputParameter = renderOutParams,
     lowerFirstPriority = false
   )
@@ -112,11 +119,13 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   renderArbiter.io.inputs(0) <> cut(core.io.fbMemWrite)
   renderArbiter.io.inputs(1) <> cut(core.io.fbColorWriteMem)
   renderArbiter.io.inputs(2) <> cut(core.io.fbAuxWriteMem)
-  renderArbiter.io.inputs(3) <> cut(core.io.fbAuxReadMem)
   fbArbiter.io.inputs(1) <> renderArbiter.io.output
   fbAxi.io.input <> cut(fbArbiter.io.output)
   texAxi.io.input <> cut(core.io.texMem)
   io.memFb << fbAxi.io.output
+  val auxAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
+  auxAxi.io.input <> cut(core.io.fbAuxReadMem)
+  io.memAux << auxAxi.io.output
   if (c.separateScanoutMem) {
     val scanAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2)
     scanAxi.io.input <> cut(core.io.fbScanoutMem)
