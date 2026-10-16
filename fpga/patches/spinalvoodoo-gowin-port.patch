@@ -1206,7 +1206,7 @@ index c23fa0b..605879b 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..4407fd6 100644
+index 7797711..1a77639 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
@@ -1359,7 +1359,7 @@ index 7797711..4407fd6 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +784,29 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +784,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -1377,7 +1377,14 @@ index 7797711..4407fd6 100644
 +        13 -> cycleCounter(pipelineBusySignal),
 +        14 -> cycleCounter(tmuInputStall),
 +        15 -> cycleCounter(fbAccess.io.input.valid && !fbAccess.io.input.ready),
-+        16 -> tmuPerf(0), 17 -> tmuPerf(1), 18 -> tmuPerf(2), 19 -> tmuPerf(3)
++        16 -> tmuPerf(0), 17 -> tmuPerf(1), 18 -> tmuPerf(2), 19 -> tmuPerf(3),
++        // 9 pixels out of the rasterizer, 10 rasterizer running without a
++        // pixel out (span overhead), 11 setup busy while the rasterizer idles,
++        // 12 cycles the read-hazard guard holds a triangle.
++        9 -> cycleCounter(rasterizer.o.fire),
++        10 -> cycleCounter(rasterizer.running && !rasterizer.o.valid),
++        11 -> cycleCounter(triangleSetup.busy && !rasterizer.running),
++        12 -> cycleCounter(hazardHold)
 +      )
 +    else Map.empty
 +  // 20-25 are filled in by Core (fb write-buffer drain counters).
