@@ -232,11 +232,19 @@ case class TangMega138kPro(c: Config) extends Component {
   val scanCc = if (c.separateScanoutMem) Axi4CC(CoreGowin.scanAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = 256, wFifoSize = 4, bFifoSize = 4) else null
   if (c.separateScanoutMem) scanCc.io.input << core.io.memScan
+  // Fill reads: deep R FIFOs. The adapter returns read lines in command
+  // order through one queue, eight words per line at the DDR clock, while a
+  // reader drains one word per core clock; with 32 words a span's worth of
+  // depth or colour lines backed up into the adapter, and its head line then
+  // held every other port's data behind it (B103: lines waited ~46 DDR
+  // cycles after arriving, head waits on the aux R 19%). A reader's lane
+  // credits bound what it has in flight below 512 words.
+  private val fillRBeats = 512
   val auxCc = Axi4CC(CoreGowin.auxAxiConfig(c), coreCd, ClockDomain.current,
-    arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = 4, bFifoSize = 4)
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = fillRBeats, wFifoSize = 4, bFifoSize = 4)
   auxCc.io.input << core.io.memAux
   val colCc = Axi4CC(CoreGowin.colAxiConfig(c), coreCd, ClockDomain.current,
-    arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = 4, bFifoSize = 4)
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = fillRBeats, wFifoSize = 4, bFifoSize = 4)
   colCc.io.input << core.io.memCol
   // Register the channels between the CDC FIFOs and the adapter: the
   // request pop-side valid and the R push-side ready otherwise fed the
