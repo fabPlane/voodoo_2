@@ -222,7 +222,10 @@ case class Axi4ToGowinDdrNative(
     // Registered "a read slot is free" (inFlight after this cycle < limit):
     // the compare fed the command arbiter combinationally and missed 100 MHz.
     val slotFree = RegInit(True)
-    val wantsCmd = active && addrSettled && (slotFree || urgentSync && inFlight =/= readsInFlight) && meta.io.push.ready
+    // Registered like slotFree: the inFlight compare fed the grant and the
+    // write path's enables combinationally (ddr_clk misses, B93).
+    val slotFreeUrgent = RegInit(True)
+    val wantsCmd = active && addrSettled && (slotFree || urgentSync && slotFreeUrgent) && meta.io.push.ready
     val issue = Bool() // driven by the command arbiter below
 
     meta.io.push.valid := issue
@@ -317,6 +320,7 @@ case class Axi4ToGowinDdrNative(
       .elsewhen(!issue && lineDone) { inFlightNext := inFlight - 1 }
     inFlight := inFlightNext
     slotFree := inFlightNext < readLimit
+    slotFreeUrgent := inFlightNext =/= readsInFlight
   }
   if (fbConfig.useId) io.fb.r.id := rd.head.id.resized
   if (texConfig.useId) io.tex.r.id := rd.head.id.resized
