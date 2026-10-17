@@ -2401,33 +2401,65 @@ index cee86c0..8feefc8 100644
      val start = AFix(fmt)
      val d = vertex2d(fmt)
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..e034a43 100644
+index 59df4ba..cc7fe34 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
-@@ -17,7 +17,7 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -5,6 +5,20 @@ import spinal.core.formal._
+ import spinal.lib._
+ import voodoo._
  
-   object WalkerState extends SpinalEnum {
-     val Idle, Decide, RecoverLeft, SearchRightToEnter, SearchLeftToExit, SearchRightToExit,
++/** Walks a set-up triangle row by row and emits one span per covered row.
++  *
++  * Every row's covered pixels are the interval [lo, hi] given by the row's
++  * edge x positions (rowEdgeBounds, stepped by scanDx per row), so a span is
++  * that interval clipped to the visible x range, and its start values are
++  * the row's values at the bounding-box left edge plus (start - left) * d/dx.
++  * Rows go through a short pipeline (row step, bounds, clip, multiply, add),
++  * one row per cycle: the pixel-by-pixel edge search this replaces spent ~6
++  * cycles plus the edge's slope per row and starved the span rasterizer (B101:
++  * no pixel out 26% of cycles). Values add up exactly as the per-pixel steps
++  * did (same formats, no rounding). A new triangle is taken once the last
++  * row of the previous one has left the pipeline, so its constants are
++  * stable for every span in flight.
++  */
+ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Component {
+   val i = slave Stream (TriangleSetup.Output(c))
+   val o = master Stream (SpanWalker.Output(c))
+@@ -15,33 +29,9 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+   val clipHighY = in UInt (10 bits)
+   val running = out(Bool())
+ 
+-  object WalkerState extends SpinalEnum {
+-    val Idle, Decide, RecoverLeft, SearchRightToEnter, SearchLeftToExit, SearchRightToExit,
 -        EmitSpan, AdvanceRow =
-+        EmitSpan, AdvanceRow, RowPrep =
-       newElement()
-   }
+-      newElement()
+-  }
+-
+-  val state = RegInit(WalkerState.Idle)
+   val triangleConst = Reg(SpanWalker.TriangleConst(c))
+-  val rowGuess = Reg(SpanWalker.Cursor(c))
+-  val probe = Reg(SpanWalker.Cursor(c))
+-  val bookmark = Reg(SpanWalker.Cursor(c))
+-  val leftEdge = Reg(SpanWalker.Cursor(c))
+-  val nextRowBase = Reg(SpanWalker.Cursor(c))
+-  val nextRowLeftBiased = Reg(Bool()) init (False)
+-  val emitRight = Reg(AFix(c.vertexFormat))
+-  val emitFirstSpan = Reg(Bool()) init (False)
+-  val firstSpanPending = Reg(Bool()) init (False)
+-  val recoverFoundInside = Reg(Bool()) init (False)
+-
+-  running := state =/= WalkerState.Idle
+-  i.ready := state === WalkerState.Idle
+   val one = AFix(c.vertexFormat)
+   one := 1.0
+-  val negOne = AFix(c.vertexFormat)
+-  negOne := -1.0
+-  val zero = 0.SQ(1 bits, 0 bits)
+-  val vertexFracZeros = U(0, c.vertexFormat.fraction bits)
  
-@@ -28,11 +28,13 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-   val bookmark = Reg(SpanWalker.Cursor(c))
-   val leftEdge = Reg(SpanWalker.Cursor(c))
-   val nextRowBase = Reg(SpanWalker.Cursor(c))
-+  val rowBase = Reg(SpanWalker.Cursor(c))
-   val nextRowLeftBiased = Reg(Bool()) init (False)
-   val emitRight = Reg(AFix(c.vertexFormat))
-   val emitFirstSpan = Reg(Bool()) init (False)
-   val firstSpanPending = Reg(Bool()) init (False)
-   val recoverFoundInside = Reg(Bool()) init (False)
-+  val rowPrepToRecover = Reg(Bool()) init (False)
- 
-   running := state =/= WalkerState.Idle
-   i.ready := state === WalkerState.Idle
-@@ -75,6 +77,9 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+   private val lowGradFormats = Seq(
+     c.vColorFormat,
+@@ -75,310 +65,249 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
      dst.clipRight := input.config.clipRight
      dst.clipLowY := input.config.clipLowY
      dst.clipHighY := input.config.clipHighY
@@ -2437,161 +2469,393 @@ index 59df4ba..e034a43 100644
      if (c.trace.enabled) {
        dst.trace := input.trace
      }
-@@ -84,6 +89,7 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-     dst.coords(0) := input.xrange(0)
-     dst.coords(1) := input.yrange(0)
-     dst.edge := input.edgeStart
-+    dst.scanX := input.scanX
-     dst.linear.all.zip(input.grads.all.take(6)).foreach { case (out, in) =>
-       out := in.start
+   }
+ 
+-  def initCursor(dst: SpanWalker.Cursor, input: TriangleSetup.Output): Unit = {
+-    dst.coords(0) := input.xrange(0)
+-    dst.coords(1) := input.yrange(0)
+-    dst.edge := input.edgeStart
+-    dst.linear.all.zip(input.grads.all.take(6)).foreach { case (out, in) =>
+-      out := in.start
++  /** Values interpolated along a row (all but x). */
++  case class RowValues() extends Bundle {
++    val linear = SpanWalker.LinearState(c)
++    val hiS = AFix(c.texCoordsHiFormat)
++    val hiT = AFix(c.texCoordsHiFormat)
++    val hiAlpha = AFix(c.texCoordsHiFormat)
++    def all: Seq[AFix] = linear.all ++ Seq(hiS, hiT, hiAlpha)
++  }
++  def dxAll: Seq[AFix] = triangleConst.linearDx.all ++ Seq(triangleConst.texDx(0), triangleConst.texDx(1), triangleConst.alphaDx)
++  def dyAll: Seq[AFix] = triangleConst.linearDy.all ++ Seq(triangleConst.texDy(0), triangleConst.texDy(1), triangleConst.alphaDy)
++  def formats: Seq[QFormat] = lowGradFormats ++ Seq.fill(3)(c.texCoordsHiFormat)
++
++  // Row edge bounds (xi, x2i) of row y; covered pixels are [xi, x2i] when
++  // xdirPos, else [x2i, xi].
++  def rowEdgeBounds(y: AFix, scanX: Vec[SInt]): (SInt, SInt) = {
++    val realY = y.raw.asSInt.resize(32 bits) + 8
++    val xRight = Mux(realY < triangleConst.vertexBy.resize(32 bits), scanX(0), scanX(1))
++    val rawL = SInt(32 bits)
++    val rawR = SInt(32 bits)
++    when(triangleConst.xdirPos) {
++      rawL := scanX(2)
++      rawR := xRight - S(1 << 16, 32 bits)
++    }.otherwise {
++      rawL := scanX(2) - S(1 << 16, 32 bits)
++      rawR := xRight
      }
-@@ -92,8 +98,35 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-     dst.hiAlpha := input.hiAlpha.start
+-    dst.hiS := input.texHi.sStart
+-    dst.hiT := input.texHi.tStart
+-    dst.hiAlpha := input.hiAlpha.start
++    val xi = (rawL + S(0x7000, 32 bits)) >> 16
++    val x2i = (rawR + S(0x7000, 32 bits)) >> 16
++    (xi.resize(16 bits), x2i.resize(16 bits))
    }
  
 -  def insideTriangle(cursor: SpanWalker.Cursor): Bool =
 -    (cursor.edge(0) >= zero) && (cursor.edge(1) >= zero) && (cursor.edge(2) >= zero)
-+  // Row edge bounds (xi, x2i) of a cursor. They depend only on the row (y, scanX), so
-+  // they are computed once per row in RowPrep and the per-pixel test is two compares.
-+  def rowEdgeBounds(cursor: SpanWalker.Cursor): (SInt, SInt) = {
-+    val realY = cursor.coords(1).raw.asSInt.resize(32 bits) + 8
-+    val xRight = Mux(realY < triangleConst.vertexBy.resize(32 bits), cursor.scanX(0), cursor.scanX(1))
-+    val rawL = SInt(32 bits)
-+    val rawR = SInt(32 bits)
-+    when(triangleConst.xdirPos) {
-+      rawL := cursor.scanX(2)
-+      rawR := xRight - S(1 << 16, 32 bits)
-+    }.otherwise {
-+      rawL := cursor.scanX(2) - S(1 << 16, 32 bits)
-+      rawR := xRight
-+    }
-+    val xi = (rawL + S(0x7000, 32 bits)) >> 16
-+    val x2i = (rawR + S(0x7000, 32 bits)) >> 16
-+    (xi, x2i)
-+  }
-+
-+  val rowXi = Reg(SInt(16 bits))
-+  val rowX2i = Reg(SInt(16 bits))
-+
-+  def insideTriangle(cursor: SpanWalker.Cursor): Bool = {
-+    val px = xPix(cursor).resize(32 bits)
-+    val xi = rowXi
-+    val x2i = rowX2i
-+    (triangleConst.xdirPos && px >= xi && px <= x2i) ||
-+    (!triangleConst.xdirPos && px <= xi && px >= x2i)
-+  }
+-
+-  def xPix(cursor: SpanWalker.Cursor): SInt = cursor.coords(0).floor(0).asSInt
+-
+   def pixelToVertex(pix: SInt): AFix = {
+     val out = AFix(c.vertexFormat)
+-    out.raw := (pix.resize(c.vertexFormat.nonFraction bits) ## vertexFracZeros).asBits
++    out.raw := (pix.resize(c.vertexFormat.nonFraction bits) ## U(0, c.vertexFormat.fraction bits)).asBits
+     out
+   }
  
-   def xPix(cursor: SpanWalker.Cursor): SInt = cursor.coords(0).floor(0).asSInt
- 
-@@ -109,16 +142,24 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-   val clipRightPix = triangleConst.clipRight.resize(c.vertexFormat.nonFraction bits).asSInt
-   val clipLowYPix = triangleConst.clipLowY.resize(c.vertexFormat.nonFraction bits).asSInt
-   val clipHighYPix = triangleConst.clipHighY.resize(c.vertexFormat.nonFraction bits).asSInt
+-  val triangleXStartPix = triangleConst.xrange(0).floor(0).asSInt
+-  val triangleXEndPix = triangleConst.xrange(1).floor(0).asSInt
+-  val clipLeftPix = triangleConst.clipLeft.resize(c.vertexFormat.nonFraction bits).asSInt
+-  val clipRightPix = triangleConst.clipRight.resize(c.vertexFormat.nonFraction bits).asSInt
+-  val clipLowYPix = triangleConst.clipLowY.resize(c.vertexFormat.nonFraction bits).asSInt
+-  val clipHighYPix = triangleConst.clipHighY.resize(c.vertexFormat.nonFraction bits).asSInt
 -  val effectiveClipLeftPix = Mux(triangleConst.enableClipping, clipLeftPix, triangleXStartPix)
 -  val effectiveClipRightPix = Mux(triangleConst.enableClipping, clipRightPix, triangleXEndPix)
 -  val effectiveClipLowYPix =
-+  val effectiveClipLeftPixComb = Mux(triangleConst.enableClipping, clipLeftPix, triangleXStartPix)
-+  val effectiveClipRightPixComb = Mux(triangleConst.enableClipping, clipRightPix, triangleXEndPix)
-+  val effectiveClipLowYPixComb =
-     Mux(triangleConst.enableClipping, clipLowYPix, triangleConst.yrange(0).floor(0).asSInt)
+-    Mux(triangleConst.enableClipping, clipLowYPix, triangleConst.yrange(0).floor(0).asSInt)
 -  val effectiveClipHighYPix =
-+  val effectiveClipHighYPixComb =
-     Mux(triangleConst.enableClipping, clipHighYPix, triangleConst.yrange(1).floor(0).asSInt)
+-    Mux(triangleConst.enableClipping, clipHighYPix, triangleConst.yrange(1).floor(0).asSInt)
 -  val visibleStartPix =
 -    Mux(effectiveClipLeftPix > triangleXStartPix, effectiveClipLeftPix, triangleXStartPix)
 -  val visibleEndPix =
 -    Mux(effectiveClipRightPix < triangleXEndPix, effectiveClipRightPix, triangleXEndPix)
-+  val visibleStartPixComb =
-+    Mux(effectiveClipLeftPixComb > triangleXStartPix, effectiveClipLeftPixComb, triangleXStartPix)
-+  val visibleEndPixComb =
-+    Mux(effectiveClipRightPixComb < triangleXEndPix, effectiveClipRightPixComb, triangleXEndPix)
-+  // Timing: these only depend on triangleConst; RowPrep registers them (every row,
-+  // before any state that reads them).
-+  val visibleStartPix = Reg(cloneOf(visibleStartPixComb))
-+  val visibleEndPix = Reg(cloneOf(visibleEndPixComb))
-+  val effectiveClipLeftPix = Reg(cloneOf(effectiveClipLeftPixComb))
-+  val effectiveClipRightPix = Reg(cloneOf(effectiveClipRightPixComb))
-+  val effectiveClipLowYPix = Reg(cloneOf(effectiveClipLowYPixComb))
-+  val effectiveClipHighYPix = Reg(cloneOf(effectiveClipHighYPixComb))
-   val emitStartPix = leftEdge.coords(0).floor(0).asSInt
-   val emitEndPix = emitRight.floor(0).asSInt
-   val emitVisibleX =
-@@ -139,6 +180,7 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-       val delta = if (moveRight) coeff.a else (-coeff.a).fixTo(c.coefficientFormat)
-       nxt := (cur + delta).fixTo(c.coefficientFormat)
-     }
-+    dst.scanX := src.scanX
-     dst.linear.all
-       .zip(src.linear.all)
-       .zip(triangleConst.linearDx.all)
-@@ -161,6 +203,9 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-     dst.edge.zip(src.edge).zip(triangleConst.coeffs).foreach { case ((nxt, cur), coeff) =>
-       nxt := (cur + coeff.b).fixTo(c.coefficientFormat)
-     }
-+    dst.scanX := Vec(src.scanX.zip(triangleConst.scanDx).map { case (x, dx) =>
-+      (x + dx).resize(32 bits)
-+    })
-     dst.linear.all
-       .zip(src.linear.all)
-       .zip(triangleConst.linearDy.all)
-@@ -179,6 +224,9 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-     dst.edge.zip(src.edge).zip(triangleConst.coeffs).foreach { case ((nxt, cur), coeff) =>
-       nxt := (cur + coeff.b - coeff.a).fixTo(c.coefficientFormat)
-     }
-+    dst.scanX := Vec(src.scanX.zip(triangleConst.scanDx).map { case (x, dx) =>
-+      (x + dx).resize(32 bits)
-+    })
-     dst.linear.all
-       .zip(src.linear.all)
-       .zip(triangleConst.linearDy.all.zip(triangleConst.linearDx.all))
-@@ -235,8 +283,37 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-     initCursor(rowGuess, i.payload)
-     initCursor(probe, i.payload)
-     initCursor(bookmark, i.payload)
-+    initCursor(rowBase, i.payload)
-     firstSpanPending := True
-+    rowPrepToRecover := False
-+    state := WalkerState.RowPrep
-+  }
+-  val emitStartPix = leftEdge.coords(0).floor(0).asSInt
+-  val emitEndPix = emitRight.floor(0).asSInt
+-  val emitVisibleX =
+-    emitStartPix <= emitEndPix && emitEndPix >= effectiveClipLeftPix && emitStartPix < effectiveClipRightPix
+-  val emitVisibleY = {
+-    val emitYPix = leftEdge.coords(1).floor(0).asSInt
+-    emitYPix >= effectiveClipLowYPix && emitYPix < effectiveClipHighYPix
+-  }
+-  val emitVisible = emitVisibleX && emitVisibleY
+-
+-  o.valid := state === WalkerState.EmitSpan && emitVisible
+-
+-  def stepHorizontal(dst: SpanWalker.Cursor, src: SpanWalker.Cursor, moveRight: Boolean): Unit = {
+-    val xDelta = if (moveRight) one else negOne
+-    dst.coords(0) := (src.coords(0) + xDelta).fixTo(c.vertexFormat)
+-    dst.coords(1) := src.coords(1)
+-    dst.edge.zip(src.edge).zip(triangleConst.coeffs).foreach { case ((nxt, cur), coeff) =>
+-      val delta = if (moveRight) coeff.a else (-coeff.a).fixTo(c.coefficientFormat)
+-      nxt := (cur + delta).fixTo(c.coefficientFormat)
+-    }
+-    dst.linear.all
+-      .zip(src.linear.all)
+-      .zip(triangleConst.linearDx.all)
+-      .zipWithIndex
+-      .foreach { case (((nxt, cur), grad), idx) =>
+-        val delta = if (moveRight) grad else (-grad).fixTo(lowGradFormats(idx))
+-        nxt := (cur + delta).fixTo(lowGradFormats(idx))
+-      }
+-    val sDelta = if (moveRight) triangleConst.texDx(0) else (-triangleConst.texDx(0))
+-    val tDelta = if (moveRight) triangleConst.texDx(1) else (-triangleConst.texDx(1))
+-    val aDelta = if (moveRight) triangleConst.alphaDx else (-triangleConst.alphaDx)
+-    dst.hiS := (src.hiS + sDelta).fixTo(c.texCoordsHiFormat)
+-    dst.hiT := (src.hiT + tDelta).fixTo(c.texCoordsHiFormat)
+-    dst.hiAlpha := (src.hiAlpha + aDelta).fixTo(c.texCoordsHiFormat)
+-  }
+-
+-  def stepVertical(dst: SpanWalker.Cursor, src: SpanWalker.Cursor): Unit = {
+-    dst.coords(0) := src.coords(0)
+-    dst.coords(1) := (src.coords(1) + one).fixTo(c.vertexFormat)
+-    dst.edge.zip(src.edge).zip(triangleConst.coeffs).foreach { case ((nxt, cur), coeff) =>
+-      nxt := (cur + coeff.b).fixTo(c.coefficientFormat)
+-    }
+-    dst.linear.all
+-      .zip(src.linear.all)
+-      .zip(triangleConst.linearDy.all)
+-      .zipWithIndex
+-      .foreach { case (((nxt, cur), grad), idx) =>
+-        nxt := (cur + grad).fixTo(lowGradFormats(idx))
+-      }
+-    dst.hiS := (src.hiS + triangleConst.texDy(0)).fixTo(c.texCoordsHiFormat)
+-    dst.hiT := (src.hiT + triangleConst.texDy(1)).fixTo(c.texCoordsHiFormat)
+-    dst.hiAlpha := (src.hiAlpha + triangleConst.alphaDy).fixTo(c.texCoordsHiFormat)
+-  }
+-
+-  def stepDownLeft(dst: SpanWalker.Cursor, src: SpanWalker.Cursor): Unit = {
+-    dst.coords(0) := (src.coords(0) + negOne).fixTo(c.vertexFormat)
+-    dst.coords(1) := (src.coords(1) + one).fixTo(c.vertexFormat)
+-    dst.edge.zip(src.edge).zip(triangleConst.coeffs).foreach { case ((nxt, cur), coeff) =>
+-      nxt := (cur + coeff.b - coeff.a).fixTo(c.coefficientFormat)
+-    }
+-    dst.linear.all
+-      .zip(src.linear.all)
+-      .zip(triangleConst.linearDy.all.zip(triangleConst.linearDx.all))
+-      .zipWithIndex
+-      .foreach { case (((nxt, cur), (dy, dx)), idx) =>
+-        nxt := (cur + dy - dx).fixTo(lowGradFormats(idx))
+-      }
+-    dst.hiS := (src.hiS + triangleConst.texDy(0) - triangleConst.texDx(0)).fixTo(
+-      c.texCoordsHiFormat
+-    )
+-    dst.hiT := (src.hiT + triangleConst.texDy(1) - triangleConst.texDx(1)).fixTo(
+-      c.texCoordsHiFormat
+-    )
+-    dst.hiAlpha := (src.hiAlpha + triangleConst.alphaDy - triangleConst.alphaDx).fixTo(
+-      c.texCoordsHiFormat
+-    )
+-  }
+-
+-  def prepareNextRow(base: SpanWalker.Cursor, leftBiasedGuess: Boolean): Unit = {
+-    nextRowBase := base
+-    nextRowLeftBiased := (if (leftBiasedGuess) True else False)
+-    state := WalkerState.AdvanceRow
++  // Visible x / y range; depends only on triangleConst, registered in the
++  // cycle after a triangle is taken (before its first row).
++  val pixW = 18
++  def wide(v: SInt): SInt = v.resize(pixW bits)
++  val triangleXStartPixComb = wide(triangleConst.xrange(0).floor(0).asSInt)
++  val triangleXEndPixComb = wide(triangleConst.xrange(1).floor(0).asSInt)
++  val effClipLeftComb = Mux(triangleConst.enableClipping, wide(triangleConst.clipLeft.resize(11 bits).asSInt), triangleXStartPixComb)
++  val effClipRightComb = Mux(triangleConst.enableClipping, wide(triangleConst.clipRight.resize(11 bits).asSInt), triangleXEndPixComb)
++  val effClipLowYComb = Mux(
++    triangleConst.enableClipping,
++    wide(triangleConst.clipLowY.resize(11 bits).asSInt),
++    wide(triangleConst.yrange(0).floor(0).asSInt)
++  )
++  val effClipHighYComb = Mux(
++    triangleConst.enableClipping,
++    wide(triangleConst.clipHighY.resize(11 bits).asSInt),
++    wide(triangleConst.yrange(1).floor(0).asSInt)
++  )
++  val triangleXStartPix = Reg(SInt(pixW bits))
++  val visibleStartPix = Reg(SInt(pixW bits))
++  val visibleEndPix = Reg(SInt(pixW bits))
++  val effClipLeft = Reg(SInt(pixW bits))
++  val effClipRight = Reg(SInt(pixW bits))
++  val effClipLowY = Reg(SInt(pixW bits))
++  val effClipHighY = Reg(SInt(pixW bits))
 +
-+  when(state === WalkerState.RowPrep) {
-+    // A horizontal step keeps y / scanX, so the bounds come from rowBase.
-+    val bounds = rowEdgeBounds(rowBase)
-+    val downLeft = SpanWalker.Cursor(c)
-+    val next = SpanWalker.Cursor(c)
-+    stepHorizontal(downLeft, rowBase, moveRight = false)
-+    next := rowBase
-+    when(rowPrepToRecover) {
-+      next := downLeft
-+    }
-+    rowGuess := next
-+    probe := next
-+    bookmark := next
-+    rowXi := bounds._1.resized
-+    rowX2i := bounds._2.resized
-+    visibleStartPix := visibleStartPixComb
-+    visibleEndPix := visibleEndPixComb
-+    effectiveClipLeftPix := effectiveClipLeftPixComb
-+    effectiveClipRightPix := effectiveClipRightPixComb
-+    effectiveClipLowYPix := effectiveClipLowYPixComb
-+    effectiveClipHighYPix := effectiveClipHighYPixComb
-     state := WalkerState.Decide
-+    when(rowPrepToRecover) {
-+      state := WalkerState.RecoverLeft
-+    }
++  // Row generator.
++  val genActive = RegInit(False)
++  val setupCycle = RegInit(False)
++  val rowY = Reg(AFix(c.vertexFormat))
++  val rowScanX = Reg(Vec(SInt(32 bits), 3))
++  val rowVals = Reg(RowValues())
++  val firstPending = RegInit(False)
++
++  case class RowTok() extends Bundle {
++    val y = AFix(c.vertexFormat)
++    val scanX = Vec(SInt(32 bits), 3)
++    val vals = RowValues()
+   }
+-
+-  def captureVisibleLeftEdgeFromProbe(): Unit = {
+-    when(xPix(probe) < visibleStartPix) {
+-      // Recover/search-left can overshoot by one pixel when walking clipped rows.
+-      // Clamp that case back onto the first visible pixel instead of preserving -1.
+-      stepHorizontal(leftEdge, probe, moveRight = true)
+-    }.otherwise {
+-      leftEdge := probe
+-    }
++  case class BoundsTok() extends Bundle {
++    val y = AFix(c.vertexFormat)
++    val vals = RowValues()
++    val xi = SInt(16 bits)
++    val x2i = SInt(16 bits)
+   }
+-
+-  o.payload.xStart := leftEdge.coords(0)
+-  o.payload.xEnd := emitRight
+-  o.payload.y := leftEdge.coords(1)
+-  o.payload.linear := leftEdge.linear
+-  o.payload.hiS := leftEdge.hiS
+-  o.payload.hiT := leftEdge.hiT
+-  o.payload.hiAlpha := leftEdge.hiAlpha
+-  o.payload.stepX.linear := triangleConst.linearDx
+-  o.payload.stepX.tex := triangleConst.texDx
+-  o.payload.stepX.alpha := triangleConst.alphaDx
+-  o.payload.tmuConfig := triangleConst.tmuConfig
+-  o.payload.pixelConfig := triangleConst.pixelConfig
+-  o.payload.firstSpan := emitFirstSpan
+-  if (c.trace.enabled) {
+-    o.payload.trace := triangleConst.trace
++  case class ClipTok() extends Bundle {
++    val y = AFix(c.vertexFormat)
++    val vals = RowValues()
++    val start = SInt(pixW bits)
++    val end = SInt(pixW bits)
++    val k = SInt(14 bits)
++    val nonEmpty = Bool()
++    val firstSpan = Bool()
+   }
+-
+-  when(state === WalkerState.Idle && i.fire) {
+-    initTriangleConst(triangleConst, i.payload)
+-    initCursor(rowGuess, i.payload)
+-    initCursor(probe, i.payload)
+-    initCursor(bookmark, i.payload)
+-    firstSpanPending := True
+-    state := WalkerState.Decide
++  case class MulTok() extends Bundle {
++    val y = AFix(c.vertexFormat)
++    val vals = RowValues()
++    val start = SInt(pixW bits)
++    val end = SInt(pixW bits)
++    val k = SInt(14 bits)
++    val nonEmpty = Bool()
++    val firstSpan = Bool()
++    val prod = Vec(formats.map(f => Bits(f.width bits)))
    }
  
-   when(state === WalkerState.Decide) {
-@@ -309,20 +386,17 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+-  when(state === WalkerState.Decide) {
+-    when(insideTriangle(probe)) {
+-      bookmark := probe
+-      state := WalkerState.SearchLeftToExit
+-    }.otherwise {
+-      state := WalkerState.SearchRightToEnter
+-    }
++  val rows = Stream(RowTok())
++  rows.valid := genActive && !setupCycle
++  rows.payload.y := rowY
++  rows.payload.scanX := rowScanX
++  rows.payload.vals := rowVals
++
++  when(setupCycle) {
++    triangleXStartPix := triangleXStartPixComb
++    visibleStartPix := Mux(effClipLeftComb > triangleXStartPixComb, effClipLeftComb, triangleXStartPixComb)
++    visibleEndPix := Mux(effClipRightComb < triangleXEndPixComb, effClipRightComb, triangleXEndPixComb)
++    effClipLeft := effClipLeftComb
++    effClipRight := effClipRightComb
++    effClipLowY := effClipLowYComb
++    effClipHighY := effClipHighYComb
++    setupCycle := False
+   }
+ 
+-  when(state === WalkerState.RecoverLeft) {
+-    when(insideTriangle(probe)) {
+-      when(!recoverFoundInside) {
+-        bookmark := probe
+-        recoverFoundInside := True
+-      }
+-      when(xPix(probe) <= visibleStartPix) {
+-        captureVisibleLeftEdgeFromProbe()
+-        probe := bookmark
+-        recoverFoundInside := False
+-        state := WalkerState.SearchRightToExit
+-      }.otherwise {
+-        stepHorizontal(probe, probe, moveRight = false)
+-      }
+-    }.otherwise {
+-      when(recoverFoundInside) {
+-        stepHorizontal(leftEdge, probe, moveRight = true)
+-        probe := bookmark
+-        recoverFoundInside := False
+-        state := WalkerState.SearchRightToExit
+-      }.elsewhen(xPix(probe) <= visibleStartPix) {
+-        probe := bookmark
+-        state := WalkerState.SearchRightToEnter
+-      }.otherwise {
+-        stepHorizontal(probe, probe, moveRight = false)
+-      }
++  when(rows.fire) {
++    val nextY = (rowY + one).fixTo(c.vertexFormat)
++    when(nextY >= triangleConst.yrange(1)) {
++      genActive := False
      }
++    rowY := nextY
++    rowScanX := Vec(rowScanX.zip(triangleConst.scanDx).map { case (x, dx) => (x + dx).resize(32 bits) })
++    rowVals.all.zip(dyAll).zip(formats).foreach { case ((v, dy), f) => v := (v + dy).fixTo(f) }
    }
  
-+  // The row's inside pixels are the interval insideTriangle tests, and every
-+  // entry here starts from an inside pixel, so walking right to the exit
-+  // would stop at the interval's right end (or the last visible pixel). Take
-+  // it directly instead of one pixel per cycle: the span rasterizer then no
-+  // longer waits a span width for each span.
-   when(state === WalkerState.SearchRightToExit) {
+-  when(state === WalkerState.SearchRightToEnter) {
+-    when(insideTriangle(probe) && xPix(probe) >= visibleStartPix) {
+-      leftEdge := probe
+-      bookmark := probe
+-      state := WalkerState.SearchRightToExit
+-    }.elsewhen(xPix(probe) >= visibleEndPix) {
+-      when(firstSpanPending) {
+-        prepareNextRow(rowGuess, leftBiasedGuess = false)
+-      }.otherwise {
+-        prepareNextRow(bookmark, leftBiasedGuess = true)
+-      }
+-    }.otherwise {
+-      stepHorizontal(probe, probe, moveRight = true)
++  val bounds = rows
++    .translateWith {
++      val t = BoundsTok()
++      val (xi, x2i) = rowEdgeBounds(rows.payload.y, rows.payload.scanX)
++      t.y := rows.payload.y
++      t.vals := rows.payload.vals
++      t.xi := xi
++      t.x2i := x2i
++      t
+     }
++    .m2sPipe()
++
++  val clipped = bounds.translateWith {
++    val t = ClipTok()
++    val b = bounds.payload
++    val lo = wide(Mux(triangleConst.xdirPos, b.xi, b.x2i))
++    val hi = wide(Mux(triangleConst.xdirPos, b.x2i, b.xi))
++    val visibleLast = visibleEndPix - 1
++    val start = Mux(lo > visibleStartPix, lo, visibleStartPix)
++    val end = Mux(hi < visibleLast, hi, visibleLast)
++    t.y := b.y
++    t.vals := b.vals
++    t.start := start
++    t.end := end
++    t.k := (start - triangleXStartPix).resize(14 bits)
++    t.nonEmpty := start <= end
++    t.firstSpan := firstPending
++    t
+   }
+-
+-  when(state === WalkerState.SearchLeftToExit) {
+-    when(insideTriangle(probe)) {
+-      when(xPix(probe) <= visibleStartPix) {
+-        captureVisibleLeftEdgeFromProbe()
+-        probe := bookmark
+-        state := WalkerState.SearchRightToExit
+-      }.otherwise {
+-        stepHorizontal(probe, probe, moveRight = false)
+-      }
+-    }.otherwise {
+-      stepHorizontal(leftEdge, probe, moveRight = true)
+-      probe := bookmark
+-      state := WalkerState.SearchRightToExit
++  when(clipped.fire && clipped.payload.nonEmpty) { firstPending := False }
++  val clippedReg = clipped.m2sPipe()
++
++  val multiplied = clippedReg
++    .translateWith {
++      val t = MulTok()
++      val p = clippedReg.payload
++      t.y := p.y
++      t.vals := p.vals
++      t.start := p.start
++      t.end := p.end
++      t.k := p.k
++      t.nonEmpty := p.nonEmpty
++      t.firstSpan := p.firstSpan
++      for ((dx, idx) <- dxAll.zipWithIndex)
++        t.prod(idx) := (dx.raw.asSInt * p.k).resize(formats(idx).width bits).asBits
++      t
+     }
+-  }
+-
+-  when(state === WalkerState.SearchRightToExit) {
 -    when(insideTriangle(probe)) {
 -      when(xPix(probe) >= visibleEndPix) {
 -        emitRight := pixelToVertex(visibleEndPix - 1)
@@ -2599,24 +2863,61 @@ index 59df4ba..e034a43 100644
 -        state := WalkerState.EmitSpan
 -      }.otherwise {
 -        stepHorizontal(probe, probe, moveRight = true)
--      }
++    .m2sPipe()
++
++  val m = multiplied.payload
++  val emitYPix = wide(m.y.floor(0).asSInt)
++  val emit = m.nonEmpty && m.end >= effClipLeft && m.start < effClipRight &&
++    emitYPix >= effClipLowY && emitYPix < effClipHighY
++  val spans = multiplied
++    .throwWhen(!emit)
++    .translateWith {
++      val out = SpanWalker.Output(c)
++      out.xStart.raw := (triangleConst.xrange(0).raw.asSInt +
++        (m.k << c.vertexFormat.fraction).resize(c.vertexFormat.width bits)).asBits
++      out.xEnd := pixelToVertex(m.end)
++      out.y := m.y
++      val starts = out.linear.all ++ Seq(out.hiS, out.hiT, out.hiAlpha)
++      for (((dst, v), idx) <- starts.zip(m.vals.all).zipWithIndex)
++        dst.raw := (v.raw.asSInt + m.prod(idx).asSInt).resize(formats(idx).width bits).asBits
++      out.stepX.linear := triangleConst.linearDx
++      out.stepX.tex := triangleConst.texDx
++      out.stepX.alpha := triangleConst.alphaDx
++      out.tmuConfig := triangleConst.tmuConfig
++      out.pixelConfig := triangleConst.pixelConfig
++      out.firstSpan := m.firstSpan
++      if (c.trace.enabled) {
++        out.trace := triangleConst.trace
+       }
 -    }.otherwise {
 -      emitRight := (probe.coords(0) + negOne).fixTo(c.vertexFormat)
 -      emitFirstSpan := firstSpanPending
 -      state := WalkerState.EmitSpan
--    }
-+    val rowRight = Mux(triangleConst.xdirPos, rowX2i, rowXi).resize(18 bits)
-+    val visibleLast = (visibleEndPix - 1).resize(18 bits)
-+    emitRight := pixelToVertex(Mux(rowRight < visibleLast, rowRight, visibleLast).resize(visibleEndPix.getWidth bits))
-+    emitFirstSpan := firstSpanPending
-+    state := WalkerState.EmitSpan
-   }
++      out
+     }
+-  }
+-
+-  when(state === WalkerState.EmitSpan && emitVisible && o.ready) {
+-    firstSpanPending := False
+-    prepareNextRow(leftEdge, leftBiasedGuess = true)
+-  }
+-
+-  // Span discovery still reaches EmitSpan for some fully off-screen or reversed
+-  // rows. Drop them here so negative or out-of-range coordinates do not wrap in
+-  // later framebuffer address generation.
+-  when(state === WalkerState.EmitSpan && !emitVisible) {
+-    firstSpanPending := False
+-    prepareNextRow(leftEdge, leftBiasedGuess = true)
+-  }
++  o << spans
  
-   when(state === WalkerState.EmitSpan && emitVisible && o.ready) {
-@@ -345,23 +419,12 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
-       firstSpanPending := False
-       recoverFoundInside := False
-     }.otherwise {
+-  when(state === WalkerState.AdvanceRow) {
+-    val nextY = (nextRowBase.coords(1) + one).fixTo(c.vertexFormat)
+-    when(nextY >= triangleConst.yrange(1)) {
+-      state := WalkerState.Idle
+-      firstSpanPending := False
+-      recoverFoundInside := False
+-    }.otherwise {
 -      val vertical = SpanWalker.Cursor(c)
 -      val downLeft = SpanWalker.Cursor(c)
 -      val next = SpanWalker.Cursor(c)
@@ -2629,20 +2930,53 @@ index 59df4ba..e034a43 100644
 -      rowGuess := next
 -      probe := next
 -      bookmark := next
-+      // Timing: the vertical step is registered here; RowPrep does the optional
-+      // left step (same result as stepVertical then stepHorizontal in one cycle).
-+      stepVertical(rowBase, nextRowBase)
-       recoverFoundInside := False
+-      recoverFoundInside := False
 -      state := WalkerState.Decide
 -      when(nextRowLeftBiased) {
 -        state := WalkerState.RecoverLeft
 -      }
-+      rowPrepToRecover := nextRowLeftBiased
-+      state := WalkerState.RowPrep
-     }
+-    }
++  val pipeBusy = genActive || setupCycle || bounds.valid || clippedReg.valid || multiplied.valid
++  running := pipeBusy
++  i.ready := !pipeBusy
++  when(i.fire) {
++    initTriangleConst(triangleConst, i.payload)
++    rowY := i.payload.yrange(0)
++    rowScanX := i.payload.scanX
++    rowVals.linear.all.zip(i.payload.grads.all.take(6)).foreach { case (out, in) => out := in.start }
++    rowVals.hiS := i.payload.texHi.sStart
++    rowVals.hiT := i.payload.texHi.tStart
++    rowVals.hiAlpha := i.payload.hiAlpha.start
++    firstPending := True
++    genActive := True
++    setupCycle := True
    }
  
-@@ -416,6 +479,9 @@ object SpanWalker {
+   GenerationFlags.formal {
+-    val outputStartPix = o.payload.xStart.floor(0).asSInt
+-    val outputEndPix = o.payload.xEnd.floor(0).asSInt
+-    val outputYPix = o.payload.y.floor(0).asSInt
++    val outputStartPix = wide(o.payload.xStart.floor(0).asSInt)
++    val outputEndPix = wide(o.payload.xEnd.floor(0).asSInt)
++    val outputYPix = wide(o.payload.y.floor(0).asSInt)
+ 
+     when(o.fire) {
+       assert(outputStartPix <= outputEndPix)
+-      assert(outputStartPix >= effectiveClipLeftPix)
+-      assert(outputEndPix < effectiveClipRightPix)
+-      assert(outputYPix >= effectiveClipLowYPix)
+-      assert(outputYPix < effectiveClipHighYPix)
++      assert(outputStartPix >= effClipLeft)
++      assert(outputEndPix < effClipRight)
++      assert(outputYPix >= effClipLowY)
++      assert(outputYPix < effClipHighY)
+     }
+   }
+-
+ }
+ 
+ object SpanWalker {
+@@ -416,6 +345,9 @@ object SpanWalker {
      val clipRight = UInt(10 bits)
      val clipLowY = UInt(10 bits)
      val clipHighY = UInt(10 bits)
@@ -2652,7 +2986,7 @@ index 59df4ba..e034a43 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,6 +492,7 @@ object SpanWalker {
+@@ -426,6 +358,7 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
