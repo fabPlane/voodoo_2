@@ -3626,7 +3626,7 @@ index 8b06179..173818b 100644
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..f467a3a 100644
+index 465ea78..362ebc9 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -3697,17 +3697,17 @@ index 465ea78..f467a3a 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,254 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,197 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
 +
 +/** Small direct-mapped texture cache for boards where TmuTextureCache does not
 +  * fit (Tang Mega 138K): `c.texSmallCacheLines` lines of 32 bytes in block
-+  * RAM, one per 256-bit DDR3 transfer. Taps are expanded into word reads as in
-+  * TmuNoTextureCache; a hit returns one word per cycle, a miss stalls and
-+  * fetches the whole line in one burst (bilinear neighbours and the next
-+  * pixels of a span then hit). `invalidate` (a texture download) clears every
++  * RAM, one per 256-bit DDR3 transfer. Every tap of a sample is looked up at
++  * once (one tag / data copy per tap), so a hit returns a sample per cycle; a
++  * miss stalls and fetches the whole line in one burst (bilinear neighbours
++  * and the next pixels of a span then hit). `invalidate` (a texture download) clears every
 +  * line; a fill it overlaps is not marked valid.
 +  */
 +case class TmuSmallTextureCache(override val c: voodoo.Config) extends TmuTexturePathBase(c) {
@@ -3726,97 +3726,43 @@ index 465ea78..f467a3a 100644
 +
 +  val reqStream = io.sampleRequest.queue(c.texFillRequestWindow)
 +
-+  // Same tap -> word expansion as TmuNoTextureCache.
-+  def pendingFirst(mask: Bits): UInt = new Composite(mask) {
-+    val idx = UInt(2 bits)
-+    idx := 0
-+    when(mask(0)) { idx := 0 } elsewhen (mask(1)) { idx := 1 } elsewhen (mask(2)) { idx := 2 } elsewhen (mask(3)) {
-+      idx := 3
-+    }
-+  }.idx
 +
-+  // Two word lookups per step: a bilinear sample needs 1-4 words (2.4 on
-+  // average under GLQuake, B71), which took one cycle each. The expander
-+  // hands out the first two distinct words of the sample, looked up through
-+  // two copies of the tag / data memories; a miss fills one line (both
-+  // copies), then the same pair is looked up again.
-+  case class PairReq() extends Bundle {
-+    val a = TmuTextureCacheDirectWordReq(c) // address / tapMask: first word; common fields
-+    val addrB = UInt(aw bits)
-+    val maskB = Bits(4 bits)
-+    val validB = Bool()
++  // One lane per bilinear tap, each with its own tag / data copy, so a sample
++  // is a single lookup step (B97: two lanes, 2.76 distinct words per sample
++  // under GLQuake, often two steps). A point sample uses lane 0.
++  //
++  // A fill of line L at index X writes lane j unless lane j's tap needs a
++  // different line at X: lanes then never evict a line another tap of the same
++  // sample is waiting on, so a sample needs at most four fills. lineValid is
++  // per index: the first fill at X after an invalidate (lineValid(X) clear)
++  // writes every lane, so whatever a lane holds at a valid index was written
++  // after the last invalidate.
++  val lanes = 4
++  case class Lookup() extends Bundle {
++    val addr = Vec(UInt(aw bits), lanes)
++    val active = Bits(lanes bits)
++    val tapHalf = Vec(Bool(), lanes)
++    val tapByte = Vec(Bool(), lanes)
++    val is16Bit = Bool()
++    val bilinear = Bool()
++    val passthrough = Tmu.TmuPassthrough(c)
 +  }
 +
-+  val expanded = new Area {
-+    val stream = Stream(PairReq())
-+    val running = RegInit(False)
-+    val hold = Reg(Tmu.SampleRequest(c))
-+    val pending = Reg(Bits(4 bits)) init 0
-+
-+    val req = running ? hold | reqStream.payload
-+    val initPending = Mux(reqStream.payload.bilinear, B"1111", B"0001")
-+    val activePending = running ? pending | initPending
-+
-+    val tapAddrs = Vec(req.pointAddr, req.biAddr1, req.biAddr2, req.biAddr3)
-+    when(req.bilinear) { tapAddrs(0) := req.biAddr0 }
-+    val tapWordAddrs = Vec.fill(4)(UInt(aw bits))
-+    for (i <- 0 until 4) {
-+      tapWordAddrs(i) := ((tapAddrs(i) >> 2) << 2).resize(aw bits)
-+      stream.payload.a.tapHalf(i) := tapAddrs(i)(1)
-+      stream.payload.a.tapByte(i) := tapAddrs(i)(0)
-+    }
-+
-+    val wordA = tapWordAddrs(pendingFirst(activePending))
-+    val maskA = Bits(4 bits)
-+    val restA = Bits(4 bits)
-+    for (i <- 0 until 4) {
-+      maskA(i) := activePending(i) && tapWordAddrs(i) === wordA
-+      restA(i) := activePending(i) && !(tapWordAddrs(i) === wordA)
-+    }
-+    val wordB = tapWordAddrs(pendingFirst(restA))
-+    // Same slot, different line: filling one would evict the other (direct
-+    // mapped), so B waits for the next step instead of ping-ponging.
-+    val conflict = lineIdx(wordB) === lineIdx(wordA) && lineTag(wordB) =/= lineTag(wordA)
-+    val takeB = restA =/= 0 && !conflict
-+    val maskB = Bits(4 bits)
-+    val nextPending = Bits(4 bits)
-+    for (i <- 0 until 4) {
-+      maskB(i) := takeB && restA(i) && tapWordAddrs(i) === wordB
-+      nextPending(i) := restA(i) && !maskB(i)
-+    }
-+
-+    stream.valid := running || reqStream.valid
-+    stream.payload.a.address := wordA
-+    stream.payload.a.is16Bit := req.is16Bit
-+    stream.payload.a.firstWord := !running
-+    stream.payload.a.lastWord := nextPending === 0
-+    stream.payload.a.bilinear := req.bilinear
-+    stream.payload.a.tapMask := maskA
-+    stream.payload.a.passthrough := req.passthrough
-+    stream.payload.addrB := wordB
-+    stream.payload.maskB := maskB
-+    stream.payload.validB := takeB
-+
-+    reqStream.ready := !running && stream.ready
-+
-+    when(stream.fire) {
-+      when(!running && !stream.payload.a.lastWord) {
-+        hold := reqStream.payload
-+        pending := nextPending
-+        running := True
-+      } elsewhen (running && !stream.payload.a.lastWord) {
-+        pending := nextPending
-+      } elsewhen (running) {
-+        running := False
-+        pending := 0
-+      }
-+    }
++  val req = reqStream.payload
++  val reqLookup = Lookup()
++  val tapAddrs = Vec(Mux(req.bilinear, req.biAddr0, req.pointAddr), req.biAddr1, req.biAddr2, req.biAddr3)
++  for (i <- 0 until lanes) {
++    reqLookup.addr(i) := ((tapAddrs(i) >> 2) << 2).resize(aw bits)
++    reqLookup.tapHalf(i) := tapAddrs(i)(1)
++    reqLookup.tapByte(i) := tapAddrs(i)(0)
 +  }
++  reqLookup.active := Mux(req.bilinear, B"1111", B"0001")
++  reqLookup.is16Bit := req.is16Bit
++  reqLookup.bilinear := req.bilinear
++  reqLookup.passthrough := req.passthrough
 +
-+  val tagMemA = Mem(UInt(tagBits bits), lines)
-+  val tagMemB = Mem(UInt(tagBits bits), lines)
-+  val dataMemA = Mem(Bits(32 bits), lines * wordsPerLine)
-+  val dataMemB = Mem(Bits(32 bits), lines * wordsPerLine)
++  val tagMem = Seq.fill(lanes)(Mem(UInt(tagBits bits), lines))
++  val dataMem = Seq.fill(lanes)(Mem(Bits(32 bits), lines * wordsPerLine))
 +  val lineValid = Reg(Bits(lines bits)) init 0
 +
 +  object FillState extends SpinalEnum {
@@ -3826,43 +3772,37 @@ index 465ea78..f467a3a 100644
 +    val state = RegInit(FillState.idle)
 +    val beat = Reg(UInt(3 bits)) init 0
 +    val addr = Reg(UInt(aw bits)) init 0
++    val laneWrite = Reg(Bits(lanes bits)) init 0
 +    val poisoned = RegInit(False)
 +  }
 +
-+  // Lookup stage: tags and data are read as a pair enters s1, and read again
-+  // (same pair) after a fill.
++  // Lookup stage: tags and data are read as a sample enters s1, and read
++  // again (same sample) after a fill.
 +  val s1Valid = RegInit(False)
-+  val s1 = Reg(PairReq())
++  val s1 = Reg(Lookup())
 +  val s1Done = Bool()
 +  val advance = !s1Valid || s1Done
-+  expanded.stream.ready := advance
++  reqStream.ready := advance
 +  when(advance) {
-+    s1Valid := expanded.stream.valid
-+    s1 := expanded.stream.payload
++    s1Valid := reqStream.valid
++    s1 := reqLookup
 +  }
 +  val reread = fill.state === FillState.reread
-+  val rdAddrA = Mux(reread, s1.a.address, expanded.stream.payload.a.address)
-+  val rdAddrB = Mux(reread, s1.addrB, expanded.stream.payload.addrB)
 +  val rdEnable = advance || reread
-+  val tagRdA = tagMemA.readSync(lineIdx(rdAddrA), enable = rdEnable)
-+  val tagRdB = tagMemB.readSync(lineIdx(rdAddrB), enable = rdEnable)
-+  val dataRdA = dataMemA.readSync((lineIdx(rdAddrA) ## wordOff(rdAddrA)).asUInt, enable = rdEnable)
-+  val dataRdB = dataMemB.readSync((lineIdx(rdAddrB) ## wordOff(rdAddrB)).asUInt, enable = rdEnable)
-+
-+  val hitA = lineValid(lineIdx(s1.a.address)) && tagRdA === lineTag(s1.a.address)
-+  val hitB = !s1.validB || (lineValid(lineIdx(s1.addrB)) && tagRdB === lineTag(s1.addrB))
-+  val lookupHit = s1Valid && fill.state === FillState.idle && hitA && hitB
-+
-+  case class WordOut() extends Bundle {
-+    val dataA = Bits(32 bits)
-+    val dataB = Bits(32 bits)
-+    val meta = PairReq()
++  val tagRd = Vec(UInt(tagBits bits), lanes)
++  val dataRd = Vec(Bits(32 bits), lanes)
++  val laneHit = Bits(lanes bits)
++  for (i <- 0 until lanes) {
++    val rdAddr = Mux(reread, s1.addr(i), reqLookup.addr(i))
++    tagRd(i) := tagMem(i).readSync(lineIdx(rdAddr), enable = rdEnable)
++    dataRd(i) := dataMem(i).readSync((lineIdx(rdAddr) ## wordOff(rdAddr)).asUInt, enable = rdEnable)
++    laneHit(i) := !s1.active(i) || (lineValid(lineIdx(s1.addr(i))) && tagRd(i) === lineTag(s1.addr(i)))
 +  }
-+  val out = Stream(WordOut())
++  val allHit = laneHit.andR
++  val lookupHit = s1Valid && fill.state === FillState.idle && allHit
++
++  val out = Stream(NoData)
 +  out.valid := lookupHit
-+  out.payload.dataA := dataRdA
-+  out.payload.dataB := dataRdB
-+  out.payload.meta := s1
 +  s1Done := out.fire
 +
 +  io.texRead.cmd.valid := fill.state === FillState.cmd
@@ -3874,11 +3814,22 @@ index 465ea78..f467a3a 100644
 +  io.texRead.rsp.ready := fill.state === FillState.beats
 +  def lineBytes = wordsPerLine * 4
 +
++  // First missing lane, and the lanes the fill of its line may write.
++  val missLane = OHToUInt(OHMasking.first(~laneHit))
++  val missAddr = s1.addr(missLane)
++  val missWrite = Bits(lanes bits)
++  for (j <- 0 until lanes) {
++    val sameIdx = s1.active(j) && lineIdx(s1.addr(j)) === lineIdx(missAddr)
++    val otherLine = lineTag(s1.addr(j)) =/= lineTag(missAddr)
++    missWrite(j) := !lineValid(lineIdx(missAddr)) || !(sameIdx && otherLine)
++  }
++
 +  switch(fill.state) {
 +    is(FillState.idle) {
-+      when(s1Valid && !(hitA && hitB)) {
++      when(s1Valid && !allHit) {
 +        fill.poisoned := False
-+        fill.addr := Mux(!hitA, s1.a.address, s1.addrB)
++        fill.addr := missAddr
++        fill.laneWrite := missWrite
 +        fill.state := FillState.cmd
 +      }
 +    }
@@ -3889,14 +3840,14 @@ index 465ea78..f467a3a 100644
 +    is(FillState.beats) {
 +      when(io.texRead.rsp.valid) {
 +        val wAddr = (lineIdx(fill.addr) ## fill.beat).asUInt
-+        dataMemA.write(wAddr, io.texRead.rsp.fragment.data)
-+        dataMemB.write(wAddr, io.texRead.rsp.fragment.data)
++        for (j <- 0 until lanes)
++          when(fill.laneWrite(j)) { dataMem(j).write(wAddr, io.texRead.rsp.fragment.data) }
 +        fill.beat := fill.beat + 1
 +        when(io.texRead.rsp.last) {
-+          tagMemA.write(lineIdx(fill.addr), lineTag(fill.addr))
-+          tagMemB.write(lineIdx(fill.addr), lineTag(fill.addr))
++          for (j <- 0 until lanes)
++            when(fill.laneWrite(j)) { tagMem(j).write(lineIdx(fill.addr), lineTag(fill.addr)) }
 +          when(!fill.poisoned && !io.invalidate) { lineValid(lineIdx(fill.addr)) := True }
-+          // Look the pair up again next cycle (after the last write).
++          // Look the sample up again next cycle (after the last write).
 +          fill.state := FillState.reread
 +        }
 +      }
@@ -3911,47 +3862,39 @@ index 465ea78..f467a3a 100644
 +    when(fill.state =/= FillState.idle) { fill.poisoned := True }
 +  }
 +
-+  // Assemble the taps of one sample, as TmuNoTextureCache does. The next
-+  // sample's words may enter while the finished one is handed on (the
-+  // register updates after this cycle), so a sample costs its step count.
++  // Register the assembled sample; the next sample's lookup overlaps its
++  // hand-off, so a hitting sample costs one cycle.
 +  val assembled = Reg(Tmu.SampleFetch(c))
 +  val outValid = RegInit(False)
 +  out.ready := !outValid || io.sampleFetch.ready
 +  when(io.sampleFetch.fire) { outValid := False }
 +  when(out.fire) {
-+    val meta = out.payload.meta
-+    when(meta.a.firstWord) {
-+      assembled.bilinear := meta.a.bilinear
-+      assembled.passthrough := meta.a.passthrough
-+      for (i <- 0 until 4) assembled.texels(i) := 0
-+    }
-+    for (i <- 0 until 4) {
-+      when(meta.a.tapMask(i)) {
-+        assembled.texels(i) := texel16(out.payload.dataA, meta.a.tapHalf(i), meta.a.tapByte(i), meta.a.is16Bit)
-+      }
-+      when(meta.validB && meta.maskB(i)) {
-+        assembled.texels(i) := texel16(out.payload.dataB, meta.a.tapHalf(i), meta.a.tapByte(i), meta.a.is16Bit)
-+      }
-+    }
-+    when(meta.a.lastWord) { outValid := True }
++    assembled.bilinear := s1.bilinear
++    assembled.passthrough := s1.passthrough
++    for (i <- 0 until lanes)
++      assembled.texels(i) := Mux(
++        s1.active(i),
++        texel16(dataRd(i), s1.tapHalf(i), s1.tapByte(i), s1.is16Bit),
++        B(0, 16 bits)
++      )
++    outValid := True
 +  }
 +  io.sampleFetch.valid := outValid
 +  io.sampleFetch.payload := assembled
-+  io.busy := reqStream.valid || expanded.running || s1Valid || outValid || fill.state =/= FillState.idle
++  io.busy := reqStream.valid || s1Valid || outValid || fill.state =/= FillState.idle
 +
 +  private def counter(inc: UInt): UInt = {
 +    val r = Reg(UInt(32 bits)) init (0)
 +    r := r + inc.resized
 +    r
 +  }
-+  // 0 word lookups (both lanes), 1 misses (fills started), 2 fill cycles,
++  // 0 word lookups (active lanes), 1 misses (fills started), 2 fill cycles,
 +  // 3 samples delivered.
-+  io.perf(0) := counter(Mux(out.fire, Mux(out.payload.meta.validB, U(2, 2 bits), U(1, 2 bits)), U(0, 2 bits)))
-+  io.perf(1) := counter((fill.state === FillState.idle && s1Valid && !(hitA && hitB)).asUInt)
++  io.perf(0) := counter(Mux(out.fire, Mux(s1.bilinear, U(4, 3 bits), U(1, 3 bits)), U(0, 3 bits)))
++  io.perf(1) := counter((fill.state === FillState.idle && s1Valid && !allHit).asUInt)
 +  io.perf(2) := counter((fill.state =/= FillState.idle).asUInt)
 +  io.perf(3) := counter(io.sampleFetch.fire.asUInt)
 +}
-+
 diff --git a/test/FramebufferPlaneReaderTest.scala b/test/FramebufferPlaneReaderTest.scala
 index 0295f4c..f468360 100644
 --- a/test/FramebufferPlaneReaderTest.scala
