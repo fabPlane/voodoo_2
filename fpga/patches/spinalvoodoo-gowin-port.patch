@@ -3234,10 +3234,10 @@ index fbf774f..6f372f1 100644
  
      tables
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..173818b 100644
+index 8b06179..fb5c41e 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
-@@ -42,6 +42,9 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
  
      // Pipeline busy: pixels in flight inside fork-queue-join and collector
      val busy = out Bool ()
@@ -3247,7 +3247,16 @@ index 8b06179..173818b 100644
    }
  
    val requestIdWidth = Tmu.requestIdWidth
-@@ -89,11 +92,39 @@ case class Tmu(c: voodoo.Config) extends Component {
+-  val maxOutstanding = 7
++  // Samples between allocation and io.output: the issue skid buffer, the
++  // texture path's request FIFO and lookup / assembly registers, and the
++  // decoder's three pipe stages are ~9 cycles, so 7 capped a hitting stream
++  // below one sample per cycle (B99: TMU input stalled 31% of cycles).
++  val maxOutstanding = 15
+   val inFlightCount = Reg(UInt(log2Up(maxOutstanding + 1) bits)) init 0
+ 
+   import Tmu._
+@@ -89,11 +96,39 @@ case class Tmu(c: voodoo.Config) extends Component {
    val tow = inputForStage.payload.t // T/W in 14.18 format (wider internal accumulator)
  
    val frontEnd = new Area {
@@ -3289,7 +3298,7 @@ index 8b06179..173818b 100644
          val msbPos = U(63, 7 bits) - clz
          val norm = (absOow |<< clz).resize(64 bits)
          val index = norm(62 downto 55)
-@@ -101,23 +132,23 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -101,23 +136,23 @@ case class Tmu(c: voodoo.Config) extends Component {
          val base = recipTable.readAsync(index.resize(9 bits))
          val next = recipTable.readAsync((index +^ U(1)).resize(9 bits))
          val out = Tmu.FrontRecipPrep(c)
@@ -3325,7 +3334,7 @@ index 8b06179..173818b 100644
          out
        }
        .stage()
-@@ -153,34 +184,48 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -153,34 +188,48 @@ case class Tmu(c: voodoo.Config) extends Component {
        }
        .stage()
  
@@ -3392,7 +3401,7 @@ index 8b06179..173818b 100644
          out
        }
        .m2sPipe()
-@@ -315,6 +360,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -315,6 +364,7 @@ case class Tmu(c: voodoo.Config) extends Component {
          out
        }
        .stage()
@@ -3400,7 +3409,7 @@ index 8b06179..173818b 100644
    }
    val stageGrad = lodPipeline.stageGrad
    val stageLodPrep = lodPipeline.stageLodPrep
-@@ -513,15 +559,14 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -513,15 +563,14 @@ case class Tmu(c: voodoo.Config) extends Component {
        req
      }
      .stage()
@@ -3422,7 +3431,7 @@ index 8b06179..173818b 100644
        val startupTexShift = (0 until 9).map(sampleRequestPrep.payload.texTables.texShift(_))
        val tapAddr = Vec(UInt(c.addressWidth.value bits), 4)
        tapAddr(
-@@ -530,41 +575,61 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -530,41 +579,61 @@ case class Tmu(c: voodoo.Config) extends Component {
        tapAddr(1) := sampleRequestPrep.payload.biAddr1
        tapAddr(2) := sampleRequestPrep.payload.biAddr2
        tapAddr(3) := sampleRequestPrep.payload.biAddr3
@@ -3510,7 +3519,7 @@ index 8b06179..173818b 100644
        req
      }
      .m2sPipe()
-@@ -594,9 +659,12 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -594,9 +663,12 @@ case class Tmu(c: voodoo.Config) extends Component {
    )
  
    val texturePath: TmuTexturePathBase =
@@ -3524,7 +3533,7 @@ index 8b06179..173818b 100644
    io.texRead <> texturePath.io.texRead
  
    val texelDecoder = TmuTexelDecoder(c)
-@@ -621,7 +689,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -621,7 +693,7 @@ case class Tmu(c: voodoo.Config) extends Component {
    }.elsewhen(!(sampleRequest.fire || bypassOutput.fire) && io.output.fire) {
      inFlightCount := inFlightCount - 1
    }
@@ -3533,7 +3542,7 @@ index 8b06179..173818b 100644
  
    /** BMB parameters for texture memory access */
    def bmbParams(c: voodoo.Config) = BmbParameter(
-@@ -694,12 +762,82 @@ object Tmu {
+@@ -694,12 +766,82 @@ object Tmu {
      bankMsb := byteOffsLow(shift)
      bankLsb := byteOffsLow(0)
      when(is16Bit) {
@@ -3617,7 +3626,7 @@ index 8b06179..173818b 100644
    def packedStartupDecode4(
        lineBase: UInt,
        is16Bit: Bool,
-@@ -866,6 +1004,12 @@ object Tmu {
+@@ -866,6 +1008,12 @@ object Tmu {
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
@@ -3630,7 +3639,7 @@ index 8b06179..173818b 100644
    case class FrontRecipPrep(c: voodoo.Config) extends Bundle {
      val s = AFix(c.texCoordsAccumFormat)
      val t = AFix(c.texCoordsAccumFormat)
-@@ -885,6 +1029,12 @@ object Tmu {
+@@ -885,6 +1033,12 @@ object Tmu {
      val meta = FrontMeta(c)
    }
  
@@ -3643,7 +3652,7 @@ index 8b06179..173818b 100644
    case class FrontA(c: voodoo.Config) extends Bundle {
      val texS = SInt(18 bits)
      val texT = SInt(18 bits)
-@@ -979,6 +1129,12 @@ object Tmu {
+@@ -979,6 +1133,12 @@ object Tmu {
      val passthrough = TmuPassthrough(c)
    }
  
