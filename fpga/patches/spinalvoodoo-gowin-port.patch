@@ -2252,10 +2252,10 @@ index c6b2ec5..b5cb6e4 100644
    io.debug(0) := io.input.valid
    io.debug(1) := io.input.ready
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
-index cee86c0..0981ff3 100644
+index cee86c0..8feefc8 100644
 --- a/src/voodoo/raster/Rasterizer.scala
 +++ b/src/voodoo/raster/Rasterizer.scala
-@@ -17,15 +17,49 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -17,31 +17,133 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
    val clipLowY = in UInt (10 bits)
    val clipHighY = in UInt (10 bits)
  
@@ -2266,7 +2266,11 @@ index cee86c0..0981ff3 100644
    val spanWalker = SpanWalker(c, formalStrong = formalStrong)
    val spanRasterizer = Rasterizer.SpanRasterizer(c)
 -  val queuedSpan = spanWalker.o.queue(4)
-+
+-  // Keep prefetch acceptance coupled to span launch so the cached framebuffer reader
+-  // always sees span descriptors before the later per-pixel read stream catches up.
+-  val spanLaunchFork = StreamFork2(queuedSpan, synchronous = true)
+ 
+-  spanWalker.i <-< queuedInput
 +  // Span queue carries only the per-span fields plus a 1-bit triangle tag.
 +  // Per-triangle constants (x steps, TMU / pixel config: ~1.1 kbit) are read
 +  // at the queue output from the walker's live triangle constants (tag ==
@@ -2285,7 +2289,16 @@ index cee86c0..0981ff3 100644
 +    walkTag := !walkTag
 +  }
 +
-+  val spanVar = spanWalker.o.translateWith(Rasterizer.SpanVar.fromSpanWalker(c, spanWalker.o.payload, walkTag))
++  // The framebuffer prefetch is issued as the walker emits a span, before the
++  // span queue, so its reads get up to a queue's worth of spans of lead over
++  // the span's pixels (the walker no longer takes a span width per span, B99).
++  // A span enters the queue only together with its prefetch, so the readers
++  // still see span descriptors in order and before the span's pixels.
++  val walkerFork = StreamFork2(spanWalker.o, synchronous = true)
++  prefetchSpan.translateFrom(walkerFork._2) { (out, in) =>
++    out := Rasterizer.PrefetchSpan.fromSpanWalker(c, in)
++  }
++  val spanVar = walkerFork._1.translateWith(Rasterizer.SpanVar.fromSpanWalker(c, walkerFork._1.payload, walkTag))
 +  val queuedVar = spanVar.queue(4)
 +  for (t <- 0 until 2) {
 +    val inc = spanVar.fire && walkTag === Bool(t == 1)
@@ -2300,15 +2313,17 @@ index cee86c0..0981ff3 100644
 +    val k = Mux(queuedVar.payload.tag === walkTag, liveConst, shadowConst)
 +    Rasterizer.SpanVar.toSpanWalker(c, queuedVar.payload, k)
 +  }
-   // Keep prefetch acceptance coupled to span launch so the cached framebuffer reader
-   // always sees span descriptors before the later per-pixel read stream catches up.
-   val spanLaunchFork = StreamFork2(queuedSpan, synchronous = true)
- 
--  spanWalker.i <-< queuedInput
++
    spanWalker.enableClipping := enableClipping
    spanWalker.clipLeft := clipLeft
    spanWalker.clipRight := clipRight
-@@ -38,10 +72,75 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
+   spanWalker.clipLowY := clipLowY
+   spanWalker.clipHighY := clipHighY
+-  spanRasterizer.i <-< spanLaunchFork._1
+-  prefetchSpan.translateFrom(spanLaunchFork._2) { (out, in) =>
+-    out := Rasterizer.PrefetchSpan.fromSpanWalker(c, in)
+-  }
++  spanRasterizer.i <-< queuedSpan
    o << spanRasterizer.o
  
    val running = out(Bool())
