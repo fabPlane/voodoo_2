@@ -2386,7 +2386,7 @@ index cee86c0..0981ff3 100644
      val start = AFix(fmt)
      val d = vertex2d(fmt)
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..16aeebc 100644
+index 59df4ba..e034a43 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -17,7 +17,7 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
@@ -2567,7 +2567,38 @@ index 59df4ba..16aeebc 100644
    }
  
    when(state === WalkerState.Decide) {
-@@ -345,23 +422,12 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -309,20 +386,17 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     }
+   }
+ 
++  // The row's inside pixels are the interval insideTriangle tests, and every
++  // entry here starts from an inside pixel, so walking right to the exit
++  // would stop at the interval's right end (or the last visible pixel). Take
++  // it directly instead of one pixel per cycle: the span rasterizer then no
++  // longer waits a span width for each span.
+   when(state === WalkerState.SearchRightToExit) {
+-    when(insideTriangle(probe)) {
+-      when(xPix(probe) >= visibleEndPix) {
+-        emitRight := pixelToVertex(visibleEndPix - 1)
+-        emitFirstSpan := firstSpanPending
+-        state := WalkerState.EmitSpan
+-      }.otherwise {
+-        stepHorizontal(probe, probe, moveRight = true)
+-      }
+-    }.otherwise {
+-      emitRight := (probe.coords(0) + negOne).fixTo(c.vertexFormat)
+-      emitFirstSpan := firstSpanPending
+-      state := WalkerState.EmitSpan
+-    }
++    val rowRight = Mux(triangleConst.xdirPos, rowX2i, rowXi).resize(18 bits)
++    val visibleLast = (visibleEndPix - 1).resize(18 bits)
++    emitRight := pixelToVertex(Mux(rowRight < visibleLast, rowRight, visibleLast).resize(visibleEndPix.getWidth bits))
++    emitFirstSpan := firstSpanPending
++    state := WalkerState.EmitSpan
+   }
+ 
+   when(state === WalkerState.EmitSpan && emitVisible && o.ready) {
+@@ -345,23 +419,12 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
        firstSpanPending := False
        recoverFoundInside := False
      }.otherwise {
@@ -2596,7 +2627,7 @@ index 59df4ba..16aeebc 100644
      }
    }
  
-@@ -416,6 +482,9 @@ object SpanWalker {
+@@ -416,6 +479,9 @@ object SpanWalker {
      val clipRight = UInt(10 bits)
      val clipLowY = UInt(10 bits)
      val clipHighY = UInt(10 bits)
@@ -2606,7 +2637,7 @@ index 59df4ba..16aeebc 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,6 +495,7 @@ object SpanWalker {
+@@ -426,6 +492,7 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
