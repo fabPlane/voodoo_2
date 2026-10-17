@@ -237,9 +237,10 @@ case class TangMega138kPro(c: Config) extends Component {
   // reader drains one word per core clock; with 32 words a span's worth of
   // depth or colour lines backed up into the adapter, and its head line then
   // held every other port's data behind it (B103: lines waited ~46 DDR
-  // cycles after arriving, head waits on the aux R 19%). A reader's lane
-  // credits bound what it has in flight below 512 words.
-  private val fillRBeats = 512
+  // cycles after arriving, head waits on the aux R 19%). 256 words (32
+  // lines, one BSRAM each): 512 took two each and, with BSRAM ~89% used,
+  // no B104 placement met timing around the DDR / PCIe blocks.
+  private val fillRBeats = 256
   val auxCc = Axi4CC(CoreGowin.auxAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = fillRBeats, wFifoSize = 4, bFifoSize = 4)
   auxCc.io.input << core.io.memAux
