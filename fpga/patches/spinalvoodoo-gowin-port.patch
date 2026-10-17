@@ -1206,7 +1206,7 @@ index c23fa0b..605879b 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..0aaafc2 100644
+index 7797711..1a77639 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
@@ -1258,20 +1258,7 @@ index 7797711..0aaafc2 100644
      tmuBusy := False
    }
  
-@@ -356,7 +367,11 @@ case class PixelPipeline(c: Config) extends Component {
-   val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
-   val auxPrefetcher = SpanPrefetcher(c, colorPlane = false)
- 
--  colorPrefetcher.io.span << spanPrefetchFork._1
-+  // fbReadHazardGuard fence: colour spans from the fenced triangle on wait
-+  // here (queued, so the aux prefetch and the rasterizer keep going).
-+  val colorSpanGate = Bool()
-+  val colorSpansIn = spanPrefetchFork._1.queue(16)
-+  colorPrefetcher.io.span << colorSpansIn.haltWhen(colorSpanGate)
-   auxPrefetcher.io.span << spanPrefetchFork._2
-   colorPrefetcher.io.routing := io.controls.syncRender.routing
-   auxPrefetcher.io.routing := io.controls.syncRender.routing
-@@ -367,8 +382,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,8 +378,10 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1284,7 +1271,7 @@ index 7797711..0aaafc2 100644
  
    val ckBits = colorCombine.io.output.payload.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,8 +670,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,8 +666,9 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -1295,7 +1282,7 @@ index 7797711..0aaafc2 100644
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,12 +684,126 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +680,75 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1347,65 +1334,14 @@ index 7797711..0aaafc2 100644
 +    val dirtyValid = RegInit(False)
 +    val dMinX, dMaxX, dMinY, dMaxY = Reg(SInt(16 bits)) init (0)
 +    val overlap = dirtyValid && !(maxX < dMinX || minX > dMaxX || maxY < dMinY || minY > dMaxY)
-+    // A colour-reading triangle that overlaps the dirty region no longer
-+    // waits for the whole pipeline to drain (that held triangles ~70% of
-+    // cycles, B92). It waits only for the rasterizer to finish the previous
-+    // triangle, then goes on with a fence: its colour span prefetches (and
-+    // later ones) wait until every pixel emitted before it has left
-+    // framebuffer access and its writes are in memory. Its own pixels cannot
-+    // pass framebuffer access before then (their colour data is held back),
-+    // so everything downstream is older. Pixels are not dropped between the
-+    // rasterizer and framebuffer access, so counting them identifies the fence
-+    // (B93 counted framebuffer access *outputs*, which miss depth-failed
-+    // pixels, and deadlocked).
-+    def ahead(a: UInt, b: UInt): Bool = !(a - b).msb // a >= b (wrapping)
-+    val rasterOut = Reg(UInt(32 bits)) init (0)
-+    when(rasterizer.o.fire) { rasterOut := rasterOut + 1 }
-+    // One per pixel entering framebuffer access (it drops depth-failed pixels
-+    // only after this point, so its output count would fall short).
-+    val fbOut = fbAccess.io.exitCount
-+    val spansOut = Reg(UInt(32 bits)) init (0)
-+    when(spanPrefetchFork._1.fire) { spansOut := spansOut + 1 }
-+    val colorSpansPassed = Reg(UInt(32 bits)) init (0)
-+    when(colorPrefetcher.io.span.fire) { colorSpansPassed := colorSpansPassed + 1 }
-+    val fencePending = RegInit(False)
-+    val fencePixels = Reg(UInt(32 bits)) init (0)
-+    val fenceSpans = Reg(UInt(32 bits)) init (0)
-+    val needFence = readsColor && overlap && !drainedForHazard
-+    // Registered (running follows the rasterizer input valid); a triangle
-+    // accepted last cycle already shows as running.
-+    val rasterBusyReg = RegNext(rasterizer.running) init (False)
-+    val downstreamEmpty = RegNext(
-+      !(fbAccess.io.tailBusy || afterFbKills.valid || preDitherMerged.valid || preDitherPiped.valid || ditherOutput.valid ||
-+        ditherJoined.valid || forColorWrite.valid || forAuxWrite.valid || colorWriteInput.valid ||
-+        auxWriteInput.valid || writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-+        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid || io.fbStatus.colorBusy)
-+    ) init (False)
-+    // The empty flag is registered and pixels move a stage per cycle: require
-+    // the count a cycle old and two empty samples in a row, so the last older
-+    // pixel cannot sit unseen in the stage right after framebuffer access.
-+    val olderLeftFb = RegNext(ahead(fbOut, fencePixels)) init (False)
-+    // Fail-safe: a fence that never resolves (a counting bug) would hang the
-+    // pipeline; release after ~2^20 cycles and count it (perf slot 11).
-+    val fenceTimer = Reg(UInt(21 bits)) init (0)
-+    when(!fencePending) { fenceTimer := 0 } elsewhen (!fenceTimer.msb) { fenceTimer := fenceTimer + 1 }
-+    val fenceTimeout = fencePending && fenceTimer.msb
-+    val fenceDone = fencePending && (fenceTimeout || (olderLeftFb && downstreamEmpty && RegNext(downstreamEmpty, init = False)))
 +    val hold = if (c.fbReadHazardGuard)
-+      head.valid && (firstCycle || (needFence && (fencePending || rasterBusyReg)))
++      head.valid && (firstCycle || (readsColor && overlap && !drainedForHazard))
 +    else False
 +    hazardHold := hold
-+    colorSpanGate := (if (c.fbReadHazardGuard) fencePending && ahead(colorSpansPassed, fenceSpans) else False)
-+    io.fbFlushReq := RegNext(fencePending) init (False)
-+    when(fenceDone) { fencePending := False }
-+    when(head.fire && needFence) {
-+      fencePending := True
-+      fencePixels := rasterOut
-+      fenceSpans := spansOut
-+    }
-+    when(drainedForHazard || fenceDone) { dirtyValid := False }
++    io.fbFlushReq := RegNext(head.valid && !firstCycle && readsColor && overlap && !drainedForHazard) init (False)
++    when(drainedForHazard) { dirtyValid := False }
 +    when(head.fire && writesColor) {
-+      val fresh = drainedForHazard || fenceDone || !dirtyValid
++      val fresh = drainedForHazard || !dirtyValid
 +      dirtyValid := True
 +      dMinX := Mux(fresh || minX < dMinX, minX, dMinX)
 +      dMaxX := Mux(fresh || maxX > dMaxX, maxX, dMaxX)
@@ -1423,7 +1359,7 @@ index 7797711..0aaafc2 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +839,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +784,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -1447,7 +1383,7 @@ index 7797711..0aaafc2 100644
 +        // 12 cycles the read-hazard guard holds a triangle.
 +        9 -> cycleCounter(rasterizer.o.fire),
 +        10 -> cycleCounter(rasterizer.running && !rasterizer.o.valid),
-+        11 -> cycleCounter(readHazard.fenceTimeout),
++        11 -> cycleCounter(triangleSetup.busy && !rasterizer.running),
 +        12 -> cycleCounter(hazardHold)
 +      )
 +    else Map.empty
