@@ -1206,7 +1206,7 @@ index c23fa0b..605879b 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..db2a918 100644
+index 7797711..0aaafc2 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
@@ -1295,7 +1295,7 @@ index 7797711..db2a918 100644
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,12 +684,118 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +684,126 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1355,12 +1355,15 @@ index 7797711..db2a918 100644
 +    // framebuffer access and its writes are in memory. Its own pixels cannot
 +    // pass framebuffer access before then (their colour data is held back),
 +    // so everything downstream is older. Pixels are not dropped between the
-+    // rasterizer and framebuffer access, so counting them identifies the fence.
++    // rasterizer and framebuffer access, so counting them identifies the fence
++    // (B93 counted framebuffer access *outputs*, which miss depth-failed
++    // pixels, and deadlocked).
 +    def ahead(a: UInt, b: UInt): Bool = !(a - b).msb // a >= b (wrapping)
 +    val rasterOut = Reg(UInt(32 bits)) init (0)
 +    when(rasterizer.o.fire) { rasterOut := rasterOut + 1 }
-+    val fbOut = Reg(UInt(32 bits)) init (0)
-+    when(fbAccess.io.output.fire) { fbOut := fbOut + 1 }
++    // One per pixel entering framebuffer access (it drops depth-failed pixels
++    // only after this point, so its output count would fall short).
++    val fbOut = fbAccess.io.exitCount
 +    val spansOut = Reg(UInt(32 bits)) init (0)
 +    when(spanPrefetchFork._1.fire) { spansOut := spansOut + 1 }
 +    val colorSpansPassed = Reg(UInt(32 bits)) init (0)
@@ -1373,7 +1376,7 @@ index 7797711..db2a918 100644
 +    // accepted last cycle already shows as running.
 +    val rasterBusyReg = RegNext(rasterizer.running) init (False)
 +    val downstreamEmpty = RegNext(
-+      !(afterFbKills.valid || preDitherMerged.valid || preDitherPiped.valid || ditherOutput.valid ||
++      !(fbAccess.io.tailBusy || afterFbKills.valid || preDitherMerged.valid || preDitherPiped.valid || ditherOutput.valid ||
 +        ditherJoined.valid || forColorWrite.valid || forAuxWrite.valid || colorWriteInput.valid ||
 +        auxWriteInput.valid || writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
 +        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid || io.fbStatus.colorBusy)
@@ -1382,7 +1385,12 @@ index 7797711..db2a918 100644
 +    // the count a cycle old and two empty samples in a row, so the last older
 +    // pixel cannot sit unseen in the stage right after framebuffer access.
 +    val olderLeftFb = RegNext(ahead(fbOut, fencePixels)) init (False)
-+    val fenceDone = fencePending && olderLeftFb && downstreamEmpty && RegNext(downstreamEmpty, init = False)
++    // Fail-safe: a fence that never resolves (a counting bug) would hang the
++    // pipeline; release after ~2^20 cycles and count it (perf slot 11).
++    val fenceTimer = Reg(UInt(21 bits)) init (0)
++    when(!fencePending) { fenceTimer := 0 } elsewhen (!fenceTimer.msb) { fenceTimer := fenceTimer + 1 }
++    val fenceTimeout = fencePending && fenceTimer.msb
++    val fenceDone = fencePending && (fenceTimeout || (olderLeftFb && downstreamEmpty && RegNext(downstreamEmpty, init = False)))
 +    val hold = if (c.fbReadHazardGuard)
 +      head.valid && (firstCycle || (needFence && (fencePending || rasterBusyReg)))
 +    else False
@@ -1415,7 +1423,7 @@ index 7797711..db2a918 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +831,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +839,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -1439,7 +1447,7 @@ index 7797711..db2a918 100644
 +        // 12 cycles the read-hazard guard holds a triangle.
 +        9 -> cycleCounter(rasterizer.o.fire),
 +        10 -> cycleCounter(rasterizer.running && !rasterizer.o.valid),
-+        11 -> cycleCounter(triangleSetup.busy && !rasterizer.running),
++        11 -> cycleCounter(readHazard.fenceTimeout),
 +        12 -> cycleCounter(hazardHold)
 +      )
 +    else Map.empty
@@ -2256,10 +2264,22 @@ index 1a3a34c..e46f94b 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..1b991e1 100644
+index c6b2ec5..b5cb6e4 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
-@@ -165,7 +165,8 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -29,6 +29,11 @@ case class FramebufferAccess(c: Config) extends Component {
+ 
+     // Pipeline busy: pixels in flight inside fork-queue-join
+     val busy = out Bool ()
++    // For the read-hazard fence: pixels past the read join (one per input;
++    // depth-failed pixels are dropped only after it) and whether any are
++    // still in the stages after it.
++    val exitCount = out UInt (32 bits)
++    val tailBusy = out Bool ()
+     val zFuncFail = out Bool ()
+     val debug = out Bits (32 bits)
+   }
+@@ -165,7 +170,8 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -2269,6 +2289,24 @@ index c6b2ec5..1b991e1 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
+@@ -281,6 +287,9 @@ case class FramebufferAccess(c: Config) extends Component {
+   io.zFuncFail := fetched.fire && depthKill
+   val afterDepthTest = fetched.throwWhen(depthKill)
+   val afterDepthTestPiped = afterDepthTest.m2sPipe()
++  val exitCounter = Reg(UInt(32 bits)) init (0)
++  when(exitFire) { exitCounter := exitCounter + 1 }
++  io.exitCount := exitCounter
+ 
+   // ========================================================================
+   // Step 4: Alpha blend
+@@ -395,6 +404,7 @@ case class FramebufferAccess(c: Config) extends Component {
+     }
+     .m2sPipe()
+ 
++  io.tailBusy := afterDepthTestPiped.valid || blendPrep.valid
+   io.debug := 0
+   io.debug(0) := io.input.valid
+   io.debug(1) := io.input.ready
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
 index cee86c0..0981ff3 100644
 --- a/src/voodoo/raster/Rasterizer.scala
