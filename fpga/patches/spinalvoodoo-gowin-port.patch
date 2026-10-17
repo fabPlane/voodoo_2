@@ -1206,7 +1206,7 @@ index c23fa0b..605879b 100644
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..1a77639 100644
+index 7797711..a8bb8e9 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
@@ -1282,7 +1282,7 @@ index 7797711..1a77639 100644
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,12 +680,75 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +680,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1340,7 +1340,13 @@ index 7797711..1a77639 100644
 +    hazardHold := hold
 +    io.fbFlushReq := RegNext(head.valid && !firstCycle && readsColor && overlap && !drainedForHazard) init (False)
 +    when(drainedForHazard) { dirtyValid := False }
-+    when(head.fire && writesColor) {
++    // Only opaque (non-reading) colour writes make an area dirty: the race is
++    // a blend reading what an earlier opaque pass wrote (GLQuake's lightmap
++    // over texture pass). Counting blended writes too made every lightmap
++    // triangle overlap the growing box and drain the pipeline (guard held
++    // ~70% of cycles, B92). Blends over in-flight blends are not ordered (as
++    // before B85, when colour reads were slow enough not to matter).
++    when(head.fire && writesColor && !readsColor) {
 +      val fresh = drainedForHazard || !dirtyValid
 +      dirtyValid := True
 +      dMinX := Mux(fresh || minX < dMinX, minX, dMinX)
@@ -1359,7 +1365,7 @@ index 7797711..1a77639 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +784,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +790,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
