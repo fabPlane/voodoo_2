@@ -392,7 +392,7 @@ index 1b34fa2..bdf5504 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..76bf948 100644
+index 100f1c6..ac0f5b0 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -493,7 +493,7 @@ index 100f1c6..76bf948 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -200,9 +239,34 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +239,37 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -513,14 +513,17 @@ index 100f1c6..76bf948 100644
 +    val cycles = Reg(UInt(32 bits)) init (0)
 +    cycles := cycles + 1
 +    val st = framebufferMem.io.stats
-+    // 9-12 (memory command counts) and 20-25 (write-buffer drain detail)
-+    // read 0: dropped for logic area once they had answered their question.
++    // 9-12 (memory command counts) read 0: dropped for logic area once they
++    // had answered their question.
 +    val words = Seq(
 +      cycles, st.fillHits, st.fillMisses, st.fillStallCycles, st.writeStallCycles,
 +      st.memColorReadBlockedCycles, st.memAuxReadBlockedCycles,
 +      st.memColorWriteBlockedCycles, st.memAuxWriteBlockedCycles
 +    )
 +    for ((w, i) <- words.zipWithIndex) regDebug.perf(i) := w
++    // 20-25: fb reader stalls (colour wait-data / rsp-full / issue-blocked,
++    // then aux).
++    for (i <- 0 until 6) regDebug.perf(20 + i) := st.readerStall(i)
 +  }
 +  regBank.io.debug := regDebug
  
@@ -1041,10 +1044,19 @@ index 226d60e..c81fc68 100644
  
      if (formalStrong) {
 diff --git a/src/voodoo/core/CoreTypes.scala b/src/voodoo/core/CoreTypes.scala
-index 2f55df7..4d53813 100644
+index 2f55df7..5bbe7a5 100644
 --- a/src/voodoo/core/CoreTypes.scala
 +++ b/src/voodoo/core/CoreTypes.scala
-@@ -386,6 +386,9 @@ case class CoreWritePathMap() extends Bundle {
+@@ -90,6 +90,8 @@ case class FramebufferMemStats() extends Bundle {
+   val fillBurstCount = UInt(32 bits)
+   val fillBurstBeats = UInt(32 bits)
+   val fillStallCycles = UInt(32 bits)
++  // Colour reader wait-data / rsp-full / issue-blocked, then the aux reader's.
++  val readerStall = Vec(UInt(32 bits), 6)
+   val writeStallCycles = UInt(32 bits)
+   val writeDrainCount = UInt(32 bits)
+   val writeFullDrainCount = UInt(32 bits)
+@@ -386,6 +388,9 @@ case class CoreWritePathMap() extends Bundle {
  
  case class CoreDebug() extends Bundle {
    val pipelineBusy = Bool()
@@ -1055,7 +1067,7 @@ index 2f55df7..4d53813 100644
    val writePath = CoreWritePathMap()
    val pipelineBusySources = Bits(32 bits)
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..605879b 100644
+index c23fa0b..f2d6d2c 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -5,7 +5,7 @@ import spinal.core.sim._
@@ -1205,6 +1217,21 @@ index c23fa0b..605879b 100644
      fbColorReadArbiter.io.inputs(2).cmd << io.lfbReadBus.cmd
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
+@@ -324,6 +389,14 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+   io.stats.fillStallCycles := (if (useCachedReaders)
+                                  (colorReaderCached.io.fillStallCycles + auxReaderCached.io.fillStallCycles).resized
+                                else U(0, 32 bits))
++  if (useCachedReaders) {
++    val rs = Seq(colorReaderCached, auxReaderCached)
++    for ((r, i) <- rs.zipWithIndex) {
++      io.stats.readerStall(3 * i) := r.io.stallWaitData
++      io.stats.readerStall(3 * i + 1) := r.io.stallRspFull
++      io.stats.readerStall(3 * i + 2) := r.io.issueBlocked
++    }
++  } else io.stats.readerStall.foreach(_ := 0)
+   io.stats.writeStallCycles :=
+     (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
+   io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
 index 7797711..a8bb8e9 100644
 --- a/src/voodoo/core/PixelPipeline.scala
@@ -1485,7 +1512,7 @@ index bf8fd33..787dc1c 100644
          io.mem.cmd.fragment.length := drainLength
          io.mem.cmd.fragment.source := 1
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-index 9d1e15f..6ab820f 100644
+index 9d1e15f..ebdca52 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 @@ -6,7 +6,11 @@ import spinal.core.sim._
@@ -1501,7 +1528,20 @@ index 9d1e15f..6ab820f 100644
    import FramebufferPlaneBuffer._
  
    val addrWidth = c.addressWidth.value
-@@ -161,8 +165,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -34,6 +38,12 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+     val fillBurstCount = out UInt (32 bits)
+     val fillBurstBeats = out UInt (32 bits)
+     val fillStallCycles = out UInt (32 bits)
++    // Read stalls split: no lane yet (data in flight / not issued), response
++    // FIFO full (downstream), and cycles the next span's prefetch could not
++    // issue (issue window full or lane credits short).
++    val stallWaitData = out UInt (32 bits)
++    val stallRspFull = out UInt (32 bits)
++    val issueBlocked = out UInt (32 bits)
+     val reqCount = out UInt (32 bits)
+     val reqForwardStepCount = out UInt (32 bits)
+     val reqBackwardStepCount = out UInt (32 bits)
+@@ -161,8 +171,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // The cached reader is fed by a span prefetch stream, while the later pixel
    // stream can legally skip pixels before framebuffer access (for example due
    // to pipeline-side kills).  Track the next prefetched lane expected by the
@@ -1511,7 +1551,7 @@ index 9d1e15f..6ab820f 100644
    val consumeQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
    val consumeActive = RegInit(False)
    val consumeExpectedAddr = Reg(UInt(addrWidth bits)) init (0)
-@@ -178,7 +181,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -178,7 +187,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    }
    val consumeExpectedValid = consumeActive || consumeBoot
    val consumeAddrMatches = io.readReq.address === consumeCurrentAddr
@@ -1528,7 +1568,7 @@ index 9d1e15f..6ab820f 100644
    val consumeInvariantOk = !io.readReq.valid || (consumeExpectedValid && consumeAddrMatches)
  
    spanIssueQueue.io.push.valid := io.prefetchReq.valid && consumeQueue.io.push.ready
-@@ -216,8 +227,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -216,8 +233,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // available), fall back to an ordered direct read.
    val directMissNeeded = !consumeExpectedValid ||
      (consumeExpectedValid && !consumeAddrMatches && !consumeAddrAhead)
@@ -1557,7 +1597,7 @@ index 9d1e15f..6ab820f 100644
    val directMissCmdSelected = directMissCmdValid
    val prefetchCmdSelected = prefetchCmdValid && !directMissCmdSelected
  
-@@ -234,12 +263,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -234,12 +269,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    internalMem.cmd.fragment.data := 0
    internalMem.cmd.fragment.mask := 0
    internalMem.cmd.last := True
@@ -1574,6 +1614,21 @@ index 9d1e15f..6ab820f 100644
    when(internalMem.cmd.fire && prefetchCmdSelected) {
      fillBurstCount := fillBurstCount + 1
      fillBurstBeats := fillBurstBeats + spanIssueQueue.io.pop.payload.wordCount.resize(32 bits)
+@@ -314,6 +352,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   when(io.readReq.valid && !io.readReq.ready) {
+     fillStallCycles := fillStallCycles + 1
+   }
++  private def cycleCount(cond: Bool): UInt = {
++    val r = Reg(UInt(32 bits)) init (0)
++    when(cond) { r := r + 1 }
++    r
++  }
++  io.stallWaitData := cycleCount(io.readReq.valid && !io.readReq.ready && readRspFifo.io.push.ready)
++  io.stallRspFull := cycleCount(io.readReq.valid && !readRspFifo.io.push.ready)
++  io.issueBlocked := cycleCount(spanIssueQueue.io.pop.valid && !(issuedSpanQueue.io.push.ready && prefetchLanesFit))
+ 
+   when(io.readReq.fire) {
+     recordReadRequest(io.readReq.address)
 diff --git a/src/voodoo/framebuffer/ScanoutLineFetcher.scala b/src/voodoo/framebuffer/ScanoutLineFetcher.scala
 new file mode 100644
 index 0000000..286b588
