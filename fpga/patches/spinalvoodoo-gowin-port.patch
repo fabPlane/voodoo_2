@@ -1866,7 +1866,7 @@ index aeba713..06fa63b 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..e60ac18 100644
+index c5a4cd8..639813d 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -649,28 +649,26 @@ case class RegisterBank(config: Config) extends Component {
@@ -1918,7 +1918,7 @@ index c5a4cd8..e60ac18 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1093,32 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1093,33 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -1930,7 +1930,8 @@ index c5a4cd8..e60ac18 100644
          .field(Bits(32 bits), AccessType.RO, 0, "Internal pipeline busy-source debug bitfield")
        debugBusy := io.debug.busy.bitsValue
      }
-+    if (config.hwDebugRegs) debugBusyReg() else GenerationFlags.simulation { debugBusyReg() }
++    // Simulation only (dropped from the hwDebugRegs board build for logic area).
++    GenerationFlags.simulation { debugBusyReg() }
 +
 +    if (config.hwDebugRegs) {
 +      // (0x260-0x274, framebuffer reader debug words for hang diagnosis,
@@ -1952,7 +1953,7 @@ index c5a4cd8..e60ac18 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1137,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1138,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -1961,11 +1962,12 @@ index c5a4cd8..e60ac18 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1149,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1150,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
-+    if (config.hwDebugRegs) writePathDebugRegs() else GenerationFlags.simulation { writePathDebugRegs() }
++    // Simulation only (dropped from the hwDebugRegs board build for logic area).
++    GenerationFlags.simulation { writePathDebugRegs() }
    }
  
    // ========================================================================
