@@ -13,7 +13,7 @@ import scala.collection.mutable
   * complete and in order (the registered room flag must never let the R FIFO
   * overflow), and AR requests cross the other way the same.
   */
-class Axi4ClockCrossingTestTop(cfg: Axi4Config) extends Component {
+class Axi4ClockCrossingTestTop(cfg: Axi4Config, wFifo: Int = 4) extends Component {
   val coreCd = ClockDomain.external("core")
   val memCd = ClockDomain.external("mem")
   val io = new Bundle {
@@ -21,7 +21,7 @@ class Axi4ClockCrossingTestTop(cfg: Axi4Config) extends Component {
     val output = master(Axi4(cfg))
   }
   val cc = Axi4ClockCrossing(cfg, coreCd, memCd,
-    arFifoSize = 4, awFifoSize = 4, rFifoSize = 8, wFifoSize = 4, bFifoSize = 4)
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = 8, wFifoSize = wFifo, bFifoSize = 4)
   cc.io.input <> io.input
   cc.io.output <> io.output
 }
@@ -95,6 +95,77 @@ class Axi4ClockCrossingTest extends AnyFunSuite {
         }
       }
       dut.coreCd.waitSamplingWhere(rGot == n && arGot == n)
+    }
+  }
+
+  test("AW / W bursts cross whole and in order when W is pulled ahead of its address") {
+    SimConfig.withVerilator.compile(new Axi4ClockCrossingTestTop(cfg, wFifo = 32)).doSim(seed = 4) { dut =>
+      dut.coreCd.forkStimulus(25)
+      dut.memCd.forkStimulus(10)
+      val rnd = new scala.util.Random(13)
+      val in = dut.io.input
+      val out = dut.io.output
+      in.ar.valid #= false; in.r.ready #= true; out.ar.ready #= true; out.r.valid #= false
+      in.aw.valid #= false; in.w.valid #= false; in.b.ready #= true
+      out.aw.ready #= false; out.w.ready #= false; out.b.valid #= false
+      dut.coreCd.waitSampling(10)
+      val n = 400
+      val lens = Array.fill(n)(rnd.nextInt(8))
+      fork {
+        for (k <- 0 until n) {
+          in.aw.valid #= true; in.aw.addr #= k * 64; in.aw.len #= lens(k)
+          in.aw.id #= 0; in.aw.size #= 2; in.aw.burst #= 1
+          dut.coreCd.waitSamplingWhere(in.aw.ready.toBoolean)
+          in.aw.valid #= false
+          if (rnd.nextInt(3) == 0) dut.coreCd.waitSampling(rnd.nextInt(4))
+        }
+      }
+      fork {
+        for (k <- 0 until n; i <- 0 to lens(k)) {
+          if (rnd.nextInt(3) == 0) { in.w.valid #= false; dut.coreCd.waitSampling(1 + rnd.nextInt(2)) }
+          in.w.valid #= true; in.w.data #= (k << 8) | i; in.w.strb #= 0xf; in.w.last #= i == lens(k)
+          dut.coreCd.waitSamplingWhere(in.w.ready.toBoolean)
+        }
+        in.w.valid #= false
+      }
+      // Memory side: W beats are taken whenever offered (like the register
+      // stages in front of the DDR adapter, which pull beats ahead of their
+      // address); each address then claims its beats in order.
+      val wBeats = mutable.Queue[Long]()
+      var memCycles = 0L
+      fork { while (true) { dut.memCd.waitSampling(); memCycles += 1 } }
+      fork {
+        while (true) {
+          out.w.ready #= rnd.nextInt(4) != 0
+          dut.memCd.waitSampling()
+          if (out.w.valid.toBoolean && out.w.ready.toBoolean) wBeats.enqueue(out.w.data.toLong)
+        }
+      }
+      var got = 0
+      var stuck = false
+      fork {
+        while (got < n && !stuck) {
+          out.aw.ready #= true
+          dut.memCd.waitSamplingWhere(out.aw.valid.toBoolean || memCycles > 100000)
+          if (memCycles > 100000) stuck = true
+          else {
+            out.aw.ready #= false
+            val k = (out.aw.addr.toLong / 64).toInt
+            assert(k == got, s"AW $got arrived as $k")
+            dut.memCd.waitSamplingWhere(wBeats.size > lens(k) || memCycles > 100000)
+            if (memCycles > 100000) stuck = true
+            else {
+              for (i <- 0 to lens(k)) {
+                val d = wBeats.dequeue()
+                assert(d == ((k << 8) | i), s"burst $k beat $i: $d")
+              }
+              got += 1
+            }
+          }
+        }
+      }
+      dut.coreCd.waitSamplingWhere(got == n || stuck)
+      assert(!stuck, s"write path deadlocked after $got bursts")
     }
   }
 }

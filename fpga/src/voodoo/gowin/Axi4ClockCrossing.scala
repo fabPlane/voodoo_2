@@ -41,9 +41,37 @@ case class Axi4ClockCrossing(
   ar.io.push << io.input.ar
   io.output.ar << ar.io.pop
   aw.io.push << io.input.aw
-  io.output.aw << aw.io.pop
+  // A write address goes to the memory side only once its whole burst is in
+  // the W FIFO: the DDR adapter's one write engine collects a burst's beats
+  // before issuing it, and with W trickling in at the core clock that took
+  // ~20 DDR cycles per 8-beat line and limited every write port (B116). The
+  // pop-side occupancy lags the push side, so this can only wait longer;
+  // beats of already released bursts still in the FIFO are not counted.
+  // Bursts must fit the W FIFO (32-byte pieces: 8 beats); read-only ports
+  // (W FIFO of 4) pass AW / W straight through.
+  //
+  // W beats leave the FIFO only for released addresses (wAllowed): the
+  // register stages between this crossing and the adapter took beats out of
+  // the FIFO before their address went, so a burst could never show whole in
+  // the FIFO and its address was never released (B117 hung GLQuake at start).
   w.io.push << io.input.w
-  io.output.w << w.io.pop
+  if (wFifoSize >= 8) new ClockingArea(outputCd) {
+    val wAllowed = Reg(UInt(log2Up(wFifoSize) + 2 bits)) init (0)
+    val wHere = w.io.popOccupancy.resize(wAllowed.getWidth) - wAllowed
+    val wReady = !wHere.msb && wHere >= (aw.io.pop.len.resize(wAllowed.getWidth) + 1)
+    io.output.aw.valid := aw.io.pop.valid && wReady
+    io.output.aw.payload := aw.io.pop.payload
+    aw.io.pop.ready := io.output.aw.ready && wReady
+    io.output.w.valid := w.io.pop.valid && wAllowed =/= 0
+    io.output.w.payload := w.io.pop.payload
+    w.io.pop.ready := io.output.w.ready && wAllowed =/= 0
+    wAllowed := wAllowed +
+      Mux(io.output.aw.fire, aw.io.pop.len.resize(wAllowed.getWidth) + 1, U(0, wAllowed.getWidth bits)) -
+      Mux(io.output.w.fire, U(1, wAllowed.getWidth bits), U(0, wAllowed.getWidth bits))
+  } else {
+    io.output.aw << aw.io.pop
+    io.output.w << w.io.pop
+  }
 
   private def registeredRoomPush[T <: Data](in: Stream[T], fifo: StreamFifoCC[T], depth: Int): Unit =
     new ClockingArea(outputCd) {
