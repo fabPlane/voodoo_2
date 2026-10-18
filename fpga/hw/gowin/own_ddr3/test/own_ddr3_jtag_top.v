@@ -96,7 +96,11 @@ module ddr3_jtag_top (
     reg          dbg_we;
     wire [31:0]  dbg_rdata;
 `ifdef OWN_DDR3
-    own_ddr3 u_ddr3 (
+    own_ddr3 #(
+`ifdef OWN_DDR3_RD_PNTR
+        .RD_PNTR(`OWN_DDR3_RD_PNTR)
+`endif
+    ) u_ddr3 (
 `else
     assign dbg_rdata = 32'h0;
     DDR3_Memory_Interface_Top u_ddr3 (
@@ -302,6 +306,8 @@ module ddr3_jtag_top (
     reg  [7:0]   ck2_lane_bad;
     reg  [31:0]  ck2_bits;
     reg  [31:0]  ck2_addr;
+    reg  [255:0] ck2_got, ck2_exp;     // first failing burst, for BISTRES 8..15 / 16..23
+    reg  [255:0] bad_got, bad_exp;
     wire [255:0] ck_diff = ck_got ^ ck_exp;
     wire         ck_busy = ck_valid | ck2_valid;
 
@@ -375,7 +381,9 @@ module ddr3_jtag_top (
                     rd_timeout <= 1'b0;
                     state <= S_BIST_WR;
                 end
-                4'h7: case (jtag_cmd[2:0])
+                4'h7: if (jtag_cmd[4]) payload <= jtag_cmd[3] ? bad_exp[jtag_cmd[2:0]*32 +: 32]
+                                                             : bad_got[jtag_cmd[2:0]*32 +: 32];
+                      else case (jtag_cmd[2:0])
                     3'd0: payload <= bist_errors;
                     3'd1: payload <= bist_first_bad;
                     3'd2: payload <= bist_bad_bits;
@@ -494,6 +502,8 @@ module ddr3_jtag_top (
             end
             ck2_valid <= ck_valid;
             ck2_addr <= ck_addr;
+            ck2_got <= ck_got;
+            ck2_exp <= ck_exp;
             for (k = 0; k < 8; k = k + 1)
                 ck2_lane_bad[k] <= |ck_diff[k*32 +: 32];
             ck2_bits <= ck_diff[31:0]    | ck_diff[63:32]   | ck_diff[95:64]   |
@@ -503,7 +513,11 @@ module ddr3_jtag_top (
                 bist_errors <= bist_errors + 1'b1;
                 bist_has_err <= 1'b1;
                 bist_bad_bits <= bist_bad_bits | ck2_bits;
-                if (!bist_has_err) bist_first_bad <= ck2_addr;
+                if (!bist_has_err) begin
+                    bist_first_bad <= ck2_addr;
+                    bad_got <= ck2_got;
+                    bad_exp <= ck2_exp;
+                end
             end
         end
     end

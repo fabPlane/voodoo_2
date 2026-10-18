@@ -10,7 +10,8 @@
 module own_ddr3 #(
     parameter SIM = 0,
     parameter DBG_MAP = 1,
-    parameter HOLD_RD = 1
+    parameter HOLD_RD = 1,
+    parameter [11:0] RD_PNTR = 12'h000
 ) (
     input  wire          clk,          // 50 MHz reference, sequencing only
     output wire          pll_stop,     // PLL ENCLK for memory_clk (1 = run)
@@ -197,7 +198,7 @@ module own_ddr3 #(
         .dbg_rdata(dbg_rdata_c)
     );
 
-    own_ddr3_phy u_phy (
+    own_ddr3_phy #(.RD_PNTR(RD_PNTR)) u_phy (
         .fclk(fclk), .pclk(pclk), .rst(io_rst), .dllstep(dllstep),
         .c_cs_n(c_cs_n), .c_ras_n(c_ras_n), .c_cas_n(c_cas_n), .c_we_n(c_we_n),
         .c_ba(c_ba), .c_a(c_a), .cke(p_cke), .odt(p_odt), .reset_n(p_reset_n),

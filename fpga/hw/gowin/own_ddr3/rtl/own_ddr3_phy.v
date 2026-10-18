@@ -18,7 +18,10 @@ module own_ddr3_phy #(
     parameter ROW_WIDTH = 15,
     parameter BANK_WIDTH = 3,
     parameter DQ_WIDTH = 32,
-    parameter LANES = DQ_WIDTH / 8
+    parameter LANES = DQ_WIDTH / 8,
+    // DQS FIFO read pointer start per lane (3 bits each): moves where the
+    // IDES8_MEM cuts a burst into frames
+    parameter [3*LANES-1:0] RD_PNTR = {3*LANES{1'b0}}
 ) (
     input  wire                        fclk,      // memory clock (400 MHz)
     input  wire                        pclk,      // fclk / 4
@@ -141,7 +144,7 @@ module own_ddr3_phy #(
 
             DQS #(
                 .FIFO_MODE_SEL(1'b0),
-                .RD_PNTR(3'b000),
+                .RD_PNTR(RD_PNTR[3*gl +: 3]),
                 .DQS_MODE("X4"),
                 .HWL("false")
             ) u_dqs (

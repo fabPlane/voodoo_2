@@ -9,7 +9,9 @@ set_device -name GW5AST-138B GW5AST-LV138FPG676AES
 # that defines OWN_DDR3 and includes the top.
 file mkdir gen
 set f [open gen/top_own.v w]
-puts $f "`define OWN_DDR3\n`define OWN_DDR3_DLL_PROBE\n`include \"[file normalize own_ddr3_jtag_top.v]\""
+# RD_PNTR=12'hXYZ (3 bits per lane) to experiment with the DQS FIFO start
+set rdp [expr {[info exists ::env(RD_PNTR)] ? $::env(RD_PNTR) : "12'h000"}]
+puts $f "`define OWN_DDR3\n`define OWN_DDR3_DLL_PROBE\n`define OWN_DDR3_RD_PNTR $rdp\n`include \"[file normalize own_ddr3_jtag_top.v]\""
 close $f
 if {$vendor} {
     add_file -type verilog [file normalize own_ddr3_jtag_top.v]
