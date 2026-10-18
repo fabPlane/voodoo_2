@@ -2,7 +2,10 @@ create_clock -name clk50 -period 20 [get_ports {clk50}]
 # "clk100" is the PCIe TLP clock, now 75 MHz (see Gowin_PLL_Sys.v).
 create_clock -name clk100 -period 13.333 [get_nets {clk100}]
 create_clock -name clk400 -period 2.5 [get_nets {clk400}]
-create_clock -name clk_core -period 21.667 [get_nets {clk_core}]
+# clk_core: 40 MHz = 1200 MHz VCO / 30 (ip/Gowin_PLL_Sys/Gowin_PLL_Sys_mod.v
+# ODIV1_SEL = 30). B106 ran 37.5 MHz, B112 40 MHz (41.1 ms/frame GLQuake,
+# 1 h soak, no reloads); core Fmax ~40-42 MHz, so not every placement closes.
+create_clock -name clk_core -period 25.0 [get_nets {clk_core}]
 create_clock -name jtag_tck -period 100 [get_nets {u_diag/jtag_tck}]
 create_clock -name clk_hdmi_serial -period 8 [get_nets {clk_hdmi_serial}]
 create_clock -name clk_hdmi_pixel -period 40 [get_nets {clk_hdmi_pixel}]
