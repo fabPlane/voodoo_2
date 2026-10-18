@@ -64,7 +64,9 @@ case class Axi4ToGowinDdrNative(
     nativeAddrWidth: Int = GowinAddressMap.ddrNativeAddrWidth,
     // 16: with ~65 DDR cycles per read, 8 in flight capped reads near
     // 390 MB/s, which GLQuake's fill and texture bursts reached (B110).
-    readsInFlight: Int = 16,
+    // 32: shared by the texture, colour-fill, depth-fill and scanout ports,
+    // and the fill readers' span windows grew to 32 (B125).
+    readsInFlight: Int = 32,
     // Optional third, read-only port (the HDMI scanout on the Pro Dock):
     // its data then drains through its own AXI R channel / clock crossing
     // instead of queueing in the framebuffer port's in front of render fills.

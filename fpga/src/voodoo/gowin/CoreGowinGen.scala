@@ -64,6 +64,9 @@ object GowinGenSupport {
     .copy(
       useFbWriteBuffer = true,
       fbWriteBufferLineWords = 256,
+      // Depth writes on their own AXI write port (CoreGowin memAuxW); B115-
+      // B121 had the port but nothing drove it.
+      separateAuxWriteMem = true,
       useFbReadCache = true,
       useTexFillCache = false,
       // Direct-mapped texture cache in BSRAM (TmuSmallTextureCache): the

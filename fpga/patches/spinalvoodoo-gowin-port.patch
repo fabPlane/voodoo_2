@@ -349,7 +349,7 @@ index d163ab7..4a8a8ed 100644
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..bdf5504 100644
+index 1b34fa2..acd58a1 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -362,7 +362,7 @@ index 1b34fa2..bdf5504 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,28 @@ case class Config(
+@@ -31,6 +34,32 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -379,6 +379,10 @@ index 1b34fa2..bdf5504 100644
 +    // The scanout reads through its own memory port (Core.io.fbScanoutMem)
 +    // instead of sharing the colour-read port with render fills.
 +    separateScanoutMem: Boolean = false,
++    // With useFbWriteBuffer: the depth write buffer drains through its own
++    // memory port (Core.io.fbAuxWriteMem) instead of sharing fbMemWrite
++    // with the colour write buffer.
++    separateAuxWriteMem: Boolean = false,
 +    // Hold a colour-reading (blending) triangle that overlaps the area
 +    // written since memory was last known current until those writes are in
 +    // memory: the span prefetch otherwise reads colour before the earlier
@@ -1067,7 +1071,7 @@ index 2f55df7..5bbe7a5 100644
    val writePath = CoreWritePathMap()
    val pipelineBusySources = Bits(32 bits)
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..f2d6d2c 100644
+index c23fa0b..5df6bdd 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -5,7 +5,7 @@ import spinal.core.sim._
@@ -1155,15 +1159,45 @@ index c23fa0b..f2d6d2c 100644
  
    disableReadPort(colorWritePort)
    disableReadPort(auxWritePort)
-@@ -120,6 +152,7 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -120,16 +152,34 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
    auxWritePort.io.writeReq << io.auxWrite.s2mPipe()
  
    val fbWriteArbiter = if (c.useFbWriteBuffer) makeFbWriteArbiter() else null
 +  require(!c.separateScanoutMem || c.useFbWriteBuffer, "separateScanoutMem needs useFbWriteBuffer")
++  require(!c.separateAuxWriteMem || c.useFbWriteBuffer, "separateAuxWriteMem needs useFbWriteBuffer")
    val fbColorWriteBridge = if (!c.useFbWriteBuffer) makeFbSingleWriteBridge() else null
-   val fbAuxWriteBridge = if (!c.useFbWriteBuffer) makeFbSingleWriteBridge() else null
+-  val fbAuxWriteBridge = if (!c.useFbWriteBuffer) makeFbSingleWriteBridge() else null
++  val fbAuxWriteBridge =
++    if (!c.useFbWriteBuffer || c.separateAuxWriteMem) makeFbSingleWriteBridge() else null
++  // The bridge input the depth write buffer's commands wait on (perf).
++  private def auxWriteCmdReady: Bool =
++    if (c.useFbWriteBuffer && !c.separateAuxWriteMem) fbWriteArbiter.io.inputs(1).cmd.ready
++    else fbAuxWriteBridge.io.inputs(0).cmd.ready
    val fbColorReadArbiter = makeFbColorReadArbiter()
-@@ -142,8 +175,40 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+   val fbAuxReadArbiter = makeFbAuxReadArbiter()
+ 
+   if (c.useFbWriteBuffer) {
+     fbWriteArbiter.io.inputs(0).cmd << colorWritePort.io.mem.cmd.s2mPipe()
+     colorWritePort.io.mem.rsp << fbWriteArbiter.io.inputs(0).rsp.s2mPipe()
+-    fbWriteArbiter.io.inputs(1).cmd << auxWritePort.io.mem.cmd.s2mPipe()
+-    auxWritePort.io.mem.rsp << fbWriteArbiter.io.inputs(1).rsp.s2mPipe()
++    if (c.separateAuxWriteMem) {
++      // Colour and depth writes shared fbMemWrite's one 32-bit data path,
++      // and the depth write buffer was blocked ~26% of cycles (B121).
++      fbAuxWriteBridge.io.inputs(0).cmd << auxWritePort.io.mem.cmd.s2mPipe()
++      auxWritePort.io.mem.rsp << fbAuxWriteBridge.io.inputs(0).rsp.s2mPipe()
++      val unused = fbWriteArbiter.io.inputs(1)
++      unused.cmd.valid := False
++      unused.cmd.payload.assignFromBits(B(0, widthOf(unused.cmd.payload) bits))
++      unused.rsp.ready := True
++    } else {
++      fbWriteArbiter.io.inputs(1).cmd << auxWritePort.io.mem.cmd.s2mPipe()
++      auxWritePort.io.mem.rsp << fbWriteArbiter.io.inputs(1).rsp.s2mPipe()
++    }
+ 
+     if (useCachedReaders) {
+       fbColorReadArbiter.io.inputs(1).cmd << colorReaderCached.io.mem.cmd.s2mPipe()
+@@ -142,8 +192,40 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
        fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
        auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
      }
@@ -1206,7 +1240,35 @@ index c23fa0b..f2d6d2c 100644
      fbColorReadArbiter.io.inputs(2).cmd << io.lfbReadBus.cmd
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
-@@ -200,8 +265,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -161,15 +243,18 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+     io.fbColorWriteMem.cmd.source := 0
+     io.fbColorWriteMem.rsp.ready := True
+ 
+-    io.fbAuxWriteMem.cmd.valid := False
+-    io.fbAuxWriteMem.cmd.address := 0
+-    io.fbAuxWriteMem.cmd.opcode := Bmb.Cmd.Opcode.WRITE
+-    io.fbAuxWriteMem.cmd.length := 0
+-    io.fbAuxWriteMem.cmd.data := 0
+-    io.fbAuxWriteMem.cmd.mask := 0
+-    io.fbAuxWriteMem.cmd.last := True
+-    io.fbAuxWriteMem.cmd.source := 0
+-    io.fbAuxWriteMem.rsp.ready := True
++    if (c.separateAuxWriteMem) fbAuxWriteBridge.io.output <> io.fbAuxWriteMem
++    else {
++      io.fbAuxWriteMem.cmd.valid := False
++      io.fbAuxWriteMem.cmd.address := 0
++      io.fbAuxWriteMem.cmd.opcode := Bmb.Cmd.Opcode.WRITE
++      io.fbAuxWriteMem.cmd.length := 0
++      io.fbAuxWriteMem.cmd.data := 0
++      io.fbAuxWriteMem.cmd.mask := 0
++      io.fbAuxWriteMem.cmd.last := True
++      io.fbAuxWriteMem.cmd.source := 0
++      io.fbAuxWriteMem.rsp.ready := True
++    }
+   } else {
+     io.fbMemWrite.cmd.valid := False
+     io.fbMemWrite.cmd.address := 0
+@@ -200,8 +285,8 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
        fbAuxReadArbiter.io.inputs(0).cmd << auxReaderDirect.io.mem.cmd
        auxReaderDirect.io.mem.rsp << fbAuxReadArbiter.io.inputs(0).rsp
      }
@@ -1217,7 +1279,16 @@ index c23fa0b..f2d6d2c 100644
      fbColorReadArbiter.io.inputs(2).cmd << io.lfbReadBus.cmd
      io.lfbReadBus.rsp << fbColorReadArbiter.io.inputs(2).rsp.s2mPipe()
  
-@@ -324,6 +389,14 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+@@ -224,7 +309,7 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+     when(colorWritePort.io.mem.cmd.valid && !fbWriteArbiter.io.inputs(0).cmd.ready) {
+       memColorWriteBlockedCycles := memColorWriteBlockedCycles + 1
+     }
+-    when(auxWritePort.io.mem.cmd.valid && !fbWriteArbiter.io.inputs(1).cmd.ready) {
++    when(auxWritePort.io.mem.cmd.valid && !auxWriteCmdReady) {
+       memAuxWriteBlockedCycles := memAuxWriteBlockedCycles + 1
+     }
+     when(colorWritePort.io.mem.cmd.fire) {
+@@ -324,6 +409,14 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
    io.stats.fillStallCycles := (if (useCachedReaders)
                                   (colorReaderCached.io.fillStallCycles + auxReaderCached.io.fillStallCycles).resized
                                 else U(0, 32 bits))
@@ -1233,7 +1304,7 @@ index c23fa0b..f2d6d2c 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..4de6bd1 100644
+index 7797711..be89af6 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -1266,7 +1337,19 @@ index 7797711..4de6bd1 100644
    rasterizer.enableClipping := io.controls.fastfill.fbzMode.enableClipping
    rasterizer.clipLeft := io.controls.clip.left
    rasterizer.clipRight := io.controls.clip.right
-@@ -288,7 +293,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -280,15 +285,19 @@ case class PixelPipeline(c: Config) extends Component {
+ 
+   val rasterYPipe = rasterYTransformed.stage()
+   val rasterFork = StreamFork2(rasterYPipe, synchronous = true)
+-  val postTmuQueue = rasterFork._2
+-    .translateWith(Rasterizer.PostTmu.fromOutput(c, rasterFork._2.payload))
++  val postTmuQueued = rasterFork._2
++    .translateWith(Rasterizer.PostTmuSlim.fromOutput(c, rasterFork._2.payload))
+     .queue(64)
++  val postTmuQueue = postTmuQueued
++    .translateWith(Rasterizer.PostTmuSlim.toPostTmu(c, postTmuQueued.payload))
+     .stage()
+     .stage()
  
    val tmuOutput = Stream(Tmu.Output(c))
    val tmuInputValid = Bool()
@@ -1276,7 +1359,7 @@ index 7797711..4de6bd1 100644
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -312,6 +319,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -312,6 +321,8 @@ case class PixelPipeline(c: Config) extends Component {
      tmuInput >/-> tmu.io.input
      tmuOutput << tmu.io.output
      tmuInputValid := tmu.io.input.valid
@@ -1285,7 +1368,7 @@ index 7797711..4de6bd1 100644
      tmuBusy := tmu.io.busy
    } else {
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
-@@ -334,6 +343,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,6 +345,8 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -1294,7 +1377,7 @@ index 7797711..4de6bd1 100644
      tmuBusy := False
    }
  
-@@ -367,8 +378,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,8 +380,10 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1307,7 +1390,7 @@ index 7797711..4de6bd1 100644
  
    val ckBits = colorCombine.io.output.payload.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,8 +666,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,8 +668,9 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -1318,7 +1401,7 @@ index 7797711..4de6bd1 100644
        tmuBusy || fbAccess.io.busy ||
        colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,12 +680,81 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +682,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1401,7 +1484,7 @@ index 7797711..4de6bd1 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +790,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +792,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -1521,7 +1604,7 @@ index bf8fd33..787dc1c 100644
          io.mem.cmd.fragment.length := drainLength
          io.mem.cmd.fragment.source := 1
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-index 9d1e15f..df286a0 100644
+index 9d1e15f..4210501 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 @@ -6,7 +6,11 @@ import spinal.core.sim._
@@ -1550,7 +1633,7 @@ index 9d1e15f..df286a0 100644
      val reqCount = out UInt (32 bits)
      val reqForwardStepCount = out UInt (32 bits)
      val reqBackwardStepCount = out UInt (32 bits)
-@@ -68,7 +78,16 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -68,7 +78,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
  
    val issueQueueDepth = 64
    val spanIssueQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
@@ -1558,17 +1641,19 @@ index 9d1e15f..df286a0 100644
 +  // Spans whose fill burst is issued and still returning. Only what the fill
 +  // side needs is kept, so the window can be deep: with 4 spans in flight the
 +  // next span's prefetch could not issue ~36% of cycles under GLQuake (B107).
++  // 16 -> 32: at a 48 MHz core the window of 16 blocked the next span 23%
++  // (colour) / 33% (depth) of cycles (Gowin B124).
 +  case class FillCmd() extends Bundle {
 +    val firstWordAddress = UInt(addrWidth bits)
 +    val wordCount = UInt(spanLaneCountWidth bits)
 +    val startHigh = Bool() // first lane is the first word's upper half
 +    val endHigh = Bool() // last lane is the last word's upper half
 +  }
-+  val issuedSpanQueue = StreamFifo(HardType(FillCmd()), 16)
++  val issuedSpanQueue = StreamFifo(HardType(FillCmd()), 32)
    val laneFifo = StreamFifo(Bits(16 bits), lineBufferLanes)
    val directMissLaneQueue = StreamFifo(Bool(), 8)
    val readRspFifo = StreamFifo(ReadRsp(), 16)
-@@ -161,8 +180,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -161,8 +182,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // The cached reader is fed by a span prefetch stream, while the later pixel
    // stream can legally skip pixels before framebuffer access (for example due
    // to pipeline-side kills).  Track the next prefetched lane expected by the
@@ -1578,7 +1663,7 @@ index 9d1e15f..df286a0 100644
    val consumeQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
    val consumeActive = RegInit(False)
    val consumeExpectedAddr = Reg(UInt(addrWidth bits)) init (0)
-@@ -178,7 +196,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -178,7 +198,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    }
    val consumeExpectedValid = consumeActive || consumeBoot
    val consumeAddrMatches = io.readReq.address === consumeCurrentAddr
@@ -1595,7 +1680,7 @@ index 9d1e15f..df286a0 100644
    val consumeInvariantOk = !io.readReq.valid || (consumeExpectedValid && consumeAddrMatches)
  
    spanIssueQueue.io.push.valid := io.prefetchReq.valid && consumeQueue.io.push.ready
-@@ -216,8 +242,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -216,8 +244,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // available), fall back to an ordered direct read.
    val directMissNeeded = !consumeExpectedValid ||
      (consumeExpectedValid && !consumeAddrMatches && !consumeAddrAhead)
@@ -1624,7 +1709,7 @@ index 9d1e15f..df286a0 100644
    val directMissCmdSelected = directMissCmdValid
    val prefetchCmdSelected = prefetchCmdValid && !directMissCmdSelected
  
-@@ -234,12 +278,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -234,12 +280,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    internalMem.cmd.fragment.data := 0
    internalMem.cmd.fragment.mask := 0
    internalMem.cmd.last := True
@@ -1645,7 +1730,7 @@ index 9d1e15f..df286a0 100644
    when(internalMem.cmd.fire && prefetchCmdSelected) {
      fillBurstCount := fillBurstCount + 1
      fillBurstBeats := fillBurstBeats + spanIssueQueue.io.pop.payload.wordCount.resize(32 bits)
-@@ -250,12 +300,10 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -250,12 +302,10 @@ case class FramebufferPlaneReader(c: Config) extends Component {
      }
    }
  
@@ -1662,7 +1747,7 @@ index 9d1e15f..df286a0 100644
    val readDataLo = internalMem.rsp.fragment.data(15 downto 0)
    val readDataHi = internalMem.rsp.fragment.data(31 downto 16)
    val prefetchMemRspValid = internalMem.rsp.valid && internalMem.rsp.source === 0
-@@ -281,7 +329,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -281,7 +331,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
  
      // `rsp.last` may mark the end of a splitter fragment rather than the end
      // of the original fill span. Retire only after all requested words return.
@@ -1671,7 +1756,7 @@ index 9d1e15f..df286a0 100644
        issuedSpanQueue.io.pop.ready := True
        activeFillWordIndex := 0
      }.otherwise {
-@@ -314,6 +362,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -314,6 +364,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    when(io.readReq.valid && !io.readReq.ready) {
      fillStallCycles := fillStallCycles + 1
    }
@@ -1686,7 +1771,7 @@ index 9d1e15f..df286a0 100644
  
    when(io.readReq.fire) {
      recordReadRequest(io.readReq.address)
-@@ -376,7 +432,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -376,7 +434,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
      cacheDebugOccupancy := 0
      cacheDebugOccupancy(6 downto 0) := consumeQueue.io.occupancy.asBits.resized
      cacheDebugOccupancy(15 downto 8) := laneFifo.io.occupancy.asBits.resized
@@ -2646,7 +2731,7 @@ index c6b2ec5..739257e 100644
    io.debug(26) := fetched.ready
    io.debug(31 downto 27) := inFlightCount.asBits
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
-index cee86c0..8feefc8 100644
+index cee86c0..7e7a0bd 100644
 --- a/src/voodoo/raster/Rasterizer.scala
 +++ b/src/voodoo/raster/Rasterizer.scala
 @@ -17,31 +17,133 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
@@ -2794,6 +2879,60 @@ index cee86c0..8feefc8 100644
    case class InputGradient(fmt: QFormat) extends Bundle {
      val start = AFix(fmt)
      val d = vertex2d(fmt)
+@@ -98,6 +200,53 @@ object Rasterizer {
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+   }
+ 
++  /** What ColorCombine reads of PostTmu, for the 64-deep post-TMU queue: no
++    * S / T (the TMU has used them) or low-precision alpha (alphaGradHi is
++    * used), and W's low 32 bits only (ColorCombine takes rawW as 32 bits). */
++  case class PostTmuSlim(c: Config) extends Bundle {
++    val red = AFix(c.vColorFormat)
++    val green = AFix(c.vColorFormat)
++    val blue = AFix(c.vColorFormat)
++    val depth = AFix(c.vDepthFormat)
++    val wLow = Bits(32 bits)
++    val alphaGradHi = AFix(c.texCoordsHiFormat)
++    val coords = Vec.fill(2)(SInt(c.vertexFormat.nonFraction bits))
++    val config = TriangleSetup.PixelPipelineConfig(c)
++    val trace = if (c.trace.enabled) Trace.PixelKey() else null
++  }
++
++  object PostTmuSlim {
++    def fromOutput(c: Config, in: Output): PostTmuSlim = {
++      val out = PostTmuSlim(c)
++      out.red := in.grads.redGrad
++      out.green := in.grads.greenGrad
++      out.blue := in.grads.blueGrad
++      out.depth := in.grads.depthGrad
++      out.wLow := in.grads.wGrad.raw(31 downto 0)
++      out.alphaGradHi := in.alphaGradHi
++      out.coords := in.coords
++      out.config := in.pixelConfig
++      if (c.trace.enabled) out.trace := in.trace
++      out
++    }
++    def toPostTmu(c: Config, in: PostTmuSlim): PostTmu = {
++      val out = PostTmu(c)
++      out.grads.redGrad := in.red
++      out.grads.greenGrad := in.green
++      out.grads.blueGrad := in.blue
++      out.grads.depthGrad := in.depth
++      out.grads.wGrad.raw := in.wLow.asSInt.resize(widthOf(out.grads.wGrad.raw)).asBits
++      out.grads.alphaGrad.raw := 0
++      out.grads.sGrad.raw := 0
++      out.grads.tGrad.raw := 0
++      out.alphaGradHi := in.alphaGradHi
++      out.coords := in.coords
++      out.config := in.config
++      if (c.trace.enabled) out.trace := in.trace
++      out
++    }
++  }
++
+   object PostTmu {
+     def fromOutput(c: Config, in: Output): PostTmu = {
+       val out = PostTmu(c)
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
 index 59df4ba..cc7fe34 100644
 --- a/src/voodoo/raster/SpanWalker.scala
@@ -3977,7 +4116,7 @@ index fbf774f..6f372f1 100644
  
      tables
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..fb5c41e 100644
+index 8b06179..9cac492 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -3999,7 +4138,7 @@ index 8b06179..fb5c41e 100644
    val inFlightCount = Reg(UInt(log2Up(maxOutstanding + 1) bits)) init 0
  
    import Tmu._
-@@ -89,11 +96,39 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -89,35 +96,76 @@ case class Tmu(c: voodoo.Config) extends Component {
    val tow = inputForStage.payload.t // T/W in 14.18 format (wider internal accumulator)
  
    val frontEnd = new Area {
@@ -4010,6 +4149,10 @@ index 8b06179..fb5c41e 100644
          val oowRaw = oow.raw.asSInt
          val absOow = oowRaw.abs.resize(64 bits)
 -        val clz = clz64(absOow)
+-        val msbPos = U(63, 7 bits) - clz
+-        val norm = (absOow |<< clz).resize(64 bits)
+-        val index = norm(62 downto 55)
+-        val frac = norm(54 downto 47)
 +        val out = Tmu.FrontClz(c)
 +        out.absOow := absOow
 +        out.clz := clz64(absOow)
@@ -4034,21 +4177,34 @@ index 8b06179..fb5c41e 100644
 +      }
 +      .stage()
 +
-+    val stageRecipPrep = stageClz
++    // Timing: the normalizing shift gets its own stage before the ROM lookups
++    // (clz -> 64-bit shift -> recip ROM -> subtract was the worst clk_core
++    // path, ~42 MHz, B121).
++    val stageNorm = stageClz
 +      .translateWith {
-+        val absOow = stageClz.payload.absOow
 +        val clz = stageClz.payload.clz
-         val msbPos = U(63, 7 bits) - clz
-         val norm = (absOow |<< clz).resize(64 bits)
-         val index = norm(62 downto 55)
-@@ -101,23 +136,23 @@ case class Tmu(c: voodoo.Config) extends Component {
++        val norm = (stageClz.payload.absOow |<< clz).resize(64 bits)
++        val out = Tmu.FrontNorm(c)
++        out.pre := stageClz.payload.pre
++        out.index := norm(62 downto 55)
++        out.frac := norm(54 downto 47)
++        out.msbPos := U(63, 7 bits) - clz
++        out
++      }
++      .stage()
++
++    val stageRecipPrep = stageNorm
++      .translateWith {
++        val msbPos = stageNorm.payload.msbPos
++        val index = stageNorm.payload.index
++        val frac = stageNorm.payload.frac
          val base = recipTable.readAsync(index.resize(9 bits))
          val next = recipTable.readAsync((index +^ U(1)).resize(9 bits))
          val out = Tmu.FrontRecipPrep(c)
 -        out.s := sow
 -        out.t := tow
 -        out.tLOD := inputForStage.payload.config.tLOD
-+        val pre = stageClz.payload.pre
++        val pre = stageNorm.payload.pre
 +        out.s := pre.s
 +        out.t := pre.t
 +        out.tLOD := pre.tLOD
@@ -4077,7 +4233,7 @@ index 8b06179..fb5c41e 100644
          out
        }
        .stage()
-@@ -153,34 +188,48 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -153,34 +201,48 @@ case class Tmu(c: voodoo.Config) extends Component {
        }
        .stage()
  
@@ -4144,7 +4300,71 @@ index 8b06179..fb5c41e 100644
          out
        }
        .m2sPipe()
-@@ -315,6 +364,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -220,19 +282,30 @@ case class Tmu(c: voodoo.Config) extends Component {
+       }
+       .stage()
+ 
++    // Timing: the leading-zero count gets its own stage before the shift and
++    // log ROM (tempLOD -> clz -> 64-bit shift -> ROM -> add, B121).
++    val stageLodNorm = stageGrad
++      .translateWith {
++        val tempLOD32hi = stageGrad.payload.tempLOD(63 downto 32)
++        val tempLOD32lo = stageGrad.payload.tempLOD(31 downto 0)
++        val useHi = tempLOD32hi =/= 0
++        val clz32val = clz32(Mux(useHi, tempLOD32hi, tempLOD32lo))
++        val out = Tmu.FrontLodNorm(c)
++        out.g := stageGrad.payload
++        out.msbPos64 :=
++          Mux(useHi, U(63, 7 bits) - clz32val.resize(7 bits), U(31, 7 bits) - clz32val.resize(7 bits))
++        out.isZero := stageGrad.payload.tempLOD === 0
++        out
++      }
++      .stage()
++
+     val baseLod_8_8 = SInt(16 bits)
+-    when(stageGrad.payload.tempLOD === 0) {
++    when(stageLodNorm.payload.isZero) {
+       baseLod_8_8 := S(0, 16 bits)
+     }.otherwise {
+-      val tempLOD32hi = stageGrad.payload.tempLOD(63 downto 32)
+-      val tempLOD32lo = stageGrad.payload.tempLOD(31 downto 0)
+-      val useHi = tempLOD32hi =/= 0
+-      val clzInput = Mux(useHi, tempLOD32hi, tempLOD32lo)
+-      val clz32val = clz32(clzInput)
+-      val msbPos64 =
+-        Mux(useHi, U(63, 7 bits) - clz32val.resize(7 bits), U(31, 7 bits) - clz32val.resize(7 bits))
++      val msbPos64 = stageLodNorm.payload.msbPos64
+       val shiftAmt = Mux(msbPos64 >= 8, (msbPos64 - 8).resize(6 bits), U(0, 6 bits))
+-      val shifted = (stageGrad.payload.tempLOD >> shiftAmt).resize(16 bits)
++      val shifted = (stageLodNorm.payload.g.tempLOD >> shiftAmt).resize(16 bits)
+       val lodIndex = shifted(7 downto 0)
+       val rawLod = ((False ## msbPos64).asSInt.resize(16 bits) << 8).resize(16 bits) +
+         (False ## U(0, 8 bits) ## logTable.readAsync(lodIndex)).asSInt.resize(16 bits) -
+@@ -240,16 +313,16 @@ case class Tmu(c: voodoo.Config) extends Component {
+       baseLod_8_8 := (rawLod >> 2).resize(16 bits)
+     }
+ 
+-    val stageLodPrep = stageGrad
++    val stageLodPrep = stageLodNorm
+       .translateWith {
+         val out = Tmu.FrontLodPrep(c)
+-        out.texS := stageGrad.payload.texS
+-        out.texT := stageGrad.payload.texT
+-        out.tLOD := stageGrad.payload.tLOD
+-        out.clampToZero := stageGrad.payload.clampToZero
++        out.texS := stageLodNorm.payload.g.texS
++        out.texT := stageLodNorm.payload.g.texT
++        out.tLOD := stageLodNorm.payload.g.tLOD
++        out.clampToZero := stageLodNorm.payload.g.clampToZero
+         out.baseLod_8_8 := baseLod_8_8
+-        out.perspLodAdjust := stageGrad.payload.perspLodAdjust
+-        out.meta := stageGrad.payload.meta
++        out.perspLodAdjust := stageLodNorm.payload.g.perspLodAdjust
++        out.meta := stageLodNorm.payload.g.meta
+         out
+       }
+       .stage()
+@@ -315,6 +388,7 @@ case class Tmu(c: voodoo.Config) extends Component {
          out
        }
        .stage()
@@ -4152,7 +4372,7 @@ index 8b06179..fb5c41e 100644
    }
    val stageGrad = lodPipeline.stageGrad
    val stageLodPrep = lodPipeline.stageLodPrep
-@@ -513,15 +563,14 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -513,15 +587,14 @@ case class Tmu(c: voodoo.Config) extends Component {
        req
      }
      .stage()
@@ -4174,7 +4394,7 @@ index 8b06179..fb5c41e 100644
        val startupTexShift = (0 until 9).map(sampleRequestPrep.payload.texTables.texShift(_))
        val tapAddr = Vec(UInt(c.addressWidth.value bits), 4)
        tapAddr(
-@@ -530,41 +579,61 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -530,45 +603,65 @@ case class Tmu(c: voodoo.Config) extends Component {
        tapAddr(1) := sampleRequestPrep.payload.biAddr1
        tapAddr(2) := sampleRequestPrep.payload.biAddr2
        tapAddr(3) := sampleRequestPrep.payload.biAddr3
@@ -4229,7 +4449,7 @@ index 8b06179..fb5c41e 100644
 +      mid
 +    }
 +    .m2sPipe()
-+  val sampleRequestBase = sampleRequestMid
++  val sampleRequestBasePre = sampleRequestMid
 +    .translateWith {
 +      val req = Tmu.SampleRequest(c)
 +      val prep = sampleRequestMid.payload.prep
@@ -4262,7 +4482,12 @@ index 8b06179..fb5c41e 100644
        req
      }
      .m2sPipe()
-@@ -594,9 +663,12 @@ case class Tmu(c: voodoo.Config) extends Component {
+-    .queue(16)
++  val sampleRequestBase = Tmu.queueSampleRequests(sampleRequestBasePre, 16, c)
+ 
+   val bypassOutput = Stream(Tmu.Output(c))
+   val bypassTexture = !stageB.payload.meta.config.textureEnable
+@@ -594,9 +687,12 @@ case class Tmu(c: voodoo.Config) extends Component {
    )
  
    val texturePath: TmuTexturePathBase =
@@ -4276,16 +4501,16 @@ index 8b06179..fb5c41e 100644
    io.texRead <> texturePath.io.texRead
  
    val texelDecoder = TmuTexelDecoder(c)
-@@ -621,7 +693,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -621,7 +717,7 @@ case class Tmu(c: voodoo.Config) extends Component {
    }.elsewhen(!(sampleRequest.fire || bypassOutput.fire) && io.output.fire) {
      inFlightCount := inFlightCount - 1
    }
 -  io.busy := inFlightCount =/= 0 || stageRecipPrep.valid || stageRecip.valid || stageA.valid || stageGrad.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestBase.valid
-+  io.busy := inFlightCount =/= 0 || frontEnd.stageClz.valid || stageRecipPrep.valid || stageRecip.valid || frontEnd.stageMul.valid || stageA.valid || stageGrad.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestPrep.valid || sampleRequestMid.valid || sampleRequestBase.valid
++  io.busy := inFlightCount =/= 0 || frontEnd.stageClz.valid || frontEnd.stageNorm.valid || stageRecipPrep.valid || stageRecip.valid || frontEnd.stageMul.valid || stageA.valid || stageGrad.valid || lodPipeline.stageLodNorm.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestPrep.valid || sampleRequestMid.valid || sampleRequestBase.valid
  
    /** BMB parameters for texture memory access */
    def bmbParams(c: voodoo.Config) = BmbParameter(
-@@ -694,12 +766,82 @@ object Tmu {
+@@ -694,12 +790,82 @@ object Tmu {
      bankMsb := byteOffsLow(shift)
      bankLsb := byteOffsLow(0)
      when(is16Bit) {
@@ -4369,7 +4594,61 @@ index 8b06179..fb5c41e 100644
    def packedStartupDecode4(
        lineBase: UInt,
        is16Bit: Bool,
-@@ -866,6 +1008,12 @@ object Tmu {
+@@ -822,6 +988,53 @@ object Tmu {
+     if (trace != null) dst.trace := trace
+   }
+ 
++  /** The SampleRequest fields the small / no texture cache paths use. The full
++    * request is ~684 bits on the Pro Dock, mostly the packed-layout tables
++    * (texTables, 432 bits) and decode fields only TmuTextureCache reads; the
++    * request FIFOs stored all of it (11 BSRAMs for two 16-deep queues). */
++  case class SampleRequestSlim(c: voodoo.Config) extends Bundle {
++    val pointAddr = UInt(c.addressWidth.value bits)
++    val biAddr0 = UInt(c.addressWidth.value bits)
++    val biAddr1 = UInt(c.addressWidth.value bits)
++    val biAddr2 = UInt(c.addressWidth.value bits)
++    val biAddr3 = UInt(c.addressWidth.value bits)
++    val is16Bit = Bool()
++    val bilinear = Bool()
++    val passthrough = TmuPassthrough(c)
++  }
++
++  /** Queue sample requests; without the fill cache only the slim fields are
++    * stored and the others come out zero. */
++  def queueSampleRequests(in: Stream[SampleRequest], depth: Int, c: voodoo.Config): Stream[SampleRequest] =
++    if (c.useTexFillCache) in.queue(depth)
++    else {
++      val q = in.translateWith {
++        val r = SampleRequestSlim(c)
++        r.pointAddr := in.payload.pointAddr
++        r.biAddr0 := in.payload.biAddr0
++        r.biAddr1 := in.payload.biAddr1
++        r.biAddr2 := in.payload.biAddr2
++        r.biAddr3 := in.payload.biAddr3
++        r.is16Bit := in.payload.is16Bit
++        r.bilinear := in.payload.bilinear
++        r.passthrough := in.payload.passthrough
++        r
++      }.queue(depth)
++      q.translateWith {
++        val r = SampleRequest(c)
++        r.assignFromBits(B(0, widthOf(r) bits))
++        r.pointAddr.allowOverride := q.payload.pointAddr
++        r.biAddr0.allowOverride := q.payload.biAddr0
++        r.biAddr1.allowOverride := q.payload.biAddr1
++        r.biAddr2.allowOverride := q.payload.biAddr2
++        r.biAddr3.allowOverride := q.payload.biAddr3
++        r.is16Bit.allowOverride := q.payload.is16Bit
++        r.bilinear.allowOverride := q.payload.bilinear
++        r.passthrough.allowOverride := q.payload.passthrough
++        r
++      }
++    }
++
+   def copySampleRequest(dst: SampleRequest, src: SampleRequest, c: voodoo.Config): Unit = {
+     dst.pointAddr := src.pointAddr
+     dst.biAddr0 := src.biAddr0
+@@ -866,6 +1079,25 @@ object Tmu {
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
@@ -4379,10 +4658,23 @@ index 8b06179..fb5c41e 100644
 +    val clz = UInt(7 bits)
 +  }
 +
++  case class FrontNorm(c: voodoo.Config) extends Bundle {
++    val pre = FrontRecipPrep(c)
++    val index = UInt(8 bits)
++    val frac = UInt(8 bits)
++    val msbPos = UInt(7 bits)
++  }
++
++  case class FrontLodNorm(c: voodoo.Config) extends Bundle {
++    val g = FrontGrad(c)
++    val msbPos64 = UInt(7 bits)
++    val isZero = Bool()
++  }
++
    case class FrontRecipPrep(c: voodoo.Config) extends Bundle {
      val s = AFix(c.texCoordsAccumFormat)
      val t = AFix(c.texCoordsAccumFormat)
-@@ -885,6 +1033,12 @@ object Tmu {
+@@ -885,6 +1117,12 @@ object Tmu {
      val meta = FrontMeta(c)
    }
  
@@ -4395,7 +4687,7 @@ index 8b06179..fb5c41e 100644
    case class FrontA(c: voodoo.Config) extends Bundle {
      val texS = SInt(18 bits)
      val texT = SInt(18 bits)
-@@ -979,6 +1133,12 @@ object Tmu {
+@@ -979,6 +1217,12 @@ object Tmu {
      val passthrough = TmuPassthrough(c)
    }
  
@@ -4409,7 +4701,7 @@ index 8b06179..fb5c41e 100644
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..c046f10 100644
+index 465ea78..6a7a5c8 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -4422,6 +4714,15 @@ index 465ea78..c046f10 100644
  }
  
  abstract class TmuTexturePathBase(val c: voodoo.Config) extends Component {
+@@ -142,7 +145,7 @@ case class TmuTextureCache(
+     slotBits bits
+   ) ## U(0, entryBits bits)) | entry.resize(slotBits + entryBits bits).asBits).asUInt)
+ 
+-  val reqStream = io.sampleRequest.queue(c.texFillRequestWindow)
++  val reqStream = Tmu.queueSampleRequests(io.sampleRequest, c.texFillRequestWindow, c)
+ 
+   GenerationFlags.formal {
+     when(reqStream.valid) {
 @@ -762,7 +765,10 @@ case class TmuTextureCache(
  
    fillRsp.ready := !fillFetchEmit || fillFetchRaw.ready
@@ -4472,6 +4773,15 @@ index 465ea78..c046f10 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
+@@ -865,7 +880,7 @@ case class TmuTextureCache(
+ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePathBase(c) {
+   require(!c.useTexFillCache)
+ 
+-  val reqStream = io.sampleRequest.queue(c.texFillRequestWindow)
++  val reqStream = Tmu.queueSampleRequests(io.sampleRequest, c.texFillRequestWindow, c)
+ 
+   def pendingFirst(mask: Bits, fallback: UInt): UInt = new Composite(mask) {
+     val idx = UInt(2 bits)
 @@ -985,6 +1000,7 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      outValid := False
    }
@@ -4480,7 +4790,7 @@ index 465ea78..c046f10 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,304 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,319 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
@@ -4507,7 +4817,7 @@ index 465ea78..c046f10 100644
 +  def lineTag(a: UInt): UInt = a(aw - 1 downto offBits + idxBits)
 +  def wordOff(a: UInt): UInt = a(offBits - 1 downto 2)
 +
-+  val reqStream = io.sampleRequest.queue(c.texFillRequestWindow)
++  val reqStream = Tmu.queueSampleRequests(io.sampleRequest, c.texFillRequestWindow, c)
 +
 +
 +  // One lane per bilinear tap, each with its own tag / data copy, so a sample
@@ -4655,14 +4965,23 @@ index 465ea78..c046f10 100644
 +  val dataRd = Vec(Bits(32 bits), lanes)
 +  val rdConflict = Bits(lanes bits)
 +  val laneHit = Bits(lanes bits)
++  val lanePending = Bits(lanes bits)
 +  for (i <- 0 until lanes) {
 +    val rdAddr = Mux(reread, s1.addr(i), reqLookup.addr(i))
 +    tagRd(i) := tagMem(i).readSync(lineIdx(rdAddr), enable = rdEnable)
 +    dataRd(i) := dataMem(i).readSync((lineIdx(rdAddr) ## wordOff(rdAddr)).asUInt, enable = rdEnable)
 +    // A read of a line being filled in this lane may see it half written.
 +    rdConflict(i) := RegNextWhen(fillWriting && beatMask(i) && lineIdx(rdAddr) === doneIdx, rdEnable) init (False)
++    // lineValid is sampled with the tags (the 512:1 select fed the miss /
++    // fill-allocate / hint chain, the worst clk_core path in B121). A line
++    // that turns valid after the sample only reads as a miss, and one is
++    // re-read after every completed fill; invalidate clears the sample.
++    val validRd = Reg(Bool()) init (False)
++    when(rdEnable) { validRd := lineValid(lineIdx(rdAddr)) }
++    when(io.invalidate) { validRd := False }
 +    laneHit(i) := !s1.active(i) ||
-+      (!rdConflict(i) && lineValid(lineIdx(s1.addr(i))) && tagRd(i) === lineTag(s1.addr(i)))
++      (!rdConflict(i) && validRd && tagRd(i) === lineTag(s1.addr(i)))
++    lanePending(i) := fill.pending(lineOf(s1.addr(i)))
 +  }
 +  val allHit = laneHit.andR
 +  val evaluate = s1Valid && !waitFill && !reread
@@ -4672,10 +4991,11 @@ index 465ea78..c046f10 100644
 +  out.valid := lookupHit
 +  s1Done := out.fire
 +
-+  val missLane = OHToUInt(OHMasking.first(~laneHit))
++  val missOh = OHMasking.first(~laneHit)
++  val missLane = OHToUInt(missOh)
 +  val missLine = lineOf(s1.addr(missLane))
 +  val backMiss = evaluate && !allHit
-+  val backAlloc = backMiss && !fill.pending(missLine) && !fill.full
++  val backAlloc = backMiss && !(missOh & lanePending).orR && !fill.full
 +  reread := False
 +  when(backMiss) {
 +    when(fillDone) { reread := True } otherwise { waitFill := True }
@@ -4710,9 +5030,14 @@ index 465ea78..c046f10 100644
 +  val hTagKeep = Vec(Reg(UInt(tagBits bits)), lanes)
 +  val hTag = Vec((0 until lanes).map(i => Mux(hFresh, hTagRd(i), hTagKeep(i))))
 +  when(hFresh) { hTagKeep := hTagRd }
++  // lineValid sampled with the hint tags (timing, as in the lookup stage); a
++  // line that turns valid meanwhile is still pending or just refetched.
++  val hValidRd = Reg(Bits(lanes bits)) init (0)
++  for (i <- 0 until lanes) when(hintQ.fire) { hValidRd(i) := lineValid(lineIdx(hintQ.payload.addr(i))) }
++  when(io.invalidate) { hValidRd := 0 }
 +  val hNeed = Bits(lanes bits)
 +  for (i <- 0 until lanes) {
-+    val present = lineValid(lineIdx(h.addr(i))) && hTag(i) === lineTag(h.addr(i))
++    val present = hValidRd(i) && hTag(i) === lineTag(h.addr(i))
 +    hNeed(i) := hTodo(i) && !present && !fill.pending(lineOf(h.addr(i)))
 +  }
 +  val hLane = OHToUInt(OHMasking.first(hNeed))

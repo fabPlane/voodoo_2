@@ -32,6 +32,10 @@ object CoreGowin {
   // texture prefetch fills keep more 32-byte pieces outstanding than 8; the
   // fill readers' memory commands waited ~23% of cycles (B110).
   val fillPendingMax = 16
+  // Colour / depth fill ports: at 48 MHz a DDR round trip is ~40 core cycles
+  // and the fill readers could not issue their next span 23% / 33% of cycles
+  // (B124); their span windows are 32 deep now.
+  val fbFillPendingMax = 32
 
   // The 5-way fb arbiter appends its input index to the BMB source, so the
   // shared side (and the AXI ID) must be the wider fbMemSharedBmbParams;
@@ -137,7 +141,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // core's internal arbiters, this 5-way arbiter and the AXI aligner formed
   // one ~50 ns combinational valid/ready chain on Gowin.
   private def cut(b: Bmb): Bmb = b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
-  val colAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax)
+  val colAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fbFillPendingMax)
   colAxi.io.input <> cut(core.io.fbColorReadMem)
   io.memCol << colAxi.io.output
   private val unusedFbIn = fbArbiter.io.inputs(0)
@@ -153,7 +157,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   fbAxi.io.input <> cut(fbArbiter.io.output)
   texAxi.io.input <> cut(core.io.texMem)
   io.memFb << fbAxi.io.output
-  val auxAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax)
+  val auxAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fbFillPendingMax)
   auxAxi.io.input <> cut(core.io.fbAuxReadMem)
   io.memAux << auxAxi.io.output
   if (c.separateScanoutMem) {
