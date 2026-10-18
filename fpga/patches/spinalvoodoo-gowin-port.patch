@@ -1233,9 +1233,18 @@ index c23fa0b..f2d6d2c 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..a8bb8e9 100644
+index 7797711..4de6bd1 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
+@@ -149,7 +149,7 @@ object PixelPipeline {
+ 
+     val planeReadNeeded =
+       if (colorPlane)
+-        io.span.payload.pixelConfig.alphaMode.alphaBlendEnable || io.fbzMode.enableDitherSubtract
++        io.span.payload.pixelConfig.alphaMode.alphaBlendEnable // as FramebufferAccess.needColorRead
+       else io.fbzMode.enableDepthBuffer
+ 
+     io.readReq.valid := io.span.valid && planeReadNeeded
 @@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
      val tmuInvalidate = in Bool ()
      val pciFifoEmpty = in Bool ()
@@ -1353,7 +1362,7 @@ index 7797711..a8bb8e9 100644
 +    val fbz = io.controls.syncRender.fbzMode
 +    val minX = RegNext(lo(tri.xrange(0))); val maxX = RegNext(hi(tri.xrange(1)))
 +    val minY = RegNext(lo(tri.yrange(0))); val maxY = RegNext(hi(tri.yrange(1)))
-+    val readsColor = RegNext(tri.config.alphaMode.alphaBlendEnable || fbz.enableDitherSubtract)
++    val readsColor = RegNext(tri.config.alphaMode.alphaBlendEnable) // as FramebufferAccess.needColorRead
 +    val writesColor = fbz.rgbBufferMask
 +    val headSeen = RegNext(head.valid && !head.ready, init = False) // same head as last cycle
 +    val firstCycle = head.valid && !headSeen
@@ -2320,7 +2329,7 @@ index 1a3a34c..e46f94b 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..b5cb6e4 100644
+index c6b2ec5..fa9ed70 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
 @@ -29,6 +29,11 @@ case class FramebufferAccess(c: Config) extends Component {
@@ -2335,7 +2344,20 @@ index c6b2ec5..b5cb6e4 100644
      val zFuncFail = out Bool ()
      val debug = out Bits (32 bits)
    }
-@@ -165,7 +170,8 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -137,7 +142,11 @@ case class FramebufferAccess(c: Config) extends Component {
+     )
+   request.colorAddress := (colorPlaneAddress(c.addressWidth.value - 1 downto 1) ## U"1'b0").asUInt
+   request.auxAddress := (auxPlaneAddress(c.addressWidth.value - 1 downto 1) ## U"1'b0").asUInt
+-  request.needColorRead := payload.alphaMode.alphaBlendEnable || fbzMode.enableDitherSubtract
++  // The destination colour feeds only the blend (dither subtraction adjusts
++  // it for the blend); with blending off it is never used. GLQuake leaves
++  // dither subtraction on for opaque passes, so this read every pixel's
++  // colour (B112: both readers ~70% busy).
++  request.needColorRead := payload.alphaMode.alphaBlendEnable
+   request.needAuxRead := fbzMode.enableDepthBuffer
+   request.passthrough.coords := payload.coords
+   request.passthrough.color := payload.color
+@@ -165,7 +174,8 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -2345,7 +2367,69 @@ index c6b2ec5..b5cb6e4 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
-@@ -281,6 +287,9 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -199,45 +209,23 @@ case class FramebufferAccess(c: Config) extends Component {
+   val colorRspBuf = io.fbReadColorRsp.queue(4)
+   val auxRspBuf = io.fbReadAuxRsp.queue(4)
+ 
+-  val colorCtlRoutes = StreamDemux(colorCtlBase, colorCtlBase.payload.needColorRead.asUInt, 2)
+-  val colorFetched = StreamJoin(colorCtlRoutes(1).queue(32), colorRspBuf).translateWith {
+-    val rsp = FramebufferPlaneBuffer.ReadRsp()
+-    rsp.data := colorRspBuf.payload.data
+-    rsp
+-  }
+-  val colorBypass = colorCtlRoutes(0).translateWith {
+-    val rsp = FramebufferPlaneBuffer.ReadRsp()
+-    rsp.data := 0
+-    rsp
+-  }
+-  val colorRsp = Stream(FramebufferPlaneBuffer.ReadRsp())
+-  colorRsp.valid := colorFetched.valid || colorBypass.valid
+-  colorRsp.payload := colorBypass.payload
+-  when(colorFetched.valid) {
+-    colorRsp.payload := colorFetched.payload
+-  }
+-  colorFetched.ready := colorRsp.ready
+-  colorBypass.ready := colorRsp.ready && !colorFetched.valid
+-
+-  val auxCtlRoutes = StreamDemux(auxCtlBase, auxCtlBase.payload.needAuxRead.asUInt, 2)
+-  val auxFetched = StreamJoin(auxCtlRoutes(1).queue(32), auxRspBuf).translateWith {
+-    val rsp = FramebufferPlaneBuffer.ReadRsp()
+-    rsp.data := auxRspBuf.payload.data
+-    rsp
+-  }
+-  val auxBypass = auxCtlRoutes(0).translateWith {
+-    val rsp = FramebufferPlaneBuffer.ReadRsp()
+-    rsp.data := 0
+-    rsp
+-  }
+-  val auxRsp = Stream(FramebufferPlaneBuffer.ReadRsp())
+-  auxRsp.valid := auxFetched.valid || auxBypass.valid
+-  auxRsp.payload := auxBypass.payload
+-  when(auxFetched.valid) {
+-    auxRsp.payload := auxFetched.payload
++  // Merge read responses and no-read pixels in pixel order: a pixel that
++  // reads waits for its data, one that does not answers 0 only once it is the
++  // oldest. (A bypass route answered immediately and could overtake an
++  // earlier pixel still waiting for data, pairing every later response with
++  // the wrong pixel; latent while GLQuake had every pixel read its colour.)
++  def orderedRsp(ctl: Stream[Internal], needRead: Internal => Bool,
++                 rspBuf: Stream[FramebufferPlaneBuffer.ReadRsp]): Stream[FramebufferPlaneBuffer.ReadRsp] = {
++    val out = Stream(FramebufferPlaneBuffer.ReadRsp())
++    val reads = needRead(ctl.payload)
++    out.valid := ctl.valid && (!reads || rspBuf.valid)
++    out.payload.data := Mux(reads, rspBuf.payload.data, B(0, 16 bits))
++    ctl.ready := out.fire
++    rspBuf.ready := out.fire && reads
++    out
+   }
+-  auxFetched.ready := auxRsp.ready
+-  auxBypass.ready := auxRsp.ready && !auxFetched.valid
++  val colorRsp = orderedRsp(colorCtlBase, _.needColorRead, colorRspBuf)
++  val auxRsp = orderedRsp(auxCtlBase, _.needAuxRead, auxRspBuf)
+ 
+   val fetchedRaw = StreamJoin(StreamJoin(colorRsp, auxRsp), passMeta).translateWith {
+     val out = FetchResult()
+@@ -281,6 +269,9 @@ case class FramebufferAccess(c: Config) extends Component {
    io.zFuncFail := fetched.fire && depthKill
    val afterDepthTest = fetched.throwWhen(depthKill)
    val afterDepthTestPiped = afterDepthTest.m2sPipe()
@@ -2355,7 +2439,7 @@ index c6b2ec5..b5cb6e4 100644
  
    // ========================================================================
    // Step 4: Alpha blend
-@@ -395,6 +404,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -395,6 +386,7 @@ case class FramebufferAccess(c: Config) extends Component {
      }
      .m2sPipe()
  
@@ -2363,6 +2447,21 @@ index c6b2ec5..b5cb6e4 100644
    io.debug := 0
    io.debug(0) := io.input.valid
    io.debug(1) := io.input.ready
+@@ -417,10 +409,10 @@ case class FramebufferAccess(c: Config) extends Component {
+   io.debug(18) := auxCtlBase.ready
+   io.debug(19) := passMeta.valid
+   io.debug(20) := passMeta.ready
+-  io.debug(21) := colorFetched.valid
+-  io.debug(22) := colorBypass.valid
+-  io.debug(23) := auxFetched.valid
+-  io.debug(24) := auxBypass.valid
++  io.debug(21) := colorRsp.valid
++  io.debug(22) := colorRspBuf.valid
++  io.debug(23) := auxRsp.valid
++  io.debug(24) := auxRspBuf.valid
+   io.debug(25) := fetched.valid
+   io.debug(26) := fetched.ready
+   io.debug(31 downto 27) := inFlightCount.asBits
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
 index cee86c0..8feefc8 100644
 --- a/src/voodoo/raster/Rasterizer.scala
@@ -4502,6 +4601,126 @@ index 465ea78..c046f10 100644
 +  io.perf(1) := counter(backMiss.asUInt)
 +  io.perf(2) := counter((s1Valid && (waitFill || reread || backMiss)).asUInt)
 +  io.perf(3) := counter(io.sampleFetch.fire.asUInt)
++}
+diff --git a/test/FramebufferAccessOrderTest.scala b/test/FramebufferAccessOrderTest.scala
+new file mode 100644
+index 0000000..9d9e1dc
+--- /dev/null
++++ b/test/FramebufferAccessOrderTest.scala
+@@ -0,0 +1,114 @@
++//> using target.scope test
++
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import voodoo.pixel.FramebufferAccess
++
++import scala.collection.mutable
++
++/** Blended and opaque pixels interleaved, with colour reads answered after
++  * random delays: every blended pixel must get the destination colour read for
++  * it, and every opaque pixel its own colour. A no-read pixel's (zero) colour
++  * response once overtook an earlier pixel still waiting for its read, so
++  * every later blended pixel blended with its predecessor's destination
++  * (B113: GLQuake's screen scrambled once opaque passes stopped reading).
++  */
++class FramebufferAccessOrderTest extends AnyFunSuite {
++  private val config = Config.voodoo1()
++
++  private def expand565(d: Int): (Int, Int, Int) = {
++    val r5 = (d >> 11) & 0x1f; val g6 = (d >> 5) & 0x3f; val b5 = d & 0x1f
++    ((r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2))
++  }
++
++  test("blended pixels get their own destination colour when mixed with opaque pixels") {
++    SimConfig.withIVerilog.compile(FramebufferAccess(config)).doSim(seed = 5) { dut =>
++      dut.clockDomain.forkStimulus(10)
++      val rnd = new scala.util.Random(9)
++      for (bt <- dut.io.input.payload.flatten) bt match {
++        case b: Bool => b #= false
++        case b: BitVector => b #= 0
++        case _ =>
++      }
++      dut.io.input.valid #= false
++      dut.io.output.ready #= true
++      dut.io.fbReadColorReq.ready #= false
++      dut.io.fbReadColorRsp.valid #= false
++      dut.io.fbReadAuxReq.ready #= true
++      dut.io.fbReadAuxRsp.valid #= false
++      dut.io.input.payload.routing.pixelStride #= 640
++      dut.clockDomain.waitSampling(5)
++
++      // Colour reads: accept requests, answer each with a distinct value after
++      // a random delay, in order.
++      var colorReqs = 0
++      val pendingRsp = mutable.Queue[(Long, Int)]() // ready-at cycle, data
++      var cycle = 0L
++      def dataFor(k: Int): Int = (k * 2654435761L >>> 7).toInt & 0xffff
++      fork {
++        while (true) {
++          dut.io.fbReadColorReq.ready #= rnd.nextInt(3) != 0
++          dut.clockDomain.waitSampling()
++          cycle += 1
++          if (dut.io.fbReadColorReq.valid.toBoolean && dut.io.fbReadColorReq.ready.toBoolean) {
++            pendingRsp.enqueue((cycle + 2 + rnd.nextInt(20), dataFor(colorReqs)))
++            colorReqs += 1
++          }
++        }
++      }
++      fork {
++        while (true) {
++          if (pendingRsp.nonEmpty && pendingRsp.head._1 <= cycle) {
++            dut.io.fbReadColorRsp.valid #= true
++            dut.io.fbReadColorRsp.payload.data #= pendingRsp.head._2
++            dut.clockDomain.waitSamplingWhere(dut.io.fbReadColorRsp.ready.toBoolean)
++            pendingRsp.dequeue()
++            dut.io.fbReadColorRsp.valid #= false
++          } else dut.clockDomain.waitSampling()
++        }
++      }
++
++      // Expected outputs, in order.
++      val expected = mutable.Queue[(Int, Int, Int)]()
++      var checked = 0
++      fork {
++        while (true) {
++          dut.clockDomain.waitSampling()
++          if (dut.io.output.valid.toBoolean && dut.io.output.ready.toBoolean) {
++            val e = expected.dequeue()
++            val c = dut.io.output.payload.color
++            val got = (c.r.toInt, c.g.toInt, c.b.toInt)
++            assert(got == e, s"pixel $checked: got $got expected $e")
++            checked += 1
++          }
++        }
++      }
++
++      val n = 400
++      var blendIdx = 0
++      for (i <- 0 until n) {
++        val blend = rnd.nextBoolean()
++        val p = dut.io.input.payload
++        p.coords(0) #= i % 64
++        p.coords(1) #= i / 64
++        p.alphaMode.alphaBlendEnable #= blend
++        p.alphaMode.rgbSrcFact #= 0 // zero
++        p.alphaMode.rgbDstFact #= 4 // one: output = destination colour
++        p.fbzMode.rgbBufferMask #= true
++        val (r, g, b) = (rnd.nextInt(256), rnd.nextInt(256), rnd.nextInt(256))
++        p.color.r #= r; p.color.g #= g; p.color.b #= b
++        if (blend) { expected.enqueue(expand565(dataFor(blendIdx))); blendIdx += 1 }
++        else expected.enqueue((r, g, b))
++        dut.io.input.valid #= true
++        dut.clockDomain.waitSamplingWhere(dut.io.input.ready.toBoolean)
++        dut.io.input.valid #= false
++        if (rnd.nextInt(4) == 0) dut.clockDomain.waitSampling(rnd.nextInt(5))
++      }
++      dut.clockDomain.waitSamplingWhere(checked == n || cycle > 200000)
++      assert(checked == n, s"only $checked of $n pixels came out")
++    }
++  }
 +}
 diff --git a/test/FramebufferPlaneReaderTest.scala b/test/FramebufferPlaneReaderTest.scala
 index 0295f4c..f468360 100644
