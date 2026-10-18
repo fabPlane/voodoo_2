@@ -221,7 +221,8 @@ case class TangMega138kPro(c: Config) extends Component {
   val ddr = Axi4ToGowinDdrNative(fbDdrConfig, CoreGowin.texAxiConfig(c),
     scanConfig = if (c.separateScanoutMem) CoreGowin.scanAxiConfig(c) else null,
     auxConfig = CoreGowin.auxAxiConfig(c),
-    colConfig = CoreGowin.colAxiConfig(c))
+    colConfig = CoreGowin.colAxiConfig(c),
+    auxWConfig = CoreGowin.auxWAxiConfig(c))
   // W / R buffering per direction: 32 words, four 32-byte bursts.
   private val burstBeats = 32
   val fbCc = Axi4ClockCrossing(fbDdrConfig, coreCd, ClockDomain.current,
@@ -255,6 +256,10 @@ case class TangMega138kPro(c: Config) extends Component {
   val colCc = Axi4ClockCrossing(CoreGowin.colAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = fillRBeats, wFifoSize = 4, bFifoSize = 4)
   colCc.io.input << core.io.memCol
+  // Depth write drains: their own W FIFO / crossing (write-only port).
+  val auxWCc = Axi4ClockCrossing(CoreGowin.auxWAxiConfig(c), coreCd, ClockDomain.current,
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = 4, wFifoSize = burstBeats, bFifoSize = 4)
+  auxWCc.io.input << core.io.memAuxW
   // Register the channels between the CDC FIFOs and the adapter: the
   // request pop-side valid and the R push-side ready otherwise fed the
   // adapter's state / address decode combinationally.
@@ -269,6 +274,7 @@ case class TangMega138kPro(c: Config) extends Component {
   if (c.separateScanoutMem) ddr.io.scan << staged(scanCc.io.output)
   ddr.io.aux << staged(auxCc.io.output)
   ddr.io.col << staged(colCc.io.output)
+  ddr.io.auxW << staged(auxWCc.io.output)
   io.ddr <> ddr.io.ddr
   private val throttle = BufferCC(pcie.ddrThrottle, init = B(8, 32 bits))
   ddr.io.cmdGap := throttle(7 downto 0).asUInt

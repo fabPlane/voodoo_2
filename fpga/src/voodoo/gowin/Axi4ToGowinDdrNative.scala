@@ -74,15 +74,20 @@ case class Axi4ToGowinDdrNative(
     auxConfig: Axi4Config = null,
     // Optional fifth, read-only port (colour fills + LFB reads on the Pro
     // Dock), so the fb port only carries render writes.
-    colConfig: Axi4Config = null
+    colConfig: Axi4Config = null,
+    // Optional sixth, write-only port (depth write-buffer drains on the Pro
+    // Dock): its own W channel next to the fb port's (colour writes, LFB).
+    auxWConfig: Axi4Config = null
 ) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
   require(scanConfig == null || scanConfig.dataWidth == 32)
   require(auxConfig == null || auxConfig.dataWidth == 32)
   require(colConfig == null || colConfig.dataWidth == 32)
+  require(auxWConfig == null || auxWConfig.dataWidth == 32)
   val hasScan = scanConfig != null
   val hasAux = auxConfig != null
   val hasCol = colConfig != null
+  val hasAuxW = auxWConfig != null
   require(nativeDataWidth % 32 == 0 && nativeDataWidth >= 32)
   require(isPow2(readsInFlight) && readsInFlight >= 2)
   val nativeWords = nativeDataWidth / 32
@@ -100,7 +105,8 @@ case class Axi4ToGowinDdrNative(
     (if (texConfig.useId) texConfig.idWidth else 0) max
     (if (hasScan && scanConfig.useId) scanConfig.idWidth else 0) max
     (if (hasAux && auxConfig.useId) auxConfig.idWidth else 0) max
-    (if (hasCol && colConfig.useId) colConfig.idWidth else 0) max 1
+    (if (hasCol && colConfig.useId) colConfig.idWidth else 0) max
+    (if (hasAuxW && auxWConfig.useId) auxWConfig.idWidth else 0) max 1
 
   val io = new Bundle {
     val fb = slave(Axi4(fbConfig))
@@ -108,6 +114,7 @@ case class Axi4ToGowinDdrNative(
     val scan = if (hasScan) slave(Axi4(scanConfig)) else null
     val aux = if (hasAux) slave(Axi4(auxConfig)) else null
     val col = if (hasCol) slave(Axi4(colConfig)) else null
+    val auxW = if (hasAuxW) slave(Axi4(auxWConfig)) else null
     val ddr = master(GowinDdrNative(addrWidth = nativeAddrWidth, dataWidth = nativeDataWidth))
     // Run-time throttles (quasi-static): idle cycles after every native
     // command, and the most reads in flight (0 = readsInFlight).
@@ -176,7 +183,7 @@ case class Axi4ToGowinDdrNative(
   ).resize(log2Up(readsInFlight + 1) bits)
 
   // Default AXI outputs.
-  for (axi <- Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux) ++ Option(io.col)) {
+  for (axi <- Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux) ++ Option(io.col) ++ Option(io.auxW)) {
     axi.aw.ready := False
     axi.w.ready := False
     axi.b.valid := False
@@ -343,12 +350,19 @@ case class Axi4ToGowinDdrNative(
   }
 
   // ---------------------------------------------------------------- writes
+  case class WritePort(idx: Int, axi: Axi4, cfg: Axi4Config)
   val wr = new Area {
     object State extends SpinalEnum {
       val idle, collect, issue, resp = newElement()
     }
+    // Write ports: 0 fb (colour writes, LFB), 1 tex (texture downloads),
+    // 2 auxW (depth writes) when present.
+    val writePorts = Seq(WritePort(0, io.fb, fbConfig), WritePort(1, io.tex, texConfig)) ++
+      (if (hasAuxW) Seq(WritePort(2, io.auxW, auxWConfig)) else Nil)
     val state = RegInit(State.idle)
-    val useTex = Reg(Bool()) init (False)
+    val port = Reg(UInt(2 bits)) init (0)
+    // fb and auxW take turns; texture downloads go when neither waits.
+    val auxWNext = RegInit(False)
     val addr = Reg(UInt(32 bits)) init (0)
     val addrNext = nextLine(addr)
     val beatsLeft = Reg(UInt(9 bits)) init (0)
@@ -363,39 +377,55 @@ case class Axi4ToGowinDdrNative(
     val wantsCmd = state === State.issue && groupHasData && io.ddr.wrDataRdy
     val issue = Bool() // driven by the command arbiter below
 
+    def start(wp: WritePort): Unit = {
+      wp.axi.aw.ready := True
+      port := wp.idx
+      addr := wp.axi.aw.addr.resized
+      beatsLeft := (wp.axi.aw.len.resize(9) + 1).resized
+      if (wp.cfg.useId) id := wp.axi.aw.id.resized
+      groupIdx := wordIdx(wp.axi.aw.addr.resize(32))
+      strbs.foreach(_ := 0)
+      groupHasData := False
+      state := State.collect
+    }
+    val wValid = Bool()
+    val wData = Bits(32 bits)
+    val wStrb = Bits(4 bits)
+    val wLast = Bool()
+    val bReady = Bool()
+    wValid := False; wData := 0; wStrb := 0; wLast := False; bReady := False
+    for (wp <- writePorts) when(port === wp.idx) {
+      wValid := wp.axi.w.valid
+      wData := wp.axi.w.data
+      wStrb := wp.axi.w.strb
+      wLast := wp.axi.w.last
+      bReady := wp.axi.b.ready
+    }
+
     switch(state) {
       is(State.idle) {
         when(io.ddr.initCalibComplete) {
-          when(io.fb.aw.valid) {
-            io.fb.aw.ready := True
-            useTex := False
-            addr := io.fb.aw.addr.resized
-            beatsLeft := (io.fb.aw.len.resize(9) + 1).resized
-            if (fbConfig.useId) id := io.fb.aw.id.resized
-            groupIdx := wordIdx(io.fb.aw.addr.resize(32))
-            strbs.foreach(_ := 0)
-            groupHasData := False
-            state := State.collect
-          } elsewhen (io.tex.aw.valid) {
-            io.tex.aw.ready := True
-            useTex := True
-            addr := io.tex.aw.addr.resized
-            beatsLeft := (io.tex.aw.len.resize(9) + 1).resized
-            if (texConfig.useId) id := io.tex.aw.id.resized
-            groupIdx := wordIdx(io.tex.aw.addr.resize(32))
-            strbs.foreach(_ := 0)
-            groupHasData := False
-            state := State.collect
+          if (hasAuxW) {
+            when(io.auxW.aw.valid && (auxWNext || !io.fb.aw.valid)) {
+              start(writePorts(2))
+              auxWNext := False
+            } elsewhen (io.fb.aw.valid) {
+              start(writePorts(0))
+              auxWNext := True
+            } elsewhen (io.tex.aw.valid) {
+              start(writePorts(1))
+            }
+          } else {
+            when(io.fb.aw.valid) {
+              start(writePorts(0))
+            } elsewhen (io.tex.aw.valid) {
+              start(writePorts(1))
+            }
           }
         }
       }
       is(State.collect) {
-        val wValid = Mux(useTex, io.tex.w.valid, io.fb.w.valid)
-        val wData = Mux(useTex, io.tex.w.data, io.fb.w.data)
-        val wStrb = Mux(useTex, io.tex.w.strb, io.fb.w.strb)
-        val wLast = Mux(useTex, io.tex.w.last, io.fb.w.last)
-        when(useTex) { io.tex.w.ready := True }
-          .otherwise { io.fb.w.ready := True }
+        for (wp <- writePorts) when(port === wp.idx) { wp.axi.w.ready := True }
         when(wValid) {
           words(groupIdx) := wData
           // BmbAligner pads a short access to its aligned AXI burst with
@@ -425,9 +455,8 @@ case class Axi4ToGowinDdrNative(
         }
       }
       is(State.resp) {
-        when(useTex) { io.tex.b.valid := True }
-          .otherwise { io.fb.b.valid := True }
-        when(Mux(useTex, io.tex.b.ready, io.fb.b.ready)) {
+        for (wp <- writePorts) when(port === wp.idx) { wp.axi.b.valid := True }
+        when(bReady) {
           state := State.idle
         }
       }
@@ -435,6 +464,8 @@ case class Axi4ToGowinDdrNative(
   }
   if (fbConfig.useId) io.fb.b.id := wr.id.resized
   if (texConfig.useId) io.tex.b.id := wr.id.resized
+  if (hasAuxW && auxWConfig.useId) io.auxW.b.id := wr.id.resized
+  if (hasAuxW && auxWConfig.useId) io.auxW.r.id := 0 // write-only port
 
   // ------------------------------------------------------ command arbiter
   val preferWrite = RegInit(False)

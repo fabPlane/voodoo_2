@@ -507,4 +507,101 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       assert(errors.isEmpty, errors.mkString("; "))
     }
   }
+
+  private lazy val compiledAuxW = SimConfig.withVerilator.compile(
+    Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg, auxConfig = cfg, colConfig = cfg, auxWConfig = cfg))
+
+  test("fb and auxW write bursts in flight together both land; read back through aux") {
+    compiledAuxW.doSim("auxw", seed = 7) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      val rnd = new scala.util.Random(41)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      dut.io.policy #= 0
+      for (axi <- Seq(dut.io.fb, dut.io.tex, dut.io.scan, dut.io.aux, dut.io.col, dut.io.auxW)) {
+        axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
+        axi.ar.valid #= false; axi.r.ready #= false
+      }
+      val mem = mutable.HashMap[BigInt, BigInt]()
+      val pending = mutable.Queue[(BigInt, Long)]()
+      var cycle = 0L
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        dut.io.ddr.cmdReady #= rnd.nextInt(4) != 0
+        dut.io.ddr.wrDataRdy #= rnd.nextInt(4) != 0
+        if (dut.io.ddr.cmdEn.toBoolean) {
+          val a = dut.io.ddr.addr.toBigInt
+          if (dut.io.ddr.cmd.toInt == 0) {
+            val data = dut.io.ddr.wrData.toBigInt; val mask = dut.io.ddr.wrDataMask.toBigInt
+            var line = mem.getOrElse(a, BigInt(0))
+            for (b <- 0 until 32 if !mask.testBit(b)) {
+              val byte = (data >> (8 * b)) & 0xff
+              line = (line & ~(BigInt(0xff) << (8 * b))) | (byte << (8 * b))
+            }
+            mem(a) = line
+          } else {
+            val due = cycle + 8 + rnd.nextInt(16)
+            pending.enqueue((a, pending.lastOption.map(_._2 max due).getOrElse(due)))
+          }
+        }
+        dut.io.ddr.rdDataValid #= false
+        if (pending.nonEmpty && pending.head._2 <= cycle) {
+          val (a, _) = pending.dequeue()
+          dut.io.ddr.rdData #= mem.getOrElse(a, BigInt(0))
+          dut.io.ddr.rdDataValid #= true
+          dut.io.ddr.rdDataEnd #= true
+        }
+      }
+      def word(port: Int, addr: Long): Long = ((addr * 2654435761L) ^ (port * 0x7f4a7c15L)) & 0xffffffffL
+      val bursts = mutable.ArrayBuffer[(Int, Long, Int)]() // port, addr, beats
+      def writer(port: Int, axi: spinal.lib.bus.amba4.axi.Axi4, base: Long) = fork {
+        for (k <- 0 until 25) {
+          val beats = Seq(1, 3, 8, 13, 16, 32)(rnd.nextInt(6))
+          val a = base + 128L * k + 4 * rnd.nextInt(8)
+          axi.aw.valid #= true; axi.aw.addr #= a; axi.aw.len #= beats - 1
+          axi.aw.size #= 2; axi.aw.burst #= 1; axi.aw.id #= port
+          dut.clockDomain.waitSamplingWhere(axi.aw.ready.toBoolean)
+          axi.aw.valid #= false
+          for (i <- 0 until beats) {
+            if (rnd.nextInt(3) == 0) { axi.w.valid #= false; dut.clockDomain.waitSampling(1 + rnd.nextInt(3)) }
+            axi.w.valid #= true
+            axi.w.data #= word(port, a + 4 * i); axi.w.strb #= 0xf; axi.w.last #= i == beats - 1
+            dut.clockDomain.waitSamplingWhere(axi.w.ready.toBoolean)
+          }
+          axi.w.valid #= false
+          dut.clockDomain.waitSamplingWhere(axi.b.valid.toBoolean)
+          bursts += ((port, a, beats))
+        }
+      }
+      val t0 = writer(0, dut.io.fb, 0x10000L)
+      val t2 = writer(2, dut.io.auxW, 0x20000L)
+      t0.join(); t2.join()
+      val errors = mutable.ArrayBuffer[String]()
+      for ((port, a, beats) <- bursts) {
+        dut.io.aux.ar.valid #= true; dut.io.aux.ar.addr #= a; dut.io.aux.ar.len #= beats - 1
+        dut.io.aux.ar.size #= 2; dut.io.aux.ar.burst #= 1; dut.io.aux.ar.id #= 3
+        dut.clockDomain.waitSamplingWhere(dut.io.aux.ar.ready.toBoolean)
+        dut.io.aux.ar.valid #= false
+        dut.io.aux.r.ready #= true
+        var n = 0
+        while (n < beats) {
+          dut.clockDomain.waitSampling()
+          if (dut.io.aux.r.valid.toBoolean) {
+            val got = dut.io.aux.r.data.toLong; val want = word(port, a + 4 * n)
+            if (got != want && errors.size < 5) errors += f"port $port addr ${a + 4 * n}%x: got $got%08x want $want%08x"
+            n += 1
+          }
+        }
+        dut.io.aux.r.ready #= false
+      }
+      assert(bursts.size == 50)
+      assert(errors.isEmpty, errors.mkString("; "))
+    }
+  }
 }

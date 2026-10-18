@@ -53,6 +53,11 @@ object CoreGowin {
   // memFb then only carries render writes.
   def colAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
     BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
+  // Depth write-buffer drains (core.io.fbAuxWriteMem) through their own
+  // write port: colour and depth writes shared memFb's one 32-bit W channel
+  // at the core clock, and the depth writes waited ~20% of cycles (B115).
+  def auxWAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
+    BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
 }
 
 case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) extends Component {
@@ -64,6 +69,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     val memScan = if (c.separateScanoutMem) master(Axi4(CoreGowin.scanAxiConfig(c, axiBurstLog2))) else null
     val memAux = master(Axi4(CoreGowin.auxAxiConfig(c, axiBurstLog2)))
     val memCol = master(Axi4(CoreGowin.colAxiConfig(c, axiBurstLog2)))
+    val memAuxW = master(Axi4(CoreGowin.auxWAxiConfig(c, axiBurstLog2)))
     val hdmi = master(HdmiScanoutPort(c))
     val hostWedged = out Bool ()
     // Host has a raw-DDR window selected: drain the fb write buffer and drop
@@ -102,7 +108,7 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     alignment = BmbParameter.BurstAlignement.BYTE
   )
   val renderArbiter = BmbArbiter(
-    inputsParameter = Seq.fill(3)(renderParams),
+    inputsParameter = Seq.fill(2)(renderParams),
     outputParameter = renderOutParams,
     lowerFirstPriority = false
   )
@@ -140,7 +146,9 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   unusedFbIn.rsp.ready := True
   renderArbiter.io.inputs(0) <> cut(core.io.fbMemWrite)
   renderArbiter.io.inputs(1) <> cut(core.io.fbColorWriteMem)
-  renderArbiter.io.inputs(2) <> cut(core.io.fbAuxWriteMem)
+  val auxWAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax)
+  auxWAxi.io.input <> cut(core.io.fbAuxWriteMem)
+  io.memAuxW << auxWAxi.io.output
   fbArbiter.io.inputs(1) <> renderArbiter.io.output
   fbAxi.io.input <> cut(fbArbiter.io.output)
   texAxi.io.input <> cut(core.io.texMem)
