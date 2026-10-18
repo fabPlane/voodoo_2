@@ -66,10 +66,11 @@ object GowinGenSupport {
       fbWriteBufferLineWords = 256,
       useFbReadCache = true,
       useTexFillCache = false,
-      // 8 KiB direct-mapped texture cache in BSRAM (TmuSmallTextureCache):
-      // the full fill cache does not fit, but without any cache every texel
-      // is a DDR3 round trip.
-      texSmallCacheLines = 256,
+      // Direct-mapped texture cache in BSRAM (TmuSmallTextureCache): the
+      // full fill cache does not fit, but without any cache every texel is a
+      // DDR3 round trip. 512 lines (16 KiB per tap lane): with 256, fills
+      // still held the texture path ~14% of cycles under GLQuake (B118).
+      texSmallCacheLines = 512,
       // More HDMI scanout FIFO margin: refilling only from 1024 left too
       // little once rendering competed for memory (frames blanked
       // mid-frame, B52). 3072-3840 hung the scanout reader for good (B53).
