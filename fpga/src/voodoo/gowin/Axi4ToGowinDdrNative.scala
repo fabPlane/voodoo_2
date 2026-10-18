@@ -62,7 +62,9 @@ case class Axi4ToGowinDdrNative(
     texConfig: Axi4Config,
     nativeDataWidth: Int = GowinAddressMap.ddrNativeDataWidth,
     nativeAddrWidth: Int = GowinAddressMap.ddrNativeAddrWidth,
-    readsInFlight: Int = 8,
+    // 16: with ~65 DDR cycles per read, 8 in flight capped reads near
+    // 390 MB/s, which GLQuake's fill and texture bursts reached (B110).
+    readsInFlight: Int = 16,
     // Optional third, read-only port (the HDMI scanout on the Pro Dock):
     // its data then drains through its own AXI R channel / clock crossing
     // instead of queueing in the framebuffer port's in front of render fills.
@@ -169,7 +171,8 @@ case class Axi4ToGowinDdrNative(
   val gapZero = RegNext(gapNext === 0, init = True)
   val cmdGapOk = gapZero || urgentSync
   val readLimit = RegNext(
-    Mux(io.maxReads === 0 || io.maxReads > readsInFlight, U(readsInFlight), io.maxReads.resized)
+    Mux(io.maxReads === 0 || io.maxReads.resize(log2Up(readsInFlight + 1) max 5 bits) > readsInFlight,
+      U(readsInFlight), io.maxReads.resized)
   ).resize(log2Up(readsInFlight + 1) bits)
 
   // Default AXI outputs.
