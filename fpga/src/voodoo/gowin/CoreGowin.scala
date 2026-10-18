@@ -111,7 +111,10 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     outputParameter = Core.fbMemSharedBmbParams(c),
     lowerFirstPriority = true
   )
-  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.axiPendingMax)
+  // Render writes (colour + depth write buffers, LFB): 16 pieces in flight
+  // like the fill ports; with 8 the write ports were blocked 11% / 19% of
+  // cycles once reads dropped (B114).
+  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax)
   val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false, pendingMax = CoreGowin.fillPendingMax)
   val texReloc = Axi4AddressRelocate(
     CoreGowin.texAxiConfig(c, axiBurstLog2),
