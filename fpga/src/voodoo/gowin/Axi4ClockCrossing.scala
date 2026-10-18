@@ -41,19 +41,7 @@ case class Axi4ClockCrossing(
   ar.io.push << io.input.ar
   io.output.ar << ar.io.pop
   aw.io.push << io.input.aw
-  // A write address goes to the memory side only once its whole burst is in
-  // the W FIFO: the DDR adapter's one write engine collects a burst's beats
-  // before issuing it, and with W trickling in at the core clock that took
-  // ~20 DDR cycles per 8-beat line and limited every write port (B116). The
-  // pop-side occupancy lags the push side, so this can only wait longer.
-  // Bursts must fit the W FIFO (32-byte pieces: 8 beats); read-only ports
-  // (W FIFO of 4) pass AW straight through.
-  if (wFifoSize >= 8) new ClockingArea(outputCd) {
-    val wReady = w.io.popOccupancy >= (aw.io.pop.len.resize(w.io.popOccupancy.getWidth) + 1)
-    io.output.aw.valid := aw.io.pop.valid && wReady
-    io.output.aw.payload := aw.io.pop.payload
-    aw.io.pop.ready := io.output.aw.ready && wReady
-  } else io.output.aw << aw.io.pop
+  io.output.aw << aw.io.pop
   w.io.push << io.input.w
   io.output.w << w.io.pop
 
