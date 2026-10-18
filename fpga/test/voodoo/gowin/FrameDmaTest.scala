@@ -36,6 +36,7 @@ case class FrameDmaHarness(fifoDepth: Int) extends Component {
   dma.io.postedCreditOk := io.postedCreditOk
   dma.io.regWrite := io.regWrite
   dma.io.regAddr := io.regAddr
+  dma.io.regWaddr := io.regAddr
   dma.io.regWdata := io.regWdata
   io.regRdata := dma.io.regRdata
   io.tx <> dma.io.tx

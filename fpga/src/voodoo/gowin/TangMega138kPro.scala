@@ -119,20 +119,28 @@ case class TangMega138kPro(c: Config) extends Component {
     // credit bit is fine for the DMA's coarse "posted credits available" gate.
     dma.io.postedCreditOk := RegNext(io.tlTxCreditsP(31)) init (False)
     dma.io.busdev := RegNext(io.tlCfgBusdev)
-    dma.io.regWrite := bar.io.localWrite
+    // Local register writes one cycle after the BAR target decodes them:
+    // the RX beat register fed the decode and every DMA / throttle register
+    // enable combinationally (clk100 misses, B109). Posted writes; nothing
+    // reads them back within a cycle.
+    val localWrite = RegNext(bar.io.localWrite) init (False)
+    val localAddr = RegNext(bar.io.localAddr)
+    val localWdata = RegNext(bar.io.localWdata)
+    dma.io.regWrite := localWrite
+    dma.io.regWaddr := localAddr
+    dma.io.regWdata := localWdata
     dma.io.regAddr := bar.io.localAddr
-    dma.io.regWdata := bar.io.localWdata
     val axiDebug = Bits(32 bits)
     // Window 31 offset 0x64: DDR3 throttles for stability testing, [7:0]
     // idle cycles after every native command, [11:8] max reads in flight
     // (0 = all 8). Set before a run; the DDR side samples it through a
     // synchronizer.
     val ddrThrottle = Reg(Bits(32 bits)) init (B(8, 32 bits))
-    when(bar.io.localWrite && bar.io.localAddr === 0x64) { ddrThrottle := bar.io.localWdata }
+    when(localWrite && localAddr === 0x64) { ddrThrottle := localWdata }
     // 0x74 (write anything): snapshot the DDR adapter's counters into
     // 0x78-0x94 (Axi4ToGowinDdrNative.io.stats order); read them ~1 us later.
     val ddrSnapToggle = RegInit(False)
-    when(bar.io.localWrite && bar.io.localAddr === 0x74) { ddrSnapToggle := !ddrSnapToggle }
+    when(localWrite && localAddr === 0x74) { ddrSnapToggle := !ddrSnapToggle }
     val ddrStatsIn = Vec(Bits(32 bits), 8)
     val ddrStats = ddrStatsIn.map(BufferCC(_, init = B(0, 32 bits)))
     // On-chip supply / temperature monitor. Also sent with every frame-DMA

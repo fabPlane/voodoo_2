@@ -148,8 +148,9 @@ case class FrameDmaWriter() extends Component {
     val postedCreditOk = in Bool ()
     val busdev = in UInt (13 bits)
     val regWrite = in Bool ()
-    val regAddr = in UInt (8 bits)
+    val regWaddr = in UInt (8 bits) // with regWrite / regWdata
     val regWdata = in Bits (32 bits)
+    val regAddr = in UInt (8 bits) // read address (regRdata, same cycle)
     val regRdata = out Bits (32 bits)
     val overflowPulse = in Bool ()
     val enable = out Bool ()
@@ -174,7 +175,7 @@ case class FrameDmaWriter() extends Component {
   when(io.overflowPulse) { overflows := overflows + 1 }
 
   when(io.regWrite) {
-    switch(io.regAddr) {
+    switch(io.regWaddr) {
       is(0x04) { ctrl := io.regWdata }
       is(0x08) { base := io.regWdata.asUInt }
       is(0x0c) { slots := io.regWdata(7 downto 0).asUInt }

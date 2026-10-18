@@ -258,13 +258,19 @@ case class Axi4ToGowinDdrNative(
     when(urgentSync && portValid(urgentPort)) { grant := urgentPort }
       .elsewhen(policySync(1) && portValid(0) && rrGrant === 1) { grant := 0 }
     val anyValid = portValid.orR
+    // The grant is registered and taken the cycle after: the round-robin
+    // chain fed the 32-bit address / length / ID muxes into the read
+    // registers in one cycle (ddr_clk_out misses, B109). An AXI request
+    // stays valid until accepted, so the registered winner is still there.
+    val grantReg = RegNext(grant) init (0)
+    val grantValid = RegNext(!active && io.ddr.initCalibComplete && anyValid) init (False)
     when(!active) {
-      when(io.ddr.initCalibComplete && anyValid) {
-        lastGrant := grant
+      when(grantValid) {
+        lastGrant := grantReg
         addrSettled := False
         active := True
-        port := grant
-        switch(grant) {
+        port := grantReg
+        switch(grantReg) {
           for (rp <- readPorts) is(rp.idx) {
             rp.ar.ready := True
             addr := rp.ar.addr.resized
