@@ -149,7 +149,19 @@ module board_top #(
     wire ddr_odt_ip;
     assign O_ddr_odt = DDR_ODT_ENABLE ? ddr_odt_ip : 1'b0;
 
+    // USE_OWN_DDR3 swaps the Gowin DDR3 IP for fpga/hw/gowin/own_ddr3 (same
+    // native UI, no BSRAM). The build dir defines it in a wrapper file and
+    // needs the matching CST / SDC (see own_ddr3/INTEGRATION.md).
+`ifdef USE_OWN_DDR3
+    wire [31:0] own_ddr3_dbg;
+    own_ddr3 u_ddr3 (
+        .dbg_addr            (8'h00),
+        .dbg_wdata           (32'h0),
+        .dbg_we              (1'b0),
+        .dbg_rdata           (own_ddr3_dbg),
+`else
     DDR3_Memory_Interface_Top u_ddr3 (
+`endif
         .clk                 (clk50),
         .pll_stop            (ddr_pll_stop),
         .memory_clk          (clk400),
