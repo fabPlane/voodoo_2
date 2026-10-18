@@ -61,7 +61,8 @@ def cal_report(j: dj.Jtag) -> None:
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("cal", "rd", "wr", "recal", "reinit"):
         op = sys.argv[1]
-        j = dj.Jtag(6000, "openocd", True)
+        j = dj.Jtag(6000, dj.shutil.which("openocd") or
+                    "/home/hyper/opt/oss-cad-suite/bin/openocd", True)
         try:
             j.sync()
             if op == "cal":

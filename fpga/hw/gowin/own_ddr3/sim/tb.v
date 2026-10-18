@@ -38,7 +38,7 @@ module tb;
     wire [3:0] dm;
     wire [31:0] dq; wire [3:0] dqs, dqs_n;
 
-    own_ddr3 #(.SIM(1)) dut (
+    own_ddr3 #(.SIM(1), .HOLD_RD(0)) dut (
         .clk(clk50), .pll_stop(pll_stop), .memory_clk(memory_clk),
         .pll_lock(1'b1), .rst_n(rst_n), .clk_out(clk), .ddr_rst(ddr_rst),
         .init_calib_complete(calib), .cmd_ready(cmd_ready), .cmd(cmd),

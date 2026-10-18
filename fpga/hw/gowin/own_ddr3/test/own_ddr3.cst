@@ -163,4 +163,4 @@ IO_PORT "IO_ddr_dqs[3]" IO_TYPE=SSTL15D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
 INS_LOC "u_ddr3/u_dll" DDRDLLM_BL;
 INS_LOC "u_ddr3/u_clkdiv" LEFTSIDE[4];
 INS_LOC "u_pll_sys/u_pll/PLL_inst" PLL_L[0];
-SET_PARAM "u_ddr3/u_dll" CLKIN_SEL=CLKIN5;
+// SET_PARAM "u_ddr3/u_dll" CLKIN_SEL=CLKIN5;  (DLL STEP read 0 with it)

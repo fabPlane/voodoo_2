@@ -9,7 +9,7 @@ set_device -name GW5AST-138B GW5AST-LV138FPG676AES
 # that defines OWN_DDR3 and includes the top.
 file mkdir gen
 set f [open gen/top_own.v w]
-puts $f "`define OWN_DDR3\n`include \"[file normalize own_ddr3_jtag_top.v]\""
+puts $f "`define OWN_DDR3\n`define OWN_DDR3_DLL_PROBE\n`include \"[file normalize own_ddr3_jtag_top.v]\""
 close $f
 if {$vendor} {
     add_file -type verilog [file normalize own_ddr3_jtag_top.v]

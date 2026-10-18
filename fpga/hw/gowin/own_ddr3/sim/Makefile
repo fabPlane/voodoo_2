@@ -15,7 +15,7 @@ build/dqs_gw2a.v: $(SIMLIB)/gw2a/prim_sim.v
 	awk '/^module DQS\(/{p=1} p{print} p&&/^endmodule/{exit}' $< > build/dqs_raw.v
 	python3 patch_dqs.py build/dqs_raw.v $@
 
-PRIMS := GSR OSER8 OSER8_MEM IDES8_MEM IOBUF ELVDS_IOBUF ELVDS_OBUF CLKDIV
+PRIMS := GSR OSER8 OSER8_MEM IDES8_MEM IOBUF ELVDS_IOBUF ELVDS_OBUF CLKDIV IODELAY
 build/prims_gw5a.v: $(SIMLIB)/gw5a/prim_sim.v
 	mkdir -p build
 	awk -v want="$(PRIMS)" 'BEGIN{n=split(want,w," "); for(i=1;i<=n;i++) k[w[i]]=1} \

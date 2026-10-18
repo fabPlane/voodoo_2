@@ -36,6 +36,10 @@ module own_ddr3_ctrl #(
     parameter [7:0]  WSTEP_INIT = 8'd0,
     parameter [3:0]  GATE_BASE_INIT = 4'd1,   // frames after RD for gate pos 0
     parameter [7:0]  GATE_LEN_INIT = 8'h0F,   // READ window, 1 bit per tCK
+    // Pulse DQS HOLD with every RD (calibration too). The board's DQS FIFO
+    // only reads cleanly that way; the GW2A DQS sim model disagrees, so the
+    // testbench turns it off.
+    parameter        HOLD_RD_INIT = 1,
     parameter        WR_LAT = 2               // frames from WR to its DQ frame
 ) (
     input  wire                        pclk,
@@ -73,11 +77,18 @@ module own_ddr3_ctrl #(
     output reg  [7:0]                  p_wr_dqs,
     output reg  [3:0]                  p_wr_dqs_oen,
     output wire [8*LANES-1:0]          p_wstep,
+    output reg  [8*LANES-1:0]          p_wdq_dly,
     output reg  [4*LANES-1:0]          p_rd_gate,
     output reg  [3*LANES-1:0]          p_rclksel,
     output reg  [LANES-1:0]            p_rd_calib,
     output reg                         p_dqs_hold,
     input  wire [8*DQ_WIDTH-1:0]       rd_frame,
+    // DQS DLLSTEP override (sets the DQ / DQS phase), DDRDLL readback
+    output reg                         p_ck_inv,
+    output reg                         p_dll_ovr,
+    output reg  [7:0]                  p_dll_val,
+    input  wire [7:0]                  dll_step,
+    input  wire                        dll_lock,
 
     // Debug registers (pclk domain)
     input  wire [7:0]                  dbg_addr,
@@ -107,6 +118,14 @@ module own_ddr3_ctrl #(
     reg        opt_hold_rd;     // pulse DQS HOLD on every read
     reg        opt_manual;      // skip the automatic calibration
     reg        req_recal, req_reinit;
+    reg        opt_wr_shift;    // send DQ / DM one beat later than DQS
+    reg        opt_dq_hold;     // debug: drive DQ whenever no read is near
+    // previous frame of the undelayed write signals (for wr_dly / shift)
+    reg [8*DQ_WIDTH-1:0] a_dq, prev_dq;
+    reg [8*LANES-1:0]    a_dm, prev_dm;
+    reg [7:0]            a_dqs, prev_dqs;
+    reg [3:0]            a_drv, a_dq_drv;
+    reg [3:0]            prev_dq_drv, prev_dqs_drv;
 
     genvar gl;
     generate
@@ -210,21 +229,28 @@ module own_ddr3_ctrl #(
     reg [RSR-1:0] rsr;          // reads (all)
     reg [RSR-1:0] rsr_user;     // reads returning to the user
     reg [RSR-1:0] rsr_a;        // calibration reads of burst A
-    reg [3:0]     wsr;          // writes
-    reg [3:0]     wsr_cal;      // calibration writes
-    reg [3:0]     wsr_b;
+    reg [4:0]     wsr;          // writes
+    reg [4:0]     wsr_cal;      // calibration writes
+    reg [4:0]     wsr_b;
 
     wire rd_now = s1_valid && !s1_wr;
     wire wr_now = s1_valid && s1_wr;
     wire [RSR-1:0] rsr_n      = {rsr[RSR-2:0], rd_now};
     wire [RSR-1:0] rsr_user_n = {rsr_user[RSR-2:0], rd_now && !s1_cal};
-    wire [RSR-1:0] rsr_a_n    = {rsr_a[RSR-2:0], rd_now && s1_cal && !s1_b};
-    wire [3:0]     wsr_n      = {wsr[2:0], wr_now};
-    wire [3:0]     wsr_cal_n  = {wsr_cal[2:0], wr_now && s1_cal};
-    wire [3:0]     wsr_b_n    = {wsr_b[2:0], wr_now && s1_b};
+    wire [RSR-1:0] rsr_a_n    = {rsr_a[RSR-2:0], rd_now && s1_cal};
+    wire [4:0]     wsr_n      = {wsr[3:0], wr_now};
+    wire [4:0]     wsr_cal_n  = {wsr_cal[3:0], wr_now && s1_cal};
+    wire [4:0]     wsr_b_n    = {wsr_b[3:0], wr_now && s1_b};
 
-    wire wdata_now = wsr_n[WR_LAT];
-    wire wdata_pop = wdata_now && !wsr_cal_n[WR_LAT];
+    // Write burst timing, run-time: wr_lat frames after the WR frame, then
+    // wr_dly more tCK, and DQ / DM a further beat with opt_wr_shift.
+    reg [1:0] wr_lat;
+    reg [1:0] wr_dly;
+    // The undelayed burst signals are built one frame ahead (stage A, from
+    // wsr_n[wr_lat - 1]) and delayed / aligned in stage B, for timing.
+    wire [1:0] wl_a = wr_lat - 1'b1;
+    wire wdata_now = wsr_n[wl_a];
+    wire wdata_pop = wdata_now && !wsr_cal_n[wl_a];
     assign cq_count_n = cq_count + cq_push - (can_issue && !do_ref && !rq_cal);
     assign wq_count_n = wq_count + wq_push - wdata_pop;
 
@@ -283,6 +309,7 @@ module own_ddr3_ctrl #(
     reg [3:0]  ck;               // rotation trial (0..8)
     reg [5:0]  ctimer;
     reg        hold_sent;
+    reg        tsel;            // calibration trial reads burst B
     reg        dqs_flush;
     reg [4:0]  afcnt;            // frames since read A
     reg        a_seen;
@@ -350,6 +377,13 @@ module own_ddr3_ctrl #(
     integer i;
     reg [LW-1:0] lane_got, lane_exp;
     reg [3:0] tmin, tmax;
+    reg [8*DQ_WIDTH-1:0] wbeats;
+    reg [8*LANES-1:0]    wmask;
+    reg [7:0]            rdqs;
+    reg [3:0]            rdq_drv, rdqs_drv;
+    reg [3:0]            kd, kq;
+    integer              b, bq, bd;
+    reg                  dd;
     reg       p2more;
     reg [1:0] qsel, qbest, qscore;
     integer   qi;
@@ -383,9 +417,23 @@ module own_ddr3_ctrl #(
                 lrot[i] <= 3'd0;
             end
             gate_base <= GATE_BASE_INIT;
+            p_wdq_dly <= {8*LANES{1'b0}};
             gate_len <= GATE_LEN_INIT;
-            opt_hold_rd <= 1'b0;
+            opt_hold_rd <= HOLD_RD_INIT;
             opt_manual <= 1'b0;
+            opt_wr_shift <= 1'b0;
+            opt_dq_hold <= 1'b0;
+            p_ck_inv <= 1'b0;
+            p_dll_ovr <= 1'b0;
+            p_dll_val <= 8'd50;
+            prev_dq <= 0;
+            a_dq <= 0; a_dm <= {8*LANES{1'b1}}; a_dqs <= 8'h00; a_drv <= 4'h0; a_dq_drv <= 4'h0;
+            prev_dm <= {8*LANES{1'b1}};
+            prev_dqs <= 8'h00;
+            prev_dq_drv <= 4'h0;
+            prev_dqs_drv <= 4'h0;
+            wr_lat <= WR_LAT;
+            wr_dly <= 2'd0;
             req_recal <= 1'b0;
             req_reinit <= 1'b0;
             cq_head <= 1'b0; cq_tail <= 1'b0; cq_count <= 2'd0;
@@ -411,6 +459,7 @@ module own_ddr3_ctrl #(
             cal_runs <= 4'd0;
             cstate <= C_IDLE;
             hold_sent <= 1'b0;
+            tsel <= 1'b0;
             dqs_flush <= 1'b0;
             lat_min <= 4'd0; lat_max <= 4'd0;
             lane_late <= {LANES{1'b1}};
@@ -431,6 +480,15 @@ module own_ddr3_ctrl #(
                         if (dbg_wdata[4]) p_dqs_hold <= 1'b1;
                     end
                     8'h05: begin gate_base <= dbg_wdata[3:0]; gate_len <= dbg_wdata[15:8]; end
+                    8'h06: begin
+                        p_dll_val <= dbg_wdata[7:0];
+                        p_dll_ovr <= dbg_wdata[8];
+                        opt_wr_shift <= dbg_wdata[16];
+                        p_ck_inv <= dbg_wdata[20];
+                        opt_dq_hold <= dbg_wdata[21];
+                        if (dbg_wdata[24 +: 2] >= 2'd2) wr_lat <= dbg_wdata[24 +: 2];
+                        wr_dly <= dbg_wdata[28 +: 2];
+                    end
                     // manual per-lane setup: [6:0] gate, [11:8] latency,
                     // [16] pulse CALIB once, [20] latest lane
                     8'h08, 8'h09, 8'h0A, 8'h0B: begin
@@ -442,6 +500,7 @@ module own_ddr3_ctrl #(
                         end
                         lane_late[dbg_addr[1:0]] <= dbg_wdata[20];
                     end
+                    8'h0D: p_wdq_dly <= dbg_wdata[8*LANES-1:0];
                     8'h0C: begin
                         lat_max <= dbg_wdata[3:0];
                         cal_done <= dbg_wdata[8];
@@ -569,7 +628,6 @@ module own_ddr3_ctrl #(
                     cq_head <= ~cq_head;
                 end
                 if (rq_wr && !rq_cal) wq_claimed <= wq_claimed + 1'b1;
-                if (opt_hold_rd && !rq_wr) p_dqs_hold <= 1'b1;
             end
             if (s1_valid) begin
                 // slot 2 = RD, slot 3 = WR, both with auto-precharge
@@ -605,25 +663,60 @@ module own_ddr3_ctrl #(
             // A gate left open by a late position only closes on a DQS
             // falling edge; drive one ourselves (seen through the IOBUF).
             dqs_flush <= 1'b0;
+            // Stage A: undelayed burst signals, one frame ahead
+            wbeats = wdata_now ? (wsr_cal_n[wl_a] ? (wsr_b_n[wl_a] ? ~tp_a : tp_a)
+                                                  : wq_data[wq_head])
+                               : {8*DQ_WIDTH{1'b0}};
+            for (i = 0; i < 8*LANES; i = i + 1)
+                wmask[i] = !wdata_now ? 1'b1 :
+                           wsr_cal_n[wl_a] ? 1'b0 : wq_mask[wq_head][i];
+            a_dq <= wbeats;
+            a_dm <= wmask;
+            a_dqs <= wdata_now ? 8'b1010_1010 : 8'h00;
+            // DQS preamble (slot 3 before), postamble (slot 0 after). DQ
+            // is driven from two slots before the burst to one after: on
+            // the board, with only one slot before, beat 0 went out
+            // undriven (the OSER8_MEM tristate control lags its data).
+            a_drv <= wdata_now ? 4'b1111 :
+                     {wsr_n[wl_a - 1'b1], 2'b00, wsr_n[wl_a + 1'b1]};
+            a_dq_drv <= wdata_now ? 4'b1111 :
+                        {{2{wsr_n[wl_a - 1'b1]}}, 1'b0, wsr_n[wl_a + 1'b1]};
             if (dqs_flush) begin
                 p_wr_dq_oen <= 4'b1111;
                 p_wr_dm <= {8*LANES{1'b1}};
                 p_wr_dqs <= 8'b0000_1111;
                 p_wr_dqs_oen <= 4'b0000;
-            end else if (wdata_now) begin
-                p_wr_dq <= wsr_cal_n[WR_LAT] ? (wsr_b_n[WR_LAT] ? ~tp_a : tp_a)
-                                             : wq_data[wq_head];
-                for (i = 0; i < 8*LANES; i = i + 1)
-                    p_wr_dm[i] <= wsr_cal_n[WR_LAT] ? 1'b0 : wq_mask[wq_head][i];
-                p_wr_dq_oen <= 4'b0000;
-                p_wr_dqs <= 8'b1010_1010;
-                p_wr_dqs_oen <= 4'b0000;
             end else begin
-                p_wr_dq_oen <= 4'b1111;
-                p_wr_dm <= {8*LANES{1'b1}};
-                p_wr_dqs <= 8'h00;
-                // preamble (slot 3 before the burst), postamble (slot 0 after)
-                p_wr_dqs_oen <= {~wsr_n[WR_LAT-1], 2'b11, ~wsr_n[WR_LAT+1]};
+                // Stage B
+                prev_dq <= a_dq;
+                prev_dm <= a_dm;
+                prev_dqs <= a_dqs;
+                prev_dq_drv <= a_dq_drv;
+                prev_dqs_drv <= a_drv;
+                // Delay by kq beats (DQ / DM) and kd beats (DQS), taking the
+                // early beats from the previous frame
+                kd = {wr_dly, 1'b0};
+                kq = kd + opt_wr_shift;
+                for (b = 0; b < 8; b = b + 1) begin
+                    bq = b - kq;
+                    bd = b - kd;
+                    p_wr_dq[b*DQ_WIDTH +: DQ_WIDTH] <= bq >= 0 ? a_dq[bq*DQ_WIDTH +: DQ_WIDTH]
+                                                              : prev_dq[(bq+8)*DQ_WIDTH +: DQ_WIDTH];
+                    p_wr_dm[b*LANES +: LANES] <= bq >= 0 ? a_dm[bq*LANES +: LANES]
+                                                        : prev_dm[(bq+8)*LANES +: LANES];
+                    p_wr_dqs[b] <= bd >= 0 ? a_dqs[bd] : prev_dqs[bd+8];
+                end
+                for (b = 0; b < 4; b = b + 1) begin
+                    bd = b - wr_dly;
+                    bq = b - wr_dly - 1;
+                    dd = bd >= 0 ? a_drv[bd] : prev_dqs_drv[bd+4];
+                    p_wr_dqs_oen[b] <= ~dd;
+                    dd = bd >= 0 ? a_dq_drv[bd] : prev_dq_drv[bd+4];
+                    if (opt_wr_shift)
+                        dd = dd | (bq >= 0 ? a_dq_drv[bq] : prev_dq_drv[bq+4]);
+                    if (opt_dq_hold && rsr_n == 0 && rsr == 0) dd = 1'b1;
+                    p_wr_dq_oen[b] <= ~dd;
+                end
             end
 
             p_rd_gate <= gate_n;
@@ -640,13 +733,11 @@ module own_ddr3_ctrl #(
             // Compare each frame after read A with the expected lanes
             for (i = 0; i < LANES; i = i + 1) begin
                 lane_got = lane_bits(rd_frame, i);
-                lane_exp = lane_bits(tp_a, i);
-                // B (the complement, read two frames earlier) must show in
-                // one of the two frames before A, so stale FIFO contents can't pass
+                lane_exp = lane_bits(tsel ? ~tp_a : tp_a, i);
                 lprevb[i] <= lane_got == ~lane_exp;
                 lprevb2[i] <= lprevb[i];
                 if (a_seen && !lfound[i] && afcnt != 0 && afcnt < WIN &&
-                        lane_got == lane_exp && (lprevb[i] || lprevb2[i])) begin
+                        lane_got == lane_exp) begin
                     lfound[i] <= 1'b1;
                     lfl[i] <= afcnt[3:0];
                 end
@@ -688,13 +779,14 @@ module own_ddr3_ctrl #(
                 // position leaves them out of step with the IDES8_MEM frames.
                 C_HOLD: begin
                     if (ctimer == 0 && !hold_sent) begin
-                        p_dqs_hold <= 1'b1;
+                        // the trial read gets its HOLD with its RD, like
+                        // every read in normal operation
                         dqs_flush <= 1'b1;
                         hold_sent <= 1'b1;
                         ctimer <= 6'd4;
                     end else if (ctimer == 0) begin
                         hold_sent <= 1'b0;
-                        cstate <= C_RDB;
+                        cstate <= C_RDA;
                     end
                 end
                 C_RDB: begin
@@ -704,9 +796,12 @@ module own_ddr3_ctrl #(
                         cstate <= C_RDA;
                     end
                 end
+                // One read per trial, of burst A or B in turn (so what a
+                // previous trial left in the DQS FIFO can't match); HOLD is
+                // pulsed with its RD.
                 C_RDA: begin
-                    cal_req <= 1'b1; cal_req_wr <= 1'b0; cal_req_b <= 1'b0;
-                    if (cal_req && can_issue && !cal_req_b) begin
+                    cal_req <= 1'b1; cal_req_wr <= 1'b0; cal_req_b <= tsel;
+                    if (cal_req && can_issue && cal_req_b == tsel) begin
                         cal_req <= 1'b0;
                         lfound <= 0;
                         a_seen <= 1'b0;
@@ -716,6 +811,7 @@ module own_ddr3_ctrl #(
                 end
                 C_WAIT: if (a_seen && afcnt == WIN) cstate <= C_EVAL;
                 C_EVAL: begin
+                    tsel <= ~tsel;
 `ifdef OWN_DDR3_SIM
                     if (lfound != 0 || $test$plusargs("caltrace"))
                         $display("%t cal p%0d g=%0d k=%0d found=%b lat0=%0d",
@@ -844,11 +940,14 @@ module own_ddr3_ctrl #(
             8'h03: dbg_rdata <= {mr3, mr2};
             8'h04: dbg_rdata <= {28'h0, opt_manual, opt_hold_rd, req_reinit, req_recal};
             8'h05: dbg_rdata <= {16'h0, gate_len, 4'h0, gate_base};
+            8'h06: dbg_rdata <= {2'h0, wr_dly, 2'h0, wr_lat, 1'h0, dll_lock, 1'b0, p_ck_inv,
+                                 3'h0, opt_wr_shift, dll_step[7:1], p_dll_val};
             8'h08, 8'h09, 8'h0A, 8'h0B:
                 dbg_rdata <= {lane_late[dbg_addr[1:0]], 1'b0, lrot[dbg_addr[1:0]],
                               llat[dbg_addr[1:0]], 4'h0, rowpass[dbg_addr[1:0]],
                               8'h0, 1'b0, lg[dbg_addr[1:0]]};
             8'h0C: dbg_rdata <= {lat_min, lat_max};
+            8'h0D: dbg_rdata <= p_wdq_dly;
             default:
                 if (DBG_MAP && dbg_addr[7:4] != 4'h0)
                     // 0x10 + lane*4 + word: pass map bits [word*32 +: 32]

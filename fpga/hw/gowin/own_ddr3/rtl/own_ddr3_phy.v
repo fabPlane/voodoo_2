@@ -35,6 +35,7 @@ module own_ddr3_phy #(
     input  wire                        cke,
     input  wire                        odt,
     input  wire                        reset_n,
+    input  wire                        ck_inv,    // CK 1,0,1,0 instead
 
     // Write data path (all lanes alike)
     input  wire [8*DQ_WIDTH-1:0]       wr_dq,     // [b*32 + pin]
@@ -43,6 +44,7 @@ module own_ddr3_phy #(
     input  wire [7:0]                  wr_dqs,
     input  wire [3:0]                  wr_dqs_oen,
     input  wire [8*LANES-1:0]          wstep,     // per lane write delay
+    input  wire [8*LANES-1:0]          wdq_dly,   // per lane DQ / DM output IODELAY
 
     // Read path
     input  wire [4*LANES-1:0]          rd_gate,   // DQS READ[3:0] per lane
@@ -85,7 +87,7 @@ module own_ddr3_phy #(
     wire [7:0] ser_we  = dbl(c_we_n);
     wire [7:0] ser_cke = {8{cke}};
     wire [7:0] ser_odt = {8{odt}};
-    wire [7:0] ser_ck  = 8'b1010_1010;   // D0 = 0: CK rises mid-slot
+    wire [7:0] ser_ck  = ck_inv ? 8'b0101_0101 : 8'b1010_1010;  // D0 = 0: CK rises mid-slot
 
     `define OWN_OSER8(name, d, q) \
         OSER8 name ( \
@@ -182,6 +184,7 @@ module own_ddr3_phy #(
                 .I(dqs_q0), .OEN(dqs_q1)
             );
 
+            wire dm_q0;
             OSER8_MEM #(.TCLK_SOURCE("DQSW270")) u_oser_dm (
                 .D0(wr_dm[0*LANES+gl]), .D1(wr_dm[1*LANES+gl]),
                 .D2(wr_dm[2*LANES+gl]), .D3(wr_dm[3*LANES+gl]),
@@ -189,7 +192,11 @@ module own_ddr3_phy #(
                 .D6(wr_dm[6*LANES+gl]), .D7(wr_dm[7*LANES+gl]),
                 .TX0(1'b0), .TX1(1'b0), .TX2(1'b0), .TX3(1'b0),
                 .PCLK(pclk), .FCLK(fclk), .TCLK(dqsw270), .RESET(rst),
-                .Q0(O_ddr_dqm[gl]), .Q1()
+                .Q0(dm_q0), .Q1()
+            );
+            IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly_dm (
+                .DI(dm_q0), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(wdq_dly[8*gl +: 8]),
+                .DO(O_ddr_dqm[gl]), .DF()
             );
 
             for (gi = 0; gi < 8; gi = gi + 1) begin : g_dq
@@ -205,7 +212,12 @@ module own_ddr3_phy #(
                     .PCLK(pclk), .FCLK(fclk), .TCLK(dqsw270), .RESET(rst),
                     .Q0(q0), .Q1(q1)
                 );
-                IOBUF u_iobuf (.O(din), .IO(IO_ddr_dq[P]), .I(q0), .OEN(q1));
+                wire q0_d;
+                IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly (
+                    .DI(q0), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(wdq_dly[8*gl +: 8]),
+                    .DO(q0_d), .DF()
+                );
+                IOBUF u_iobuf (.O(din), .IO(IO_ddr_dq[P]), .I(q0_d), .OEN(q1));
                 IDES8_MEM u_ides (
                     .D(din), .ICLK(dqsr90), .FCLK(fclk), .PCLK(pclk),
                     .WADDR(wpoint), .RADDR(rpoint),

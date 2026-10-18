@@ -9,7 +9,8 @@
 // memory_clk is stopped and all of them start on the same edge.
 module own_ddr3 #(
     parameter SIM = 0,
-    parameter DBG_MAP = 1
+    parameter DBG_MAP = 1,
+    parameter HOLD_RD = 1
 ) (
     input  wire          clk,          // 50 MHz reference, sequencing only
     output wire          pll_stop,     // PLL ENCLK for memory_clk (1 = run)
@@ -111,6 +112,10 @@ module own_ddr3 #(
     assign clk_out = pclk;
 
     wire [7:0] dllstep;
+    wire       p_dll_ovr;
+    wire [7:0] p_dll_val;
+    // DQS DLLSTEP must come straight from the DDRDLL (PR0015), so the
+    // override registers are only kept for readback.
 `ifdef OWN_DDR3_SIM
     // The GW2A DQS model used in simulation delays 25 ps per step.
     assign dllstep = 8'd25;
@@ -119,12 +124,30 @@ module own_ddr3 #(
     DDRDLL #(
         .DLL_FORCE("FALSE"),
         .CODESCAL("000"),
-        .SCAL_EN("false"),      // 90 degrees
+        .SCAL_EN("FALSE"),      // 90 degrees
         .DIV_SEL(1'b0)
     ) u_dll (
         .CLKIN(fclk), .STOP(1'b0), .RESET(dll_rst), .UPDNCNTL(1'b0),
         .STEP(dllstep), .LOCK(dll_lock)
     );
+`endif
+
+`ifdef OWN_DDR3_DLL_PROBE
+    // Extra DDRDLLs clocked from the 50 MHz reference and the UI clock, to
+    // check that STEP can be read from fabric at all (debug only).
+    wire [7:0] probe_step0, probe_step1;
+    wire       probe_lock0, probe_lock1;
+    DDRDLL #(.DLL_FORCE("FALSE"), .CODESCAL("000"), .SCAL_EN("FALSE"), .DIV_SEL(1'b0)) u_dll_p0 (
+        .CLKIN(clk), .STOP(1'b0), .RESET(dll_rst), .UPDNCNTL(1'b0),
+        .STEP(probe_step0), .LOCK(probe_lock0));
+    DDRDLL #(.DLL_FORCE("FALSE"), .CODESCAL("000"), .SCAL_EN("FALSE"), .DIV_SEL(1'b0)) u_dll_p1 (
+        .CLKIN(pclk), .STOP(1'b0), .RESET(dll_rst), .UPDNCNTL(1'b0),
+        .STEP(probe_step1), .LOCK(probe_lock1));
+    reg [31:0] probe_r;
+    always @(posedge pclk) probe_r <= {6'h0, probe_lock1, probe_lock0, probe_step1, probe_step0, dllstep};
+    assign dbg_rdata = (dbg_addr == 8'h07) ? probe_r : dbg_rdata_c;
+`else
+    assign dbg_rdata = dbg_rdata_c;
 `endif
 
     reg [2:0] ui_rst_s = 3'b111;
@@ -139,20 +162,22 @@ module own_ddr3 #(
     wire [3:0]   c_cs_n, c_ras_n, c_cas_n, c_we_n;
     wire [11:0]  c_ba;
     wire [59:0]  c_a;
-    wire         p_cke, p_odt, p_reset_n;
+    wire         p_cke, p_odt, p_reset_n, p_ck_inv;
     wire [255:0] p_wr_dq;
     wire [31:0]  p_wr_dm;
     wire [3:0]   p_wr_dq_oen;
     wire [7:0]   p_wr_dqs;
     wire [3:0]   p_wr_dqs_oen;
     wire [31:0]  p_wstep;
+    wire [31:0]  p_wdq_dly;
     wire [15:0]  p_rd_gate;
     wire [11:0]  p_rclksel;
     wire [3:0]   p_rd_calib;
     wire         p_dqs_hold;
     wire [255:0] rd_frame;
+    wire [31:0]  dbg_rdata_c;
 
-    own_ddr3_ctrl #(.SIM(SIM), .DBG_MAP(DBG_MAP)) u_ctrl (
+    own_ddr3_ctrl #(.SIM(SIM), .DBG_MAP(DBG_MAP), .HOLD_RD_INIT(HOLD_RD)) u_ctrl (
         .pclk(pclk), .rst(ddr_rst),
         .cmd_ready(cmd_ready), .cmd(cmd), .cmd_en(cmd_en), .addr(addr),
         .wr_data_rdy(wr_data_rdy), .wr_data(wr_data), .wr_data_en(wr_data_en),
@@ -163,18 +188,23 @@ module own_ddr3 #(
         .c_ba(c_ba), .c_a(c_a), .p_cke(p_cke), .p_odt(p_odt), .p_reset_n(p_reset_n),
         .p_wr_dq(p_wr_dq), .p_wr_dm(p_wr_dm), .p_wr_dq_oen(p_wr_dq_oen),
         .p_wr_dqs(p_wr_dqs), .p_wr_dqs_oen(p_wr_dqs_oen), .p_wstep(p_wstep),
+        .p_wdq_dly(p_wdq_dly),
         .p_rd_gate(p_rd_gate), .p_rclksel(p_rclksel), .p_rd_calib(p_rd_calib),
         .p_dqs_hold(p_dqs_hold), .rd_frame(rd_frame),
+        .p_ck_inv(p_ck_inv), .p_dll_ovr(p_dll_ovr), .p_dll_val(p_dll_val),
+        .dll_step(dllstep), .dll_lock(dll_lock),
         .dbg_addr(dbg_addr), .dbg_wdata(dbg_wdata), .dbg_we(dbg_we),
-        .dbg_rdata(dbg_rdata)
+        .dbg_rdata(dbg_rdata_c)
     );
 
     own_ddr3_phy u_phy (
         .fclk(fclk), .pclk(pclk), .rst(io_rst), .dllstep(dllstep),
         .c_cs_n(c_cs_n), .c_ras_n(c_ras_n), .c_cas_n(c_cas_n), .c_we_n(c_we_n),
         .c_ba(c_ba), .c_a(c_a), .cke(p_cke), .odt(p_odt), .reset_n(p_reset_n),
+        .ck_inv(p_ck_inv),
         .wr_dq(p_wr_dq), .wr_dm(p_wr_dm), .wr_dq_oen(p_wr_dq_oen),
         .wr_dqs(p_wr_dqs), .wr_dqs_oen(p_wr_dqs_oen), .wstep(p_wstep),
+        .wdq_dly(p_wdq_dly),
         .rd_gate(p_rd_gate), .rclksel(p_rclksel), .rd_calib(p_rd_calib),
         .dqs_hold(p_dqs_hold), .rd_frame(rd_frame), .rburst(),
         .O_ddr_addr(O_ddr_addr), .O_ddr_ba(O_ddr_ba), .O_ddr_cs_n(O_ddr_cs_n),
