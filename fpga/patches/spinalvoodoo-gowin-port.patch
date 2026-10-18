@@ -1233,18 +1233,9 @@ index c23fa0b..f2d6d2c 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..4de6bd1 100644
+index 7797711..a8bb8e9 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
-@@ -149,7 +149,7 @@ object PixelPipeline {
- 
-     val planeReadNeeded =
-       if (colorPlane)
--        io.span.payload.pixelConfig.alphaMode.alphaBlendEnable || io.fbzMode.enableDitherSubtract
-+        io.span.payload.pixelConfig.alphaMode.alphaBlendEnable // as FramebufferAccess.needColorRead
-       else io.fbzMode.enableDepthBuffer
- 
-     io.readReq.valid := io.span.valid && planeReadNeeded
 @@ -173,6 +173,8 @@ case class PixelPipeline(c: Config) extends Component {
      val tmuInvalidate = in Bool ()
      val pciFifoEmpty = in Bool ()
@@ -1362,7 +1353,7 @@ index 7797711..4de6bd1 100644
 +    val fbz = io.controls.syncRender.fbzMode
 +    val minX = RegNext(lo(tri.xrange(0))); val maxX = RegNext(hi(tri.xrange(1)))
 +    val minY = RegNext(lo(tri.yrange(0))); val maxY = RegNext(hi(tri.yrange(1)))
-+    val readsColor = RegNext(tri.config.alphaMode.alphaBlendEnable) // as FramebufferAccess.needColorRead
++    val readsColor = RegNext(tri.config.alphaMode.alphaBlendEnable || fbz.enableDitherSubtract)
 +    val writesColor = fbz.rgbBufferMask
 +    val headSeen = RegNext(head.valid && !head.ready, init = False) // same head as last cycle
 +    val firstCycle = head.valid && !headSeen
@@ -2329,7 +2320,7 @@ index 1a3a34c..e46f94b 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..dbd99f9 100644
+index c6b2ec5..b5cb6e4 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
 @@ -29,6 +29,11 @@ case class FramebufferAccess(c: Config) extends Component {
@@ -2344,20 +2335,7 @@ index c6b2ec5..dbd99f9 100644
      val zFuncFail = out Bool ()
      val debug = out Bits (32 bits)
    }
-@@ -137,7 +142,11 @@ case class FramebufferAccess(c: Config) extends Component {
-     )
-   request.colorAddress := (colorPlaneAddress(c.addressWidth.value - 1 downto 1) ## U"1'b0").asUInt
-   request.auxAddress := (auxPlaneAddress(c.addressWidth.value - 1 downto 1) ## U"1'b0").asUInt
--  request.needColorRead := payload.alphaMode.alphaBlendEnable || fbzMode.enableDitherSubtract
-+  // The destination colour feeds only the blend (dither subtraction adjusts
-+  // it for the blend); with blending off it is never used. GLQuake leaves
-+  // dither subtraction on for opaque passes, so this read every pixel's
-+  // colour (B112: both readers ~70% busy).
-+  request.needColorRead := payload.alphaMode.alphaBlendEnable
-   request.needAuxRead := fbzMode.enableDepthBuffer
-   request.passthrough.coords := payload.coords
-   request.passthrough.color := payload.color
-@@ -165,7 +174,8 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -165,7 +170,8 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -2367,7 +2345,7 @@ index c6b2ec5..dbd99f9 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
-@@ -281,6 +291,9 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -281,6 +287,9 @@ case class FramebufferAccess(c: Config) extends Component {
    io.zFuncFail := fetched.fire && depthKill
    val afterDepthTest = fetched.throwWhen(depthKill)
    val afterDepthTestPiped = afterDepthTest.m2sPipe()
@@ -2377,7 +2355,7 @@ index c6b2ec5..dbd99f9 100644
  
    // ========================================================================
    // Step 4: Alpha blend
-@@ -395,6 +408,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -395,6 +404,7 @@ case class FramebufferAccess(c: Config) extends Component {
      }
      .m2sPipe()
  
