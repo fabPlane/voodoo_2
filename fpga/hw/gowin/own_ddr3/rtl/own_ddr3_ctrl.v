@@ -134,7 +134,9 @@ module own_ddr3_ctrl #(
     // Both readies drop together, so a master that offers a write command
     // and its data in the same cycle (Axi4ToGowinDdrNative, the BIST) can't
     // get one accepted without the other.
-    wire ui_room = cal_done && cq_count != 2'd2 && wq_count != WDQ_DEPTH;
+    // Registered (computed from the next FIFO counts) to keep it off the
+    // user's combinational paths.
+    reg  ui_room;
     assign cmd_ready = ui_room;
     assign wr_data_rdy = ui_room;
     assign init_calib_complete = cal_done;
@@ -142,6 +144,8 @@ module own_ddr3_ctrl #(
 
     wire cq_push = cmd_en && cmd_ready;
     wire wq_push = wr_data_en && wr_data_rdy;
+    wire [1:0]      cq_count_n;
+    wire [WDQ_AW:0] wq_count_n;
 
     // ------------------------------------------------------------------
     // Request into the scheduler: native head or calibration
@@ -177,13 +181,11 @@ module own_ddr3_ctrl #(
     reg        ref_ack_r;
     assign ref_ack = ref_ack_r;
 
-    integer bi;
-    reg all_banks_idle;
-    always @* begin
-        all_banks_idle = 1'b1;
-        for (bi = 0; bi < 8; bi = bi + 1)
-            if (bank_cnt[bi] != 3'd0) all_banks_idle = 1'b0;
-    end
+    // Registered "counter is zero" flags, set one cycle ahead, so the
+    // issue decision doesn't go through the counters.
+    reg [7:0]  bank_idle;
+    reg        rtw_idle, wtr_idle, rfc_idle;
+    wire       all_banks_idle = &bank_idle;
 
     // Init sequencer state
     localparam [3:0] I_RST = 4'd0, I_CKE = 4'd1, I_XPR = 4'd2, I_MR2 = 4'd3,
@@ -194,10 +196,9 @@ module own_ddr3_ctrl #(
     wire       running = istate == I_RUN;
 
     wire ref_due = ref_owed != 4'd0;
-    wire can_issue = running && rq_valid && rfc_cnt == 5'd0 && !ref_due &&
-                     bank_cnt[rq_bank] == 3'd0 &&
-                     (rq_wr ? rtw_cnt == 3'd0 : wtr_cnt == 3'd0);
-    wire do_ref = running && ref_due && rfc_cnt == 5'd0 && all_banks_idle;
+    wire can_issue = running && rq_valid && rfc_idle && !ref_due &&
+                     bank_idle[rq_bank] && (rq_wr ? rtw_idle : wtr_idle);
+    wire do_ref = running && ref_due && rfc_idle && all_banks_idle;
 
     // Stage 1: the RD/WR half of the access started last frame
     reg                   s1_valid, s1_wr, s1_cal, s1_b;
@@ -224,6 +225,8 @@ module own_ddr3_ctrl #(
 
     wire wdata_now = wsr_n[WR_LAT];
     wire wdata_pop = wdata_now && !wsr_cal_n[WR_LAT];
+    assign cq_count_n = cq_count + cq_push - (can_issue && !do_ref && !rq_cal);
+    assign wq_count_n = wq_count + wq_push - wdata_pop;
 
     // ------------------------------------------------------------------
     // Training pattern: pin p of every lane carries tp_pin(p%8) over the
@@ -389,6 +392,8 @@ module own_ddr3_ctrl #(
             wq_head <= 0; wq_tail <= 0; wq_count <= 0; wq_claimed <= 0;
             for (i = 0; i < 8; i = i + 1) bank_cnt[i] <= 3'd0;
             rtw_cnt <= 3'd0; wtr_cnt <= 3'd0; rfc_cnt <= 5'd0;
+            bank_idle <= 8'hFF; rtw_idle <= 1'b1; wtr_idle <= 1'b1; rfc_idle <= 1'b1;
+            ui_room <= 1'b0;
             refi_cnt <= 10'd0; ref_owed <= 4'd0;
             s1_valid <= 1'b0;
             rsr <= 0; rsr_user <= 0; rsr_a <= 0;
@@ -458,11 +463,17 @@ module own_ddr3_ctrl #(
             end
 
             // ---------------- counters ----------------
-            for (i = 0; i < 8; i = i + 1)
+            for (i = 0; i < 8; i = i + 1) begin
                 if (bank_cnt[i] != 3'd0) bank_cnt[i] <= bank_cnt[i] - 1'b1;
+                bank_idle[i] <= bank_cnt[i] <= 3'd1 &&
+                                !(can_issue && !do_ref && rq_bank == i);
+            end
             if (rtw_cnt != 3'd0) rtw_cnt <= rtw_cnt - 1'b1;
             if (wtr_cnt != 3'd0) wtr_cnt <= wtr_cnt - 1'b1;
             if (rfc_cnt != 5'd0) rfc_cnt <= rfc_cnt - 1'b1;
+            rtw_idle <= rtw_cnt <= 3'd1 && !(can_issue && !do_ref && !rq_wr);
+            wtr_idle <= wtr_cnt <= 3'd1 && !(can_issue && !do_ref && rq_wr);
+            rfc_idle <= rfc_cnt <= 5'd1 && !do_ref;
 
             // Refresh: owe one every tREFI once running
             if (running) begin
@@ -579,8 +590,9 @@ module own_ddr3_ctrl #(
             end
 
             // FIFO counts (pushes above, pops here)
-            cq_count <= cq_count + cq_push - (can_issue && !do_ref && !rq_cal);
-            wq_count <= wq_count + wq_push - wdata_pop;
+            cq_count <= cq_count_n;
+            wq_count <= wq_count_n;
+            ui_room <= cal_done && cq_count_n != 2'd2 && wq_count_n != WDQ_DEPTH;
             if (wdata_pop) begin
                 wq_head <= wq_head + 1'b1;
                 wq_claimed <= wq_claimed + (can_issue && rq_wr && !rq_cal) - 1'b1;
@@ -655,20 +667,23 @@ module own_ddr3_ctrl #(
                     if (cal_req && can_issue && cal_req_b) begin
                         cal_req <= 1'b0;
                         ctimer <= 6'd16;
-                        cphase2 <= 1'b0;
-                        cg <= 7'd0;
-                        ck <= 4'd0;
-                        lpass_g <= 0;
-                        for (i = 0; i < LANES; i = i + 1) begin
-                            lg[i] <= 7'd0;
-                            rowpass[i] <= 4'd0;
-                            pmap[i] <= 128'd0;
-                        end
-                        ldone <= 0;
                         cstate <= C_SETTLE;
                     end
                 end
-                C_SETTLE: if (ctimer == 0) cstate <= C_HOLD;
+                C_SETTLE: begin
+                    // clear the search state here, off the issue path
+                    cphase2 <= 1'b0;
+                    cg <= 7'd0;
+                    ck <= 4'd0;
+                    lpass_g <= 0;
+                    for (i = 0; i < LANES; i = i + 1) begin
+                        lg[i] <= 7'd0;
+                        rowpass[i] <= 4'd0;
+                        pmap[i] <= 128'd0;
+                    end
+                    ldone <= 0;
+                    if (ctimer == 0) cstate <= C_HOLD;
+                end
                 // Reset the DQS FIFO pointers before every trial: a bad gate
                 // position leaves them out of step with the IDES8_MEM frames.
                 C_HOLD: begin

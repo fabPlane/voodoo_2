@@ -117,7 +117,7 @@ module own_ddr3 #(
     assign dll_lock = ~dll_rst;
 `else
     DDRDLL #(
-        .DLL_FORCE(0),
+        .DLL_FORCE("FALSE"),
         .CODESCAL("000"),
         .SCAL_EN("false"),      // 90 degrees
         .DIV_SEL(1'b0)
