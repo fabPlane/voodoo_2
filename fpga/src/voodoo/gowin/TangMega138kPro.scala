@@ -2,7 +2,7 @@ package voodoo.gowin
 
 import spinal.core._
 import spinal.lib._
-import spinal.lib.bus.amba4.axi.{Axi4, Axi4CC}
+import spinal.lib.bus.amba4.axi.Axi4
 import voodoo.Config
 
 /** Sipeed Tang Mega 138K Pro Dock fabric.
@@ -15,7 +15,7 @@ import voodoo.Config
   * Clock domains: the implicit domain is the DDR3 UI clock (100 MHz) and only
   * runs the native-port adapter. The Voodoo core runs on coreClk (50 MHz, the
   * SST-1 graphics clock); framebuffer / texture AXI cross into the DDR3
-  * domain through Axi4CC FIFOs.
+  * domain through Axi4ClockCrossing FIFOs.
   */
 case class TangMega138kPro(c: Config) extends Component {
   noIoPrefix()
@@ -216,9 +216,9 @@ case class TangMega138kPro(c: Config) extends Component {
     colConfig = CoreGowin.colAxiConfig(c))
   // W / R buffering per direction: 32 words, four 32-byte bursts.
   private val burstBeats = 32
-  val fbCc = Axi4CC(fbDdrConfig, coreCd, ClockDomain.current,
+  val fbCc = Axi4ClockCrossing(fbDdrConfig, coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
-  val texCc = Axi4CC(CoreGowin.texAxiConfig(c), coreCd, ClockDomain.current,
+  val texCc = Axi4ClockCrossing(CoreGowin.texAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
 
   pcie.bar.io.axi <> barCc.io.input
@@ -229,7 +229,7 @@ case class TangMega138kPro(c: Config) extends Component {
   texCc.io.input << core.io.memTex
   // Scanout reads: own clock crossing, so their data never waits in the fb R
   // FIFO in front of render fills.
-  val scanCc = if (c.separateScanoutMem) Axi4CC(CoreGowin.scanAxiConfig(c), coreCd, ClockDomain.current,
+  val scanCc = if (c.separateScanoutMem) Axi4ClockCrossing(CoreGowin.scanAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = 256, wFifoSize = 4, bFifoSize = 4) else null
   if (c.separateScanoutMem) scanCc.io.input << core.io.memScan
   // Fill reads: deep R FIFOs. The adapter returns read lines in command
@@ -241,17 +241,21 @@ case class TangMega138kPro(c: Config) extends Component {
   // lines, one BSRAM each): 512 took two each and, with BSRAM ~89% used,
   // no B104 placement met timing around the DDR / PCIe blocks.
   private val fillRBeats = 256
-  val auxCc = Axi4CC(CoreGowin.auxAxiConfig(c), coreCd, ClockDomain.current,
+  val auxCc = Axi4ClockCrossing(CoreGowin.auxAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = fillRBeats, wFifoSize = 4, bFifoSize = 4)
   auxCc.io.input << core.io.memAux
-  val colCc = Axi4CC(CoreGowin.colAxiConfig(c), coreCd, ClockDomain.current,
+  val colCc = Axi4ClockCrossing(CoreGowin.colAxiConfig(c), coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = fillRBeats, wFifoSize = 4, bFifoSize = 4)
   colCc.io.input << core.io.memCol
   // Register the channels between the CDC FIFOs and the adapter: the
   // request pop-side valid and the R push-side ready otherwise fed the
   // adapter's state / address decode combinationally.
+  // AW / AR through half pipes (valid and ready both registered; one
+  // address per burst needs no more than every other cycle): with a full
+  // pipe the adapter's ready still fed the skid buffer's enables, a common
+  // failing ddr_clk_out path (B107 / B108).
   private def staged(a: Axi4): Axi4 =
-    a.pipelined(StreamPipe.FULL, StreamPipe.FULL, StreamPipe.NONE, StreamPipe.FULL, StreamPipe.FULL)
+    a.pipelined(aw = StreamPipe.HALF, w = StreamPipe.FULL, b = StreamPipe.NONE, ar = StreamPipe.HALF, r = StreamPipe.FULL)
   ddr.io.fb << staged(fbCc.io.output)
   ddr.io.tex << staged(texCc.io.output)
   if (c.separateScanoutMem) ddr.io.scan << staged(scanCc.io.output)
