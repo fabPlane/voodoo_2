@@ -1604,7 +1604,7 @@ index bf8fd33..787dc1c 100644
          io.mem.cmd.fragment.length := drainLength
          io.mem.cmd.fragment.source := 1
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-index 9d1e15f..df286a0 100644
+index 9d1e15f..4210501 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 @@ -6,7 +6,11 @@ import spinal.core.sim._
@@ -1633,7 +1633,7 @@ index 9d1e15f..df286a0 100644
      val reqCount = out UInt (32 bits)
      val reqForwardStepCount = out UInt (32 bits)
      val reqBackwardStepCount = out UInt (32 bits)
-@@ -68,7 +78,16 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -68,7 +78,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
  
    val issueQueueDepth = 64
    val spanIssueQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
@@ -1641,17 +1641,19 @@ index 9d1e15f..df286a0 100644
 +  // Spans whose fill burst is issued and still returning. Only what the fill
 +  // side needs is kept, so the window can be deep: with 4 spans in flight the
 +  // next span's prefetch could not issue ~36% of cycles under GLQuake (B107).
++  // 16 -> 32: at a 48 MHz core the window of 16 blocked the next span 23%
++  // (colour) / 33% (depth) of cycles (Gowin B124).
 +  case class FillCmd() extends Bundle {
 +    val firstWordAddress = UInt(addrWidth bits)
 +    val wordCount = UInt(spanLaneCountWidth bits)
 +    val startHigh = Bool() // first lane is the first word's upper half
 +    val endHigh = Bool() // last lane is the last word's upper half
 +  }
-+  val issuedSpanQueue = StreamFifo(HardType(FillCmd()), 16)
++  val issuedSpanQueue = StreamFifo(HardType(FillCmd()), 32)
    val laneFifo = StreamFifo(Bits(16 bits), lineBufferLanes)
    val directMissLaneQueue = StreamFifo(Bool(), 8)
    val readRspFifo = StreamFifo(ReadRsp(), 16)
-@@ -161,8 +180,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -161,8 +182,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // The cached reader is fed by a span prefetch stream, while the later pixel
    // stream can legally skip pixels before framebuffer access (for example due
    // to pipeline-side kills).  Track the next prefetched lane expected by the
@@ -1661,7 +1663,7 @@ index 9d1e15f..df286a0 100644
    val consumeQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
    val consumeActive = RegInit(False)
    val consumeExpectedAddr = Reg(UInt(addrWidth bits)) init (0)
-@@ -178,7 +196,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -178,7 +198,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    }
    val consumeExpectedValid = consumeActive || consumeBoot
    val consumeAddrMatches = io.readReq.address === consumeCurrentAddr
@@ -1678,7 +1680,7 @@ index 9d1e15f..df286a0 100644
    val consumeInvariantOk = !io.readReq.valid || (consumeExpectedValid && consumeAddrMatches)
  
    spanIssueQueue.io.push.valid := io.prefetchReq.valid && consumeQueue.io.push.ready
-@@ -216,8 +242,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -216,8 +244,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // available), fall back to an ordered direct read.
    val directMissNeeded = !consumeExpectedValid ||
      (consumeExpectedValid && !consumeAddrMatches && !consumeAddrAhead)
@@ -1707,7 +1709,7 @@ index 9d1e15f..df286a0 100644
    val directMissCmdSelected = directMissCmdValid
    val prefetchCmdSelected = prefetchCmdValid && !directMissCmdSelected
  
-@@ -234,12 +278,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -234,12 +280,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    internalMem.cmd.fragment.data := 0
    internalMem.cmd.fragment.mask := 0
    internalMem.cmd.last := True
@@ -1728,7 +1730,7 @@ index 9d1e15f..df286a0 100644
    when(internalMem.cmd.fire && prefetchCmdSelected) {
      fillBurstCount := fillBurstCount + 1
      fillBurstBeats := fillBurstBeats + spanIssueQueue.io.pop.payload.wordCount.resize(32 bits)
-@@ -250,12 +300,10 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -250,12 +302,10 @@ case class FramebufferPlaneReader(c: Config) extends Component {
      }
    }
  
@@ -1745,7 +1747,7 @@ index 9d1e15f..df286a0 100644
    val readDataLo = internalMem.rsp.fragment.data(15 downto 0)
    val readDataHi = internalMem.rsp.fragment.data(31 downto 16)
    val prefetchMemRspValid = internalMem.rsp.valid && internalMem.rsp.source === 0
-@@ -281,7 +329,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -281,7 +331,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
  
      // `rsp.last` may mark the end of a splitter fragment rather than the end
      // of the original fill span. Retire only after all requested words return.
@@ -1754,7 +1756,7 @@ index 9d1e15f..df286a0 100644
        issuedSpanQueue.io.pop.ready := True
        activeFillWordIndex := 0
      }.otherwise {
-@@ -314,6 +362,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -314,6 +364,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    when(io.readReq.valid && !io.readReq.ready) {
      fillStallCycles := fillStallCycles + 1
    }
@@ -1769,7 +1771,7 @@ index 9d1e15f..df286a0 100644
  
    when(io.readReq.fire) {
      recordReadRequest(io.readReq.address)
-@@ -376,7 +432,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -376,7 +434,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
      cacheDebugOccupancy := 0
      cacheDebugOccupancy(6 downto 0) := consumeQueue.io.occupancy.asBits.resized
      cacheDebugOccupancy(15 downto 8) := laneFifo.io.occupancy.asBits.resized
