@@ -635,7 +635,7 @@ index d163ab7..5ab9b45 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..c4aac4a 100644
+index 1b34fa2..d794b13 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -648,7 +648,7 @@ index 1b34fa2..c4aac4a 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,44 @@ case class Config(
+@@ -31,6 +34,46 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -664,6 +664,8 @@ index 1b34fa2..c4aac4a 100644
 +    texSampleQueueDepth: Int = 16,
 +    // Texture cache hints check lineValid as well as the tag.
 +    texHintValidCheck: Boolean = true,
++    // TMU1's small texture cache lines (0 = texSmallCacheLines).
++    tmu1SmallCacheLines: Int = 0,
 +    // Rasterizer span queue (spans between the walker, which issues the
 +    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
 +    spanQueueDepth: Int = 4,
@@ -915,7 +917,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..e14bb30 100644
+index 6051025..e3d9f72 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -10,21 +10,32 @@ object CoreSimGen extends App {
@@ -956,7 +958,7 @@ index 6051025..e14bb30 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,14 @@ object CoreSimGen extends App {
+@@ -37,7 +48,15 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -968,7 +970,8 @@ index 6051025..e14bb30 100644
 +      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4),
 +      tmuCount = argIntValue("--tmu-count").getOrElse(1),
 +      texSampleQueueDepth = argIntValue("--tex-sample-queue-depth").getOrElse(16),
-+      texHintValidCheck = !args.contains("--no-tex-hint-valid")
++      texHintValidCheck = !args.contains("--no-tex-hint-valid"),
++      tmu1SmallCacheLines = argIntValue("--tmu1-cache-lines").getOrElse(0)
      )
  
    val memTiming = SimMemoryTiming(
@@ -1882,7 +1885,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..8db0ba8 100644
+index 7797711..6bd4052 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -1965,7 +1968,7 @@ index 7797711..8db0ba8 100644
 +    } else {
 +      // TMU1 works on the same pixels next to TMU0; its output is TMU0's
 +      // "other" in the texture combine after the join below.
-+      val tmu1 = Tmu(c)
++      val tmu1 = Tmu(if (c.tmu1SmallCacheLines > 0) c.copy(texSmallCacheLines = c.tmu1SmallCacheLines) else c)
 +      tmu1.io.paletteWrite << io.paletteWrite.translateWith {
 +        val out = Tmu.PaletteWrite()
 +        out.address := io.paletteWrite.payload.address

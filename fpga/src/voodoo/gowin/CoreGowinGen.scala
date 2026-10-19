@@ -101,10 +101,14 @@ object GowinGenSupport {
       // TMU sample queue: 8 costs nothing in GLQuake trace replay at 80-cycle
       // texture latency (16: same cycles, 4: +0.5%, 2: +29%), ~1.2k FFs less
       // per TMU than 16.
-      texSampleQueueDepth = 8,
+      // Two TMUs run in lockstep after a synchronous fork and need more slack:
+      // 8 took +10% cycles there, 12 +0.5%.
+      texSampleQueueDepth = if (sys.env.get("GOWIN_TMU_COUNT").exists(_.toInt > 1)) 12 else 8,
       // Two TMUs: cache hints compare tags only (four 512:1 lineValid reads
       // less per TMU; same cycles in GLQuake trace replay).
-      texHintValidCheck = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2)
+      texHintValidCheck = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
+      // TMU1 mostly holds lightmaps (small): half the cache, ~20 BSRAM less.
+      tmu1SmallCacheLines = 256
     )
 
   def verilog(targetDirectory: String = "rtl/gowin"): SpinalConfig =
@@ -130,7 +134,9 @@ object GowinGenSupport {
         // The TMU's per-triangle config FIFO (16 x ~136 bits) replaces ~1.1k
         // front-end stage flops per TMU only as BSRAM.
         bsramComponents = Seq("metaCfgFifo") ++
-          sys.env.get("GOWIN_TMU_QUEUES_BSRAM").map(_ => Seq("sampleRequestBasePre_translated_fifo", "io_sampleRequest_translated_fifo")).getOrElse(Nil)
+          // GOWIN_TMU_QUEUES_BSRAM: the cache's 16-deep request window too (5
+          // tiles per TMU; the 8-deep sample queue stays in flip-flops).
+          sys.env.get("GOWIN_TMU_QUEUES_BSRAM").map(_ => Seq("io_sampleRequest_translated_fifo")).getOrElse(Nil)
       )
     )
 }
