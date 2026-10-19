@@ -3,6 +3,7 @@
 // 64-bit DR, 66-bit scan with one low padding bit (see ddr3_test/ddr3_jtag.py).
 // Shift in {32'x, 24'x, page[7:0]}; the *next* scan returns
 // {page_data[31:0], 8'hB0, page[7:0], 16'h0000}.
+// Pages 8..103 are pagex (own_pcie probe build), 0 otherwise.
 //
 // GW_JTAG launches tdi_o / its state outputs on the TCK rising edge; they
 // are retimed on the falling edge first (sampling them on the same rising
@@ -19,7 +20,8 @@ module jtag_diag (
     input  wire [31:0] page4,
     input  wire [31:0] page5,
     input  wire [31:0] page6,
-    input  wire [31:0] page7
+    input  wire [31:0] page7,
+    input  wire [96*32-1:0] pagex
 );
     wire jtag_tck, jtag_tdi, shift_capture, update_dr, enable_er1;
     reg  [63:0] sr = 64'h0;
@@ -55,7 +57,9 @@ module jtag_diag (
     reg [7:0] page = 8'h0;
     reg [31:0] data;
     always @* begin
-        case (page[2:0])
+        if (page >= 8'd8)
+            data = page < 8'd104 ? pagex[(page - 8'd8) * 32 +: 32] : 32'h0;
+        else case (page[2:0])
             3'd0: data = page0;
             3'd1: data = page1;
             3'd2: data = page2;

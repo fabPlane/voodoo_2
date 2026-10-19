@@ -90,8 +90,19 @@ module board_top #(
     wire [4:0]  pcie_ltssm;
     wire [7:0]  tl_rx_err;
 
+    // OWN_PCIE_PROBE: SerDes_Top from own_pcie/tools/gen_serdes.py --probe,
+    // read with own_pcie/tools/pcie_probe.py.
+`ifdef OWN_PCIE_PROBE
+    wire [96*32-1:0] own_pcie_probe;
+`else
+    wire [96*32-1:0] own_pcie_probe = {96*32{1'b0}};
+`endif
+
     // Gowin wraps the controller as SerDes_Top with prefixed port names.
     SerDes_Top u_pcie (
+`ifdef OWN_PCIE_PROBE
+        .own_pcie_probe_o                          (own_pcie_probe),
+`endif
         .PCIE_Controller_Top_pcie_rstn_i           (pcie_rstn),
         .PCIE_Controller_Top_pcie_tl_clk_i         (tlp_clk),
         .PCIE_Controller_Top_pcie_linkup_o         (pcie_linkup),
@@ -340,7 +351,8 @@ module board_top #(
         .page4     (cnt_pix),
         .page5     (rx_tlps),
         .page6     (tx_tlps),
-        .page7     (hdmi_frames)
+        .page7     (hdmi_frames),
+        .pagex     (own_pcie_probe)
     );
 
     wire _unused = &{1'b0, tmds_hpd, tlp_rst, tl_tx_p_credits, tl_tx_np_credits,
