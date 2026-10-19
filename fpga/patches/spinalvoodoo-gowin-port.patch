@@ -273,7 +273,7 @@ index eda5bba..e888df0 100644
      if (cycle_limit && (sim_time / 2) >= cycle_limit) {
          fprintf(stderr, "[sim_harness] Cycle limit reached (%lu ticks), shutting down.\n",
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
-index d163ab7..4a8a8ed 100644
+index d163ab7..5ab9b45 100644
 --- a/emu/test/trace_test.cpp
 +++ b/emu/test/trace_test.cpp
 @@ -275,6 +275,7 @@ int main(int argc, char **argv) {
@@ -348,6 +348,36 @@ index d163ab7..4a8a8ed 100644
      fprintf(stderr, "[trace_test] Replay %s: %u/%u packed entries (%llu logical commands), %d triangles, %d tex writes, %d fb writes, %d swaps\n",
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
+@@ -771,6 +786,29 @@ int main(int argc, char **argv) {
+ 
+     if (!ref_only) {
+         fprintf(stderr, "[trace_test] Sim swap count after replay: %u\n", sim_get_swap_count());
++#ifndef SIM_INTERFACE_DE10
++        /* hwDebugRegs perf counters (0x280 + 4 * i), printed like the PCIe
++         * harness's [perf] line so sim and board runs compare directly.
++         * Without hwDebugRegs they read 0 and nothing is printed. */
++        if (getenv("SIM_PERF")) {
++            uint32_t dp[26];
++            for (int i = 0; i < 26; ++i) dp[i] = sim_read(0x280 + 4 * i);
++            if (dp[0]) {
++                auto pc = [&](int i) { return 100.0 * dp[i] / dp[0]; };
++                fprintf(stderr,
++                        "[perf] sim: %u cyc busy %.0f%%; tmuInStall %.0f%% fbAccInStall %.0f%%;"
++                        " fill hit %u miss %u stall %.0f%%; write stall %.0f%%;"
++                        " blocked colRd %.0f%% auxRd %.0f%% colWr %.0f%% auxWr %.0f%%;"
++                        " raster px %u overhead %.0f%% setup-bound %.0f%% guard hold %.0f%%;"
++                        " tex words %u misses %u fill %.0f%% samples %u;"
++                        " fb rd col wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%,"
++                        " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%\n",
++                        dp[0], pc(13), pc(14), pc(15), dp[1], dp[2], pc(3), pc(4), pc(5), pc(6),
++                        pc(7), pc(8), dp[9], pc(10), pc(11), pc(12), dp[16], dp[17], pc(18), dp[19],
++                        pc(20), pc(21), pc(22), pc(23), pc(24), pc(25));
++            }
++        }
++#endif
+ #ifdef SIM_INTERFACE_DE10
+         sim_cycles_final = sim_get_cycle();
+         sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
 index 1b34fa2..acd58a1 100644
 --- a/src/voodoo/Config.scala
