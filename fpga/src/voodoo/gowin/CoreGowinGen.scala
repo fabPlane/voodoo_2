@@ -107,10 +107,11 @@ object GowinGenSupport {
       new GowinMemStylePhase(
         registersMaxDepth = 4,
         smallMaxDepth = 32,
-        // 4096 kept ~14 kbit of FIFOs in flip-flops (TMU sample-request
-        // queues 2 x 146 x 16, ...); with BSRAM at 196/340 after own DDR3,
-        // FIFOs over 1 kbit go to BSRAM to free ~8.6k FFs (CLS was 83%).
-        smallMaxBits = 1024
+        // 1024 (B129) moved ~8.6 kbit of FIFOs (TMU sample-request queues,
+        // the PCI FIFO, ...) to BSRAM: CLS 83% -> 76% but BSRAM +44 and only
+        // 1 of 6 placements closed (BSRAM enables on pipeline-busy / PCI FIFO
+        // control paths, core Fmax 42-48 MHz). Kept at 4096.
+        smallMaxBits = 4096
       )
     )
 }
