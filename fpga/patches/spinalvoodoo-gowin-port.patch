@@ -2894,7 +2894,7 @@ index aeba713..082556f 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..77dd7b0 100644
+index c5a4cd8..15788a5 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -72,15 +72,29 @@ case class RegisterBank(config: Config) extends Component {
@@ -3046,8 +3046,8 @@ index c5a4cd8..77dd7b0 100644
 +      cfg.tmu1.texBaseAddr2 := tmu1.regs.texBaseAddr2
 +      cfg.tmu1.texBaseAddr38 := tmu1.regs.texBaseAddr38
 +      // The TMU1 shadows hold S/T at hi precision (fixed-point << 12).
-+      for ((dst, src) <- Seq(cfg.tmu1.dSdX -> tmu1.dSdX, cfg.tmu1.dTdX -> tmu1.dTdX,
-+          cfg.tmu1.dSdY -> tmu1.dSdY, cfg.tmu1.dTdY -> tmu1.dTdY))
++      cfg.tmu1.baseLod := 0 // TriangleSetup computes it
++      for ((dst, src) <- cfg.tmu1Grads.zip(Seq(tmu1.dSdX, tmu1.dTdX, tmu1.dSdY, tmu1.dTdY)))
 +        dst.raw := (src >> 12).resize(widthOf(dst.raw) bits).asBits
      }
  
@@ -4530,7 +4530,7 @@ index cee86c0..0cd009e 100644
          val isLast = toPixelCoord(state.x) >= toPixelCoord(state.xEnd)
          (next, isLast)
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..49fc44a 100644
+index 59df4ba..23a0285 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -5,6 +5,20 @@ import spinal.core.formal._
@@ -4588,7 +4588,7 @@ index 59df4ba..49fc44a 100644
  
    private val lowGradFormats = Seq(
      c.vColorFormat,
-@@ -67,6 +57,12 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -67,318 +57,270 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
      dst.texDy(0) := input.texHi.dSdY
      dst.texDy(1) := input.texHi.dTdY
      dst.alphaDx := input.hiAlpha.dAdX
@@ -4599,9 +4599,11 @@ index 59df4ba..49fc44a 100644
 +      dst.tex1Dy(1) := input.texHi1.dTdY
 +    }
      dst.alphaDy := input.hiAlpha.dAdY
-     dst.tmuConfig := TriangleSetup.TmuConfig.fromPerTriangle(c, input.config)
+-    dst.tmuConfig := TriangleSetup.TmuConfig.fromPerTriangle(c, input.config)
++    dst.tmuConfig := TriangleSetup.TmuConfig.fromPerTriangle(c, input.config, input.baseLod)
      dst.pixelConfig := TriangleSetup.PixelPipelineConfig.fromPerTriangle(c, input.config)
-@@ -75,310 +71,256 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     dst.enableClipping := input.config.enableClipping
+     dst.clipLeft := input.config.clipLeft
      dst.clipRight := input.config.clipRight
      dst.clipLowY := input.config.clipLowY
      dst.clipHighY := input.config.clipHighY
@@ -5168,10 +5170,10 @@ index 59df4ba..49fc44a 100644
      val tmuConfig = TriangleSetup.TmuConfig(c)
      val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
 diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
-index fb95365..e378f78 100644
+index fb95365..e62e0c5 100644
 --- a/src/voodoo/raster/TriangleSetup.scala
 +++ b/src/voodoo/raster/TriangleSetup.scala
-@@ -8,216 +8,216 @@ import spinal.lib._
+@@ -8,216 +8,273 @@ import spinal.lib._
  case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Component {
    val i = slave(Stream(TriangleSetup.Input(c)))
    val o = master(Stream(TriangleSetup.Output(c)))
@@ -5562,6 +5564,63 @@ index fb95365..e378f78 100644
      state := SetupState.Prep
    }
  
++  // ---------------------------------------------------------------------
++  // Gradient part of each TMU's LOD (Tmu.baseLodOf): one shared squarer
++  // steps through the four gradients per TMU while the edge dividers run
++  // (the TMUs used to square them for every pixel).
++  // ---------------------------------------------------------------------
++  val lod = new Area {
++    val grads: Seq[SInt] =
++      Seq(pending.config.tmudSdX, pending.config.tmudTdX, pending.config.tmudSdY, pending.config.tmudTdY)
++        .map(_.raw.asSInt) ++
++        (if (c.tmuCount > 1) pending.config.tmu1Grads.map(_.raw.asSInt).toSeq else Nil)
++    val n = grads.length
++    val idx = Reg(UInt(log2Up(n + 1) bits)) init (n)
++    val sq = Reg(UInt(64 bits)) init (0)
++    val sqIdx = Reg(UInt(log2Up(n + 1) bits)) init (n)
++    val acc = Vec.fill(2)(Reg(UInt(64 bits)) init (0))
++    val tempLod = Vec.fill(c.tmuCount)(Reg(UInt(64 bits)) init (0))
++    val msb = Vec.fill(c.tmuCount)(Reg(UInt(7 bits)) init (0))
++    val zero = Vec.fill(c.tmuCount)(Reg(Bool()) init (True))
++    val baseLod = Vec.fill(c.tmuCount)(Reg(SInt(16 bits)) init (0))
++    val settle = Reg(UInt(2 bits)) init (0)
++    val logRom = Mem(UInt(8 bits), Tmu.logTableValues.map(v => U(v, 8 bits)))
++    when(state === SetupState.Idle && i.valid) {
++      idx := 0
++      settle := 3
++    }
++    val sel = grads.zipWithIndex.foldLeft(S(0, grads.head.getWidth bits)) { case (a, (g, k)) =>
++      Mux(idx === k, g.resize(grads.head.getWidth bits), a)
++    }
++    sqIdx := idx
++    when(idx =/= n) {
++      sq := (sel * sel).resize(64 bits).asUInt
++      idx := idx + 1
++    }
++    when(sqIdx =/= n) {
++      val j = sqIdx(1 downto 0)
++      val t = (sqIdx >> 2).resize(log2Up(c.tmuCount max 2) bits)
++      switch(j) {
++        is(0) { acc(0) := sq }
++        is(1) { acc(0) := acc(0) + sq }
++        is(2) { acc(1) := sq }
++        is(3) {
++          val dy = acc(1) + sq
++          for (k <- 0 until c.tmuCount) when(t === k) { tempLod(k) := Mux(acc(0) > dy, acc(0), dy) }
++        }
++      }
++    }
++    for (k <- 0 until c.tmuCount) {
++      val (m, z) = Tmu.lodMsbOf(tempLod(k))
++      msb(k) := m
++      zero(k) := z
++      baseLod(k) := Tmu.baseLodOf(tempLod(k), msb(k), zero(k), a => logRom.readAsync(a))
++    }
++    when(idx === n && sqIdx === n && settle =/= 0) { settle := settle - 1 }
++    val ready = idx === n && sqIdx === n && settle === 0
++  }
++  o.payload.baseLod := lod.baseLod
++
 +  val ax = pending.triWithSign.tri(0)(0).raw.asSInt.resize(32 bits)
 +  val ay = pending.triWithSign.tri(0)(1).raw.asSInt.resize(32 bits)
 +  val bx = pending.triWithSign.tri(1)(0).raw.asSInt.resize(32 bits)
@@ -5572,7 +5631,7 @@ index fb95365..e378f78 100644
    when(state === SetupState.Prep) {
      val input = pending
      val tri = input.triWithSign.tri
-@@ -282,47 +282,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+@@ -282,47 +339,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
      val dxPix = (startXPix - aXPix).resize(16 bits)
      val dyPix = (startYPix - aYPix).resize(16 bits)
  
@@ -5618,10 +5677,6 @@ index fb95365..e378f78 100644
 +    divIter := 0
 +    divBusy := True
 +    state := SetupState.Work
-+  }
-+
-+  when(state === SetupState.Work && !divBusy && !chBusy) {
-+    state := SetupState.ScanMul
    }
  
 -  when(state === SetupState.Iterate) {
@@ -5634,6 +5689,10 @@ index fb95365..e378f78 100644
 -      state := SetupState.Done
 -    }.otherwise {
 -      iterIndex := iterIndex + 1
++  when(state === SetupState.Work && !divBusy && !chBusy && lod.ready) {
++    state := SetupState.ScanMul
++  }
++
 +  when(state === SetupState.ScanMul) {
 +    val dxAB = divs(0).quotient
 +    val dxBC = divs(1).quotient
@@ -5661,7 +5720,7 @@ index fb95365..e378f78 100644
    GenerationFlags.formal {
      when(o.valid) {
        val tri = pending.triWithSign.tri
-@@ -351,7 +359,8 @@ object TriangleSetup {
+@@ -351,7 +416,8 @@ object TriangleSetup {
        texHi: HiTexCoords,
        config: PerTriangleConfig,
        traceDrawId: UInt,
@@ -5671,7 +5730,7 @@ index fb95365..e378f78 100644
    ): Input = {
      val out = Input(c)
      out.triWithSign.tri(0)(0).raw := ax.asBits
-@@ -364,6 +373,7 @@ object TriangleSetup {
+@@ -364,6 +430,7 @@ object TriangleSetup {
      out.grads := grads
      out.hiAlpha := hiAlpha
      out.texHi := texHi
@@ -5679,7 +5738,7 @@ index fb95365..e378f78 100644
      out.config := config
      if (c.trace.enabled) {
        out.trace.valid := True
-@@ -407,6 +417,22 @@ object TriangleSetup {
+@@ -407,6 +474,19 @@ object TriangleSetup {
      }
    }
  
@@ -5692,21 +5751,25 @@ index fb95365..e378f78 100644
 +    val texBaseAddr1 = UInt(24 bits)
 +    val texBaseAddr2 = UInt(24 bits)
 +    val texBaseAddr38 = UInt(24 bits)
-+    // TMU1's texture gradients for its LOD (TMU0's are tmudSdX ...).
-+    val dSdX = AFix(c.texCoordsFormat)
-+    val dTdX = AFix(c.texCoordsFormat)
-+    val dSdY = AFix(c.texCoordsFormat)
-+    val dTdY = AFix(c.texCoordsFormat)
++    // Gradient part of TMU1's LOD (TriangleSetup; 0 in PerTriangleConfig).
++    val baseLod = SInt(16 bits)
 +  }
 +
    case class TmuConfig(c: Config) extends Bundle {
      val textureEnable = Bool()
      val textureMode = Bits(12 bits)
-@@ -419,7 +445,11 @@ object TriangleSetup {
-     val dTdX = AFix(c.texCoordsFormat)
-     val dSdY = AFix(c.texCoordsFormat)
-     val dTdY = AFix(c.texCoordsFormat)
+@@ -415,15 +495,18 @@ object TriangleSetup {
+     val texBaseAddr2 = UInt(24 bits)
+     val texBaseAddr38 = UInt(24 bits)
+     val tLOD = Bits(27 bits)
+-    val dSdX = AFix(c.texCoordsFormat)
+-    val dTdX = AFix(c.texCoordsFormat)
+-    val dSdY = AFix(c.texCoordsFormat)
+-    val dTdY = AFix(c.texCoordsFormat)
 -    val texTables = if (c.packedTexLayout) TexLayoutTables.Tables() else null
++    // Gradient part of the LOD, once per triangle (TriangleSetup) instead of
++    // four gradients squared per pixel in the TMU.
++    val baseLod = SInt(16 bits)
 +    // Two TMUs: TMU0's texture combine fields (textureMode 30:12), its
 +    // tDetail, and TMU1.
 +    val tmu0Combine = if (c.tmuCount > 1) Bits(19 bits) else null
@@ -5715,20 +5778,31 @@ index fb95365..e378f78 100644
    }
  
    object TmuConfig {
-@@ -436,7 +466,11 @@ object TriangleSetup {
-       out.dTdX := src.tmudTdX
-       out.dSdY := src.tmudSdY
-       out.dTdY := src.tmudTdY
+-    def fromPerTriangle(c: Config, src: PerTriangleConfig): TmuConfig = {
++    def fromPerTriangle(c: Config, src: PerTriangleConfig, baseLod: Vec[SInt]): TmuConfig = {
+       val out = TmuConfig(c)
+       out.textureEnable := src.fbzColorPath.textureEnable
+       out.textureMode := src.tmuTextureMode
+@@ -432,11 +515,13 @@ object TriangleSetup {
+       out.texBaseAddr2 := src.tmuTexBaseAddr2
+       out.texBaseAddr38 := src.tmuTexBaseAddr38
+       out.tLOD := src.tmuTLOD
+-      out.dSdX := src.tmudSdX
+-      out.dTdX := src.tmudTdX
+-      out.dSdY := src.tmudSdY
+-      out.dTdY := src.tmudTdY
 -      if (c.packedTexLayout) out.texTables := src.texTables
++      out.baseLod := baseLod(0)
 +      if (c.tmuCount > 1) {
 +        out.tmu0Combine := src.tmu0Combine
 +        out.tmu0Detail := src.tmu0Detail
 +        out.tmu1 := src.tmu1
++        out.tmu1.baseLod.allowOverride := baseLod(1)
 +      }
        out
      }
    }
-@@ -468,9 +502,9 @@ object TriangleSetup {
+@@ -468,9 +553,11 @@ object TriangleSetup {
      val tmudTdX = AFix(c.texCoordsFormat)
      val tmudSdY = AFix(c.texCoordsFormat)
      val tmudTdY = AFix(c.texCoordsFormat)
@@ -5738,10 +5812,12 @@ index fb95365..e378f78 100644
 +    val tmu0Combine = if (c.tmuCount > 1) Bits(19 bits) else null
 +    val tmu0Detail = if (c.tmuCount > 1) Bits(17 bits) else null
 +    val tmu1 = if (c.tmuCount > 1) Tmu1Config(c) else null
++    // TMU1's texture gradients (dSdX, dTdX, dSdY, dTdY) for its LOD.
++    val tmu1Grads = if (c.tmuCount > 1) Vec.fill(4)(AFix(c.texCoordsFormat)) else null
    }
  
    /** Input bundle - triangle with gradients and render config captured at command time */
-@@ -479,6 +513,7 @@ object TriangleSetup {
+@@ -479,6 +566,7 @@ object TriangleSetup {
      val grads = Rasterizer.GradientBundle(Rasterizer.InputGradient(_), c)
      val hiAlpha = HiAlpha(c)
      val texHi = HiTexCoords(c)
@@ -5749,7 +5825,7 @@ index fb95365..e378f78 100644
      val config = PerTriangleConfig(c)
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
-@@ -489,9 +524,15 @@ object TriangleSetup {
+@@ -489,10 +577,17 @@ object TriangleSetup {
      val xrange = vertex2d(c.vertexFormat)
      val yrange = vertex2d(c.vertexFormat)
      val edgeStart = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -5763,8 +5839,10 @@ index fb95365..e378f78 100644
      val texHi = HiTexCoords(c)
 +    val texHi1 = if (c.tmuCount > 1) HiTexCoords(c) else null // TMU1 S/T
      val config = PerTriangleConfig(c)
++    val baseLod = Vec(SInt(16 bits), c.tmuCount) // per TMU, from its gradients
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
+ }
 diff --git a/src/voodoo/texture/TexLayoutTables.scala b/src/voodoo/texture/TexLayoutTables.scala
 index fbf774f..6f372f1 100644
 --- a/src/voodoo/texture/TexLayoutTables.scala
@@ -6093,7 +6171,7 @@ index f164007..31832d2 100644
              cmd.mask := prep.mask
              cmd
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..77d4541 100644
+index 8b06179..d9d7793 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -6115,7 +6193,35 @@ index 8b06179..77d4541 100644
    val inFlightCount = Reg(UInt(log2Up(maxOutstanding + 1) bits)) init 0
  
    import Tmu._
-@@ -89,35 +96,76 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -57,26 +64,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+     }
+     val recipTable = Mem(UInt(17 bits), recipTableValues)
+ 
+-    val logTableValues: Array[Int] = Array(
+-      0x00, 0x01, 0x02, 0x04, 0x05, 0x07, 0x08, 0x09, 0x0b, 0x0c, 0x0e, 0x0f, 0x10, 0x12, 0x13,
+-      0x15, 0x16, 0x17, 0x19, 0x1a, 0x1b, 0x1d, 0x1e, 0x1f, 0x21, 0x22, 0x23, 0x25, 0x26, 0x27,
+-      0x28, 0x2a, 0x2b, 0x2c, 0x2e, 0x2f, 0x30, 0x31, 0x33, 0x34, 0x35, 0x36, 0x38, 0x39, 0x3a,
+-      0x3b, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x43, 0x44, 0x45, 0x46, 0x47, 0x49, 0x4a, 0x4b, 0x4c,
+-      0x4d, 0x4e, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d,
+-      0x5e, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6c, 0x6d, 0x6e,
+-      0x6f, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d,
+-      0x7e, 0x7f, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8c,
+-      0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b,
+-      0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9,
+-      0xaa, 0xab, 0xac, 0xad, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb5, 0xb6,
+-      0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc2, 0xc3,
+-      0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xcd, 0xce, 0xcf, 0xd0,
+-      0xd1, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xda, 0xdb, 0xdc,
+-      0xdd, 0xde, 0xde, 0xdf, 0xe0, 0xe1, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe5, 0xe6, 0xe7, 0xe8,
+-      0xe8, 0xe9, 0xea, 0xeb, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xef, 0xf0, 0xf1, 0xf2, 0xf2, 0xf3,
+-      0xf4, 0xf5, 0xf5, 0xf6, 0xf7, 0xf7, 0xf8, 0xf9, 0xfa, 0xfa, 0xfb, 0xfc, 0xfd, 0xfd, 0xfe, 0xff
+-    )
+-    val logTable = Mem(UInt(8 bits), logTableValues.map(v => U(v, 8 bits)))
++    val logTable = Mem(UInt(8 bits), Tmu.logTableValues.map(v => U(v, 8 bits)))
+   }
+   val recipTable = lookupTables.recipTable
+   val logTable = lookupTables.logTable
+@@ -89,35 +77,70 @@ case class Tmu(c: voodoo.Config) extends Component {
    val tow = inputForStage.payload.t // T/W in 14.18 format (wider internal accumulator)
  
    val frontEnd = new Area {
@@ -6144,10 +6250,7 @@ index 8b06179..77d4541 100644
 +        out.pre.validOow := !oowRaw.msb && (absOow =/= 0)
 +        out.pre.perspectiveEnable := texMode.perspectiveEnable
 +        out.pre.clampToZero := texMode.clampW && oowRaw.msb
-+        out.pre.dSdX := inputForStage.payload.dSdX
-+        out.pre.dTdX := inputForStage.payload.dTdX
-+        out.pre.dSdY := inputForStage.payload.dSdY
-+        out.pre.dTdY := inputForStage.payload.dTdY
++        out.pre.baseLod := inputForStage.payload.baseLod
 +        out.pre.meta.config := inputForStage.payload.config
 +        if (c.trace.enabled) out.pre.meta.trace := inputForStage.payload.trace
 +        out
@@ -6188,10 +6291,7 @@ index 8b06179..77d4541 100644
 +        out.validOow := pre.validOow
 +        out.perspectiveEnable := pre.perspectiveEnable
 +        out.clampToZero := pre.clampToZero
-+        out.dSdX := pre.dSdX
-+        out.dTdX := pre.dTdX
-+        out.dSdY := pre.dSdY
-+        out.dTdY := pre.dTdY
++        out.baseLod := pre.baseLod
 +        out.meta := pre.meta
          out.base := base
          out.diff := base - next
@@ -6210,7 +6310,17 @@ index 8b06179..77d4541 100644
          out
        }
        .stage()
-@@ -153,34 +201,48 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -144,43 +167,51 @@ case class Tmu(c: voodoo.Config) extends Component {
+         out.perspectiveEnable := stageRecipPrep.payload.perspectiveEnable
+         out.clampToZero := stageRecipPrep.payload.clampToZero
+         out.perspLodAdjust := perspLodAdjustPre
+-        out.dSdX := stageRecipPrep.payload.dSdX
+-        out.dTdX := stageRecipPrep.payload.dTdX
+-        out.dSdY := stageRecipPrep.payload.dSdY
+-        out.dTdY := stageRecipPrep.payload.dTdY
++        out.baseLod := stageRecipPrep.payload.baseLod
+         out.meta := stageRecipPrep.payload.meta
+         out
        }
        .stage()
  
@@ -6218,7 +6328,7 @@ index 8b06179..77d4541 100644
 +    // Timing: the two 48x18 perspective multiplies get their own stage; stageA then
 +    // only does the rounding add and the normalizing shift.
 +    val stageMul = stageRecip
-       .translateWith {
++      .translateWith {
 +        val out = Tmu.FrontMul(c)
 +        val interpSigned = (False ## stageRecip.payload.interp).asSInt
 +        out.r := stageRecip.payload
@@ -6230,7 +6340,7 @@ index 8b06179..77d4541 100644
 +      .s2mPipe() // timing: cut the long ready chain through the TMU stages
 +
 +    val stageA = stageMul
-+      .translateWith {
+       .translateWith {
 +        val r = stageMul.payload.r
          val texS = SInt(18 bits)
          val texT = SInt(18 bits)
@@ -6269,40 +6379,50 @@ index 8b06179..77d4541 100644
 +        out.tLOD := r.tLOD
 +        out.perspLodAdjust := r.perspLodAdjust
 +        out.clampToZero := r.clampToZero
-+        out.dSdX := r.dSdX
-+        out.dTdX := r.dTdX
-+        out.dSdY := r.dSdY
-+        out.dTdY := r.dTdY
++        out.baseLod := r.baseLod
 +        out.meta := r.meta
          out
        }
        .m2sPipe()
-@@ -220,19 +282,30 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -195,65 +226,23 @@ case class Tmu(c: voodoo.Config) extends Component {
+   texT.simPublic()
+ 
+   val lodPipeline = new Area {
+-    val dSdXRaw = stageA.payload.dSdX.raw.asSInt
+-    val dTdXRaw = stageA.payload.dTdX.raw.asSInt
+-    val dSdYRaw = stageA.payload.dSdY.raw.asSInt
+-    val dTdYRaw = stageA.payload.dTdY.raw.asSInt
+-
+-    val tempdx =
+-      (dSdXRaw * dSdXRaw).resize(64 bits).asUInt + (dTdXRaw * dTdXRaw).resize(64 bits).asUInt
+-    val tempdy =
+-      (dSdYRaw * dSdYRaw).resize(64 bits).asUInt + (dTdYRaw * dTdYRaw).resize(64 bits).asUInt
+-    val tempLOD = Mux(tempdx > tempdy, tempdx, tempdy).resize(64 bits)
+-
+-    val stageGrad = stageA
++    // The gradient part of the LOD (log2 of the larger squared texture
++    // gradient) is per triangle: TriangleSetup computes baseLod once
++    // (Tmu.baseLodOf) instead of squaring four gradients here per pixel.
++    val stageLodPrep = stageA
+       .translateWith {
+-        val out = Tmu.FrontGrad(c)
++        val out = Tmu.FrontLodPrep(c)
+         out.texS := stageA.payload.texS
+         out.texT := stageA.payload.texT
+         out.tLOD := stageA.payload.tLOD
+         out.clampToZero := stageA.payload.clampToZero
+-        out.tempLOD := tempLOD
++        out.baseLod_8_8 := stageA.payload.baseLod
+         out.perspLodAdjust := stageA.payload.perspLodAdjust
+         out.meta := stageA.payload.meta
+         out
        }
        .stage()
  
-+    // Timing: the leading-zero count gets its own stage before the shift and
-+    // log ROM (tempLOD -> clz -> 64-bit shift -> ROM -> add, B121).
-+    val stageLodNorm = stageGrad
-+      .translateWith {
-+        val tempLOD32hi = stageGrad.payload.tempLOD(63 downto 32)
-+        val tempLOD32lo = stageGrad.payload.tempLOD(31 downto 0)
-+        val useHi = tempLOD32hi =/= 0
-+        val clz32val = clz32(Mux(useHi, tempLOD32hi, tempLOD32lo))
-+        val out = Tmu.FrontLodNorm(c)
-+        out.g := stageGrad.payload
-+        out.msbPos64 :=
-+          Mux(useHi, U(63, 7 bits) - clz32val.resize(7 bits), U(31, 7 bits) - clz32val.resize(7 bits))
-+        out.isZero := stageGrad.payload.tempLOD === 0
-+        out
-+      }
-+      .stage()
-+
-     val baseLod_8_8 = SInt(16 bits)
+-    val baseLod_8_8 = SInt(16 bits)
 -    when(stageGrad.payload.tempLOD === 0) {
-+    when(stageLodNorm.payload.isZero) {
-       baseLod_8_8 := S(0, 16 bits)
-     }.otherwise {
+-      baseLod_8_8 := S(0, 16 bits)
+-    }.otherwise {
 -      val tempLOD32hi = stageGrad.payload.tempLOD(63 downto 32)
 -      val tempLOD32lo = stageGrad.payload.tempLOD(31 downto 0)
 -      val useHi = tempLOD32hi =/= 0
@@ -6310,38 +6430,33 @@ index 8b06179..77d4541 100644
 -      val clz32val = clz32(clzInput)
 -      val msbPos64 =
 -        Mux(useHi, U(63, 7 bits) - clz32val.resize(7 bits), U(31, 7 bits) - clz32val.resize(7 bits))
-+      val msbPos64 = stageLodNorm.payload.msbPos64
-       val shiftAmt = Mux(msbPos64 >= 8, (msbPos64 - 8).resize(6 bits), U(0, 6 bits))
+-      val shiftAmt = Mux(msbPos64 >= 8, (msbPos64 - 8).resize(6 bits), U(0, 6 bits))
 -      val shifted = (stageGrad.payload.tempLOD >> shiftAmt).resize(16 bits)
-+      val shifted = (stageLodNorm.payload.g.tempLOD >> shiftAmt).resize(16 bits)
-       val lodIndex = shifted(7 downto 0)
-       val rawLod = ((False ## msbPos64).asSInt.resize(16 bits) << 8).resize(16 bits) +
-         (False ## U(0, 8 bits) ## logTable.readAsync(lodIndex)).asSInt.resize(16 bits) -
-@@ -240,16 +313,16 @@ case class Tmu(c: voodoo.Config) extends Component {
-       baseLod_8_8 := (rawLod >> 2).resize(16 bits)
-     }
- 
+-      val lodIndex = shifted(7 downto 0)
+-      val rawLod = ((False ## msbPos64).asSInt.resize(16 bits) << 8).resize(16 bits) +
+-        (False ## U(0, 8 bits) ## logTable.readAsync(lodIndex)).asSInt.resize(16 bits) -
+-        S(36 * 256, 16 bits)
+-      baseLod_8_8 := (rawLod >> 2).resize(16 bits)
+-    }
+-
 -    val stageLodPrep = stageGrad
-+    val stageLodPrep = stageLodNorm
-       .translateWith {
-         val out = Tmu.FrontLodPrep(c)
+-      .translateWith {
+-        val out = Tmu.FrontLodPrep(c)
 -        out.texS := stageGrad.payload.texS
 -        out.texT := stageGrad.payload.texT
 -        out.tLOD := stageGrad.payload.tLOD
 -        out.clampToZero := stageGrad.payload.clampToZero
-+        out.texS := stageLodNorm.payload.g.texS
-+        out.texT := stageLodNorm.payload.g.texT
-+        out.tLOD := stageLodNorm.payload.g.tLOD
-+        out.clampToZero := stageLodNorm.payload.g.clampToZero
-         out.baseLod_8_8 := baseLod_8_8
+-        out.baseLod_8_8 := baseLod_8_8
 -        out.perspLodAdjust := stageGrad.payload.perspLodAdjust
 -        out.meta := stageGrad.payload.meta
-+        out.perspLodAdjust := stageLodNorm.payload.g.perspLodAdjust
-+        out.meta := stageLodNorm.payload.g.meta
-         out
-       }
-       .stage()
-@@ -309,12 +382,14 @@ case class Tmu(c: voodoo.Config) extends Component {
+-        out
+-      }
+-      .stage()
+-
+     val tLOD = Tmu.TLOD.decode(stageLodPrep.payload.tLOD)
+     val lodbias_8_8 = (tLOD.lodbias.asSInt << 6).resize(16 bits)
+     val lod_8_8 =
+@@ -309,14 +298,15 @@ case class Tmu(c: voodoo.Config) extends Component {
          out.texT := stageLodPrep.payload.texT
          out.clampToZero := stageLodPrep.payload.clampToZero
          out.lodLevel := lodLevel
@@ -6354,9 +6469,11 @@ index 8b06179..77d4541 100644
        .stage()
 +      .s2mPipe() // timing: cut the long ready chain through the TMU stages
    }
-   val stageGrad = lodPipeline.stageGrad
+-  val stageGrad = lodPipeline.stageGrad
    val stageLodPrep = lodPipeline.stageLodPrep
-@@ -360,8 +435,11 @@ case class Tmu(c: voodoo.Config) extends Component {
+   val tLOD = lodPipeline.tLOD
+   val lodLevel = lodPipeline.lodLevel
+@@ -360,8 +350,11 @@ case class Tmu(c: voodoo.Config) extends Component {
          out.finalDs := finalDs
          out.finalDt := finalDt
          out.lodLevel := stageLod.payload.lodLevel
@@ -6368,7 +6485,7 @@ index 8b06179..77d4541 100644
          out.meta := stageLod.payload.meta
          out
        }
-@@ -376,7 +454,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -376,7 +369,7 @@ case class Tmu(c: voodoo.Config) extends Component {
    val is16BitFormat = stageBTexMode.format >= Tmu.TextureFormat.ARGB8332
    val bytesPerTexel = Mux(is16BitFormat, U(2), U(1))
    val addressGen = new Area {
@@ -6377,7 +6494,7 @@ index 8b06179..77d4541 100644
      val packedLodBase =
        if (c.packedTexLayout)
          packedTables.texBase(stageB.payload.lodLevel).resize(c.addressWidth.value bits)
-@@ -397,7 +475,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -397,7 +390,7 @@ case class Tmu(c: voodoo.Config) extends Component {
  
      def texelAddr(x: UInt, y: UInt): UInt = {
        if (c.packedTexLayout) {
@@ -6386,7 +6503,7 @@ index 8b06179..77d4541 100644
          val lodBase = tables.texBase(stageB.payload.lodLevel)
          val lodShift = tables.texShift(stageB.payload.lodLevel)
          Mux(
-@@ -482,6 +560,10 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -482,6 +475,10 @@ case class Tmu(c: voodoo.Config) extends Component {
      stageB.payload.finalDt,
      if (c.trace.enabled) stageB.payload.meta.trace else null
    )
@@ -6397,7 +6514,7 @@ index 8b06179..77d4541 100644
  
    val sampleRequestPrep = stageB
      .translateWith {
-@@ -503,7 +585,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -503,7 +500,7 @@ case class Tmu(c: voodoo.Config) extends Component {
        req.lodShift := packedLodShift
        req.is16Bit := is16BitFormat
        if (c.packedTexLayout) {
@@ -6406,7 +6523,7 @@ index 8b06179..77d4541 100644
        }
        for (i <- 0 until 4) {
          req.tapLineBase(i) := tapLineBase(i)
-@@ -513,15 +595,14 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -513,15 +510,14 @@ case class Tmu(c: voodoo.Config) extends Component {
        req
      }
      .stage()
@@ -6428,7 +6545,7 @@ index 8b06179..77d4541 100644
        val startupTexShift = (0 until 9).map(sampleRequestPrep.payload.texTables.texShift(_))
        val tapAddr = Vec(UInt(c.addressWidth.value bits), 4)
        tapAddr(
-@@ -530,45 +611,65 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -530,45 +526,65 @@ case class Tmu(c: voodoo.Config) extends Component {
        tapAddr(1) := sampleRequestPrep.payload.biAddr1
        tapAddr(2) := sampleRequestPrep.payload.biAddr2
        tapAddr(3) := sampleRequestPrep.payload.biAddr3
@@ -6521,7 +6638,7 @@ index 8b06179..77d4541 100644
  
    val bypassOutput = Stream(Tmu.Output(c))
    val bypassTexture = !stageB.payload.meta.config.textureEnable
-@@ -579,6 +680,10 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -579,6 +595,10 @@ case class Tmu(c: voodoo.Config) extends Component {
    bypassOutput.payload.texture.g := 0
    bypassOutput.payload.texture.b := 0
    bypassOutput.payload.textureAlpha := U(255, 8 bits)
@@ -6532,7 +6649,7 @@ index 8b06179..77d4541 100644
    if (c.trace.enabled) {
      bypassOutput.payload.trace := sampleRequestBase.payload.passthrough.trace
    }
-@@ -594,9 +699,12 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -594,9 +614,12 @@ case class Tmu(c: voodoo.Config) extends Component {
    )
  
    val texturePath: TmuTexturePathBase =
@@ -6546,16 +6663,74 @@ index 8b06179..77d4541 100644
    io.texRead <> texturePath.io.texRead
  
    val texelDecoder = TmuTexelDecoder(c)
-@@ -621,7 +729,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -621,7 +644,7 @@ case class Tmu(c: voodoo.Config) extends Component {
    }.elsewhen(!(sampleRequest.fire || bypassOutput.fire) && io.output.fire) {
      inFlightCount := inFlightCount - 1
    }
 -  io.busy := inFlightCount =/= 0 || stageRecipPrep.valid || stageRecip.valid || stageA.valid || stageGrad.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestBase.valid
-+  io.busy := inFlightCount =/= 0 || frontEnd.stageClz.valid || frontEnd.stageNorm.valid || stageRecipPrep.valid || stageRecip.valid || frontEnd.stageMul.valid || stageA.valid || stageGrad.valid || lodPipeline.stageLodNorm.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestPrep.valid || sampleRequestMid.valid || sampleRequestBase.valid
++  io.busy := inFlightCount =/= 0 || frontEnd.stageClz.valid || frontEnd.stageNorm.valid || stageRecipPrep.valid || stageRecip.valid || frontEnd.stageMul.valid || stageA.valid || stageLodPrep.valid || stageLod.valid || stageB.valid || sampleRequestPrep.valid || sampleRequestMid.valid || sampleRequestBase.valid
  
    /** BMB parameters for texture memory access */
    def bmbParams(c: voodoo.Config) = BmbParameter(
-@@ -694,12 +802,82 @@ object Tmu {
+@@ -637,6 +660,57 @@ case class Tmu(c: voodoo.Config) extends Component {
+ }
+ 
+ object Tmu {
++  val logTableValues: Array[Int] = Array(
++      0x00, 0x01, 0x02, 0x04, 0x05, 0x07, 0x08, 0x09, 0x0b, 0x0c, 0x0e, 0x0f, 0x10, 0x12, 0x13,
++      0x15, 0x16, 0x17, 0x19, 0x1a, 0x1b, 0x1d, 0x1e, 0x1f, 0x21, 0x22, 0x23, 0x25, 0x26, 0x27,
++      0x28, 0x2a, 0x2b, 0x2c, 0x2e, 0x2f, 0x30, 0x31, 0x33, 0x34, 0x35, 0x36, 0x38, 0x39, 0x3a,
++      0x3b, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x43, 0x44, 0x45, 0x46, 0x47, 0x49, 0x4a, 0x4b, 0x4c,
++      0x4d, 0x4e, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d,
++      0x5e, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6c, 0x6d, 0x6e,
++      0x6f, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d,
++      0x7e, 0x7f, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8c,
++      0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b,
++      0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9,
++      0xaa, 0xab, 0xac, 0xad, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb5, 0xb6,
++      0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc2, 0xc3,
++      0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xcd, 0xce, 0xcf, 0xd0,
++      0xd1, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xda, 0xdb, 0xdc,
++      0xdd, 0xde, 0xde, 0xdf, 0xe0, 0xe1, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe5, 0xe6, 0xe7, 0xe8,
++      0xe8, 0xe9, 0xea, 0xeb, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xef, 0xf0, 0xf1, 0xf2, 0xf2, 0xf3,
++      0xf4, 0xf5, 0xf5, 0xf6, 0xf7, 0xf7, 0xf8, 0xf9, 0xfa, 0xfa, 0xfb, 0xfc, 0xfd, 0xfd, 0xfe, 0xff
++    )
++
++  /** Gradient part of the LOD in 4.8 (86Box: log2 of
++    * max(dSdX^2 + dTdX^2, dSdY^2 + dTdY^2), minus 36, / 4) from tempLOD and
++    * its MSB position; `logRead` reads logTableValues. */
++  def lodMsbOf(tempLOD: UInt): (UInt, Bool) = {
++    val hi = tempLOD(63 downto 32)
++    val lo = tempLOD(31 downto 0)
++    val useHi = hi =/= 0
++    val clz = clz32(Mux(useHi, hi, lo))
++    (Mux(useHi, U(63, 7 bits) - clz.resize(7 bits), U(31, 7 bits) - clz.resize(7 bits)), tempLOD === 0)
++  }
++  def baseLodOf(tempLOD: UInt, msbPos64: UInt, isZero: Bool, logRead: UInt => UInt): SInt = {
++    val out = SInt(16 bits)
++    when(isZero) {
++      out := 0
++    }.otherwise {
++      val shiftAmt = Mux(msbPos64 >= 8, (msbPos64 - 8).resize(6 bits), U(0, 6 bits))
++      val shifted = (tempLOD >> shiftAmt).resize(16 bits)
++      val rawLod = ((False ## msbPos64).asSInt.resize(16 bits) << 8).resize(16 bits) +
++        (False ## U(0, 8 bits) ## logRead(shifted(7 downto 0))).asSInt.resize(16 bits) -
++        S(36 * 256, 16 bits)
++      out := (rawLod >> 2).resize(16 bits)
++    }
++    out
++  }
++  /** tempLOD from the four texture gradients' raw values. */
++  def tempLodOf(dSdX: SInt, dTdX: SInt, dSdY: SInt, dTdY: SInt): UInt = {
++    val dx = (dSdX * dSdX).resize(64 bits).asUInt + (dTdX * dTdX).resize(64 bits).asUInt
++    val dy = (dSdY * dSdY).resize(64 bits).asUInt + (dTdY * dTdY).resize(64 bits).asUInt
++    Mux(dx > dy, dx, dy).resize(64 bits)
++  }
++
+ 
+   case class PackedStartupDecode() extends Bundle {
+     val valid = Bits(4 bits)
+@@ -694,12 +768,82 @@ object Tmu {
      bankMsb := byteOffsLow(shift)
      bankLsb := byteOffsLow(0)
      when(is16Bit) {
@@ -6639,7 +6814,7 @@ index 8b06179..77d4541 100644
    def packedStartupDecode4(
        lineBase: UInt,
        is16Bit: Bool,
-@@ -822,6 +1000,53 @@ object Tmu {
+@@ -822,6 +966,53 @@ object Tmu {
      if (trace != null) dst.trace := trace
    }
  
@@ -6693,7 +6868,7 @@ index 8b06179..77d4541 100644
    def copySampleRequest(dst: SampleRequest, src: SampleRequest, c: voodoo.Config): Unit = {
      dst.pointAddr := src.pointAddr
      dst.biAddr0 := src.biAddr0
-@@ -847,6 +1072,10 @@ object Tmu {
+@@ -847,6 +1038,10 @@ object Tmu {
      dst.passthrough.nccTableSelect := src.passthrough.nccTableSelect
      dst.passthrough.ds := src.passthrough.ds
      dst.passthrough.dt := src.passthrough.dt
@@ -6704,7 +6879,7 @@ index 8b06179..77d4541 100644
      if (c.trace.enabled) dst.passthrough.trace := src.passthrough.trace
    }
  
-@@ -863,9 +1092,32 @@ object Tmu {
+@@ -863,9 +1058,32 @@ object Tmu {
      val nccTableSelect = Bool()
      val ds = UInt(4 bits)
      val dt = UInt(4 bits)
@@ -6737,7 +6912,15 @@ index 8b06179..77d4541 100644
    case class FrontRecipPrep(c: voodoo.Config) extends Bundle {
      val s = AFix(c.texCoordsAccumFormat)
      val t = AFix(c.texCoordsAccumFormat)
-@@ -885,6 +1137,12 @@ object Tmu {
+@@ -878,23 +1096,23 @@ object Tmu {
+     val validOow = Bool()
+     val perspectiveEnable = Bool()
+     val clampToZero = Bool()
+-    val dSdX = AFix(c.texCoordsFormat)
+-    val dTdX = AFix(c.texCoordsFormat)
+-    val dSdY = AFix(c.texCoordsFormat)
+-    val dTdY = AFix(c.texCoordsFormat)
++    val baseLod = SInt(16 bits) // per-triangle LOD from the gradients (TriangleSetup)
      val meta = FrontMeta(c)
    }
  
@@ -6750,7 +6933,30 @@ index 8b06179..77d4541 100644
    case class FrontA(c: voodoo.Config) extends Bundle {
      val texS = SInt(18 bits)
      val texT = SInt(18 bits)
-@@ -922,11 +1180,28 @@ object Tmu {
+     val tLOD = Bits(27 bits)
+     val perspLodAdjust = SInt(16 bits)
+     val clampToZero = Bool()
+-    val dSdX = AFix(c.texCoordsFormat)
+-    val dTdX = AFix(c.texCoordsFormat)
+-    val dSdY = AFix(c.texCoordsFormat)
+-    val dTdY = AFix(c.texCoordsFormat)
++    val baseLod = SInt(16 bits) // per-triangle LOD from the gradients (TriangleSetup)
+     val meta = FrontMeta(c)
+   }
+ 
+@@ -907,10 +1125,7 @@ object Tmu {
+     val perspectiveEnable = Bool()
+     val clampToZero = Bool()
+     val perspLodAdjust = SInt(16 bits)
+-    val dSdX = AFix(c.texCoordsFormat)
+-    val dTdX = AFix(c.texCoordsFormat)
+-    val dSdY = AFix(c.texCoordsFormat)
+-    val dTdY = AFix(c.texCoordsFormat)
++    val baseLod = SInt(16 bits) // per-triangle LOD from the gradients (TriangleSetup)
+     val meta = FrontMeta(c)
+   }
+ 
+@@ -922,11 +1137,28 @@ object Tmu {
      val finalDs = UInt(4 bits)
      val finalDt = UInt(4 bits)
      val lodLevel = UInt(4 bits)
@@ -6779,7 +6985,7 @@ index 8b06179..77d4541 100644
    case class FrontLodPrep(c: voodoo.Config) extends Bundle {
      val texS = SInt(18 bits)
      val texT = SInt(18 bits)
-@@ -942,6 +1217,7 @@ object Tmu {
+@@ -942,6 +1174,7 @@ object Tmu {
      val texT = SInt(18 bits)
      val clampToZero = Bool()
      val lodLevel = UInt(4 bits)
@@ -6787,7 +6993,7 @@ index 8b06179..77d4541 100644
      val texWidthBits = UInt(4 bits)
      val texHeightBits = UInt(4 bits)
      val meta = FrontMeta(c)
-@@ -979,6 +1255,12 @@ object Tmu {
+@@ -979,6 +1212,12 @@ object Tmu {
      val passthrough = TmuPassthrough(c)
    }
  
@@ -6800,7 +7006,7 @@ index 8b06179..77d4541 100644
    case class SampleRequestPrep(c: voodoo.Config) extends Bundle {
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
-@@ -1114,7 +1396,6 @@ object Tmu {
+@@ -1114,7 +1353,6 @@ object Tmu {
      val texBaseAddr38 = UInt(24 bits)
      val tLOD = Bits(27 bits)
      val textureEnable = Bool()
@@ -6808,18 +7014,31 @@ index 8b06179..77d4541 100644
    }
  
    /** TMU input bundle */
-@@ -1149,7 +1430,6 @@ object Tmu {
+@@ -1125,10 +1363,7 @@ object Tmu {
+     val cOther = Color.u8()
+     val aOther = UInt(8 bits)
+     val config = TmuConfig(c)
+-    val dSdX = AFix(c.texCoordsFormat)
+-    val dTdX = AFix(c.texCoordsFormat)
+-    val dSdY = AFix(c.texCoordsFormat)
+-    val dTdY = AFix(c.texCoordsFormat)
++    val baseLod = SInt(16 bits) // gradient part of the LOD, per triangle (4.8)
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+   }
+ 
+@@ -1149,20 +1384,48 @@ object Tmu {
        out.config.texBaseAddr38 := in.tmuConfig.texBaseAddr38
        out.config.tLOD := in.tmuConfig.tLOD
        out.config.textureEnable := in.tmuConfig.textureEnable
 -      if (c.packedTexLayout) out.config.texTables := in.tmuConfig.texTables
-       out.dSdX := in.tmuConfig.dSdX
-       out.dTdX := in.tmuConfig.dTdX
-       out.dSdY := in.tmuConfig.dSdY
-@@ -1157,12 +1437,47 @@ object Tmu {
-       if (c.trace.enabled) out.trace := in.trace
-       out
-     }
+-      out.dSdX := in.tmuConfig.dSdX
+-      out.dTdX := in.tmuConfig.dTdX
+-      out.dSdY := in.tmuConfig.dSdY
+-      out.dTdY := in.tmuConfig.dTdY
++      out.baseLod := in.tmuConfig.baseLod
++      if (c.trace.enabled) out.trace := in.trace
++      out
++    }
 +    /** TMU1's input (two-TMU builds): its S/T, the shared W, its registers.
 +      * Bypassed (no fetch) while TMU0 uses only its own texel ("local"). */
 +    def fromRasterizerTmu1(c: voodoo.Config, in: Rasterizer.Output): Input = {
@@ -6841,13 +7060,10 @@ index 8b06179..77d4541 100644
 +      out.config.texBaseAddr38 := t1.texBaseAddr38
 +      out.config.tLOD := t1.tLOD
 +      out.config.textureEnable := in.tmuConfig.textureEnable && !tmu0Local
-+      out.dSdX := t1.dSdX
-+      out.dTdX := t1.dTdX
-+      out.dSdY := t1.dSdY
-+      out.dTdY := t1.dTdY
-+      if (c.trace.enabled) out.trace := in.trace
-+      out
-+    }
++      out.baseLod := t1.baseLod
+       if (c.trace.enabled) out.trace := in.trace
+       out
+     }
    }
  
 +  /** What the TMUs send while trexInit1 bit 18 is set (Glide reads it back
