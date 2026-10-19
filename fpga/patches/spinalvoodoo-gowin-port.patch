@@ -880,7 +880,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..e4a3f4e 100644
+index 6051025..45c6984 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -10,21 +10,32 @@ object CoreSimGen extends App {
@@ -921,7 +921,7 @@ index 6051025..e4a3f4e 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,11 @@ object CoreSimGen extends App {
+@@ -37,7 +48,12 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -930,7 +930,8 @@ index 6051025..e4a3f4e 100644
 +      texSmallCacheLines =
 +        argIntValue("--tex-small-cache-lines").getOrElse(if (gowin) 512 else Config.voodoo1().texSmallCacheLines),
 +      texSmallFillSlots = argIntValue("--tex-small-fill-slots").getOrElse(4),
-+      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4)
++      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4),
++      tmuCount = argIntValue("--tmu-count").getOrElse(1)
      )
  
    val memTiming = SimMemoryTiming(
@@ -2663,7 +2664,7 @@ index aeba713..082556f 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..b5912c6 100644
+index c5a4cd8..4603a0c 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -72,15 +72,29 @@ case class RegisterBank(config: Config) extends Component {
@@ -2797,18 +2798,49 @@ index c5a4cd8..b5912c6 100644
      }
    }
  
-@@ -576,10 +590,6 @@ case class RegisterBank(config: Config) extends Component {
+@@ -575,9 +589,14 @@ case class RegisterBank(config: Config) extends Component {
+     cfg.tmudTdX.raw := g.dTdX.asBits
      cfg.tmudSdY.raw := g.dSdY.asBits
      cfg.tmudTdY.raw := g.dTdY.asBits
- 
+-
 -    if (config.packedTexLayout) {
 -      cfg.texTables := triangleTexTablesRegOpt.get
--    }
--
++    if (config.tmuCount > 1) {
++      cfg.tmu0Combine := tmuConfig.textureMode(29 downto 12)
++      cfg.tmu1.textureMode := tmu1.regs.textureMode(29 downto 0)
++      cfg.tmu1.tLOD := tmu1.regs.tLOD(26 downto 0)
++      cfg.tmu1.texBaseAddr := tmu1.regs.texBaseAddr
++      cfg.tmu1.texBaseAddr1 := tmu1.regs.texBaseAddr1
++      cfg.tmu1.texBaseAddr2 := tmu1.regs.texBaseAddr2
++      cfg.tmu1.texBaseAddr38 := tmu1.regs.texBaseAddr38
+     }
+ 
      cfg
+@@ -601,10 +620,22 @@ case class RegisterBank(config: Config) extends Component {
+       captureTriangleHiTexCoords(useFloatShadow),
+       triangleConfigReg,
+       triangleDrawTraceId,
+-      trianglePrimitiveTraceId
++      trianglePrimitiveTraceId,
++      if (config.tmuCount > 1) captureTmu1HiTexCoords() else null
+     )
    }
  
-@@ -649,28 +659,26 @@ case class RegisterBank(config: Config) extends Component {
++  private def captureTmu1HiTexCoords(): TriangleSetup.HiTexCoords = {
++    val hi = TriangleSetup.HiTexCoords(config)
++    hi.sStart.raw := tmu1.startS.asBits
++    hi.tStart.raw := tmu1.startT.asBits
++    hi.dSdX.raw := tmu1.dSdX.asBits
++    hi.dTdX.raw := tmu1.dTdX.asBits
++    hi.dSdY.raw := tmu1.dSdY.asBits
++    hi.dTdY.raw := tmu1.dTdY.asBits
++    hi
++  }
++
+   private def fifoRegBits(addr: Int, name: String, category: RegisterCategory, doc: String): Bits =
+     busif
+       .newRegAtWithCategory(addr, name, category)
+@@ -649,28 +680,26 @@ case class RegisterBank(config: Config) extends Component {
    // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
    // ========================================================================
    val commands = new Area {
@@ -2848,7 +2880,7 @@ index c5a4cd8..b5912c6 100644
      val (nopCmdReg, nopCmdStream) =
        busif.newCommandRegWithPayload(
          0x120,
-@@ -679,7 +687,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -679,7 +708,7 @@ case class RegisterBank(config: Config) extends Component {
          HardType(Bits(32 bits))
        ) { (_, payload) =>
          Component.current.addPrePopTask { () =>
@@ -2857,7 +2889,7 @@ index c5a4cd8..b5912c6 100644
          }
        }
      val (fastfillCmdReg, fastfillCmdStream) =
-@@ -691,7 +699,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -691,7 +720,7 @@ case class RegisterBank(config: Config) extends Component {
          when(swapbufferCmdStream.fire) {
            triangleDrawTraceId := triangleDrawTraceId + 1
          }
@@ -2866,7 +2898,7 @@ index c5a4cd8..b5912c6 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1103,33 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1124,33 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -2901,7 +2933,7 @@ index c5a4cd8..b5912c6 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1148,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1169,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -2910,7 +2942,7 @@ index c5a4cd8..b5912c6 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1160,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1181,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -2919,7 +2951,7 @@ index c5a4cd8..b5912c6 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1220,53 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1241,53 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -2988,7 +3020,7 @@ index c5a4cd8..b5912c6 100644
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
-@@ -1250,6 +1312,25 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1250,6 +1333,25 @@ case class RegisterBank(config: Config) extends Component {
  }
  
  object RegisterBank {
@@ -3986,10 +4018,10 @@ index c6b2ec5..15756b4 100644
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
-index cee86c0..a762225 100644
+index cee86c0..9dc0d2e 100644
 --- a/src/voodoo/raster/Rasterizer.scala
 +++ b/src/voodoo/raster/Rasterizer.scala
-@@ -17,31 +17,133 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -17,31 +17,136 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
    val clipLowY = in UInt (10 bits)
    val clipHighY = in UInt (10 bits)
  
@@ -4094,6 +4126,7 @@ index cee86c0..a762225 100644
 +    val hiS = AFix(c.texCoordsHiFormat)
 +    val hiT = AFix(c.texCoordsHiFormat)
 +    val hiAlpha = AFix(c.texCoordsHiFormat)
++    val hiTex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
 +    val firstSpan = Bool()
 +    val tag = Bool()
 +  }
@@ -4108,6 +4141,7 @@ index cee86c0..a762225 100644
 +      out.hiS := in.hiS
 +      out.hiT := in.hiT
 +      out.hiAlpha := in.hiAlpha
++      if (c.tmuCount > 1) out.hiTex1 := in.hiTex1
 +      out.firstSpan := in.firstSpan
 +      out.tag := tag
 +      out
@@ -4122,6 +4156,7 @@ index cee86c0..a762225 100644
 +      out.hiS := in.hiS
 +      out.hiT := in.hiT
 +      out.hiAlpha := in.hiAlpha
++      if (c.tmuCount > 1) out.hiTex1 := in.hiTex1
 +      out.firstSpan := in.firstSpan
 +      out.stepX := k.stepX
 +      out.tmuConfig := k.tmuConfig
@@ -4134,7 +4169,16 @@ index cee86c0..a762225 100644
    case class InputGradient(fmt: QFormat) extends Bundle {
      val start = AFix(fmt)
      val d = vertex2d(fmt)
-@@ -98,6 +200,53 @@ object Rasterizer {
+@@ -65,6 +170,8 @@ object Rasterizer {
+ 
+   case class Output(c: Config) extends Bundle {
+     val grads = GradientBundle(AFix(_), c)
++    // Two TMUs: TMU1's S, T (TMU1 shares W with TMU0).
++    val tex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsAccumFormat)) else null
+     val alphaGradHi = AFix(c.texCoordsHiFormat)
+     val coords = Vec.fill(2)(SInt(c.vertexFormat.nonFraction bits))
+     val tmuConfig = TriangleSetup.TmuConfig(c)
+@@ -98,6 +205,53 @@ object Rasterizer {
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
@@ -4188,8 +4232,41 @@ index cee86c0..a762225 100644
    object PostTmu {
      def fromOutput(c: Config, in: Output): PostTmu = {
        val out = PostTmu(c)
+@@ -119,6 +273,7 @@ object Rasterizer {
+     val hiS = AFix(c.texCoordsHiFormat)
+     val hiT = AFix(c.texCoordsHiFormat)
+     val hiAlpha = AFix(c.texCoordsHiFormat)
++    val hiTex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
+     val xEnd = AFix(c.vertexFormat)
+     val stepX = SpanWalker.StepX(c)
+     val tmuConfig = TriangleSetup.TmuConfig(c)
+@@ -153,6 +308,7 @@ object Rasterizer {
+         state.hiS := input.hiS
+         state.hiT := input.hiT
+         state.hiAlpha := input.hiAlpha
++        if (c.tmuCount > 1) state.hiTex1 := input.hiTex1
+         state.xEnd := input.xEnd
+         state.stepX := input.stepX
+         state.tmuConfig := input.tmuConfig
+@@ -174,6 +330,7 @@ object Rasterizer {
+         output.grads.sGrad := state.hiS.fixTo(c.texCoordsAccumFormat)
+         output.grads.tGrad := state.hiT.fixTo(c.texCoordsAccumFormat)
+         output.alphaGradHi := state.hiAlpha
++        if (c.tmuCount > 1) for (k <- 0 until 2) output.tex1(k) := state.hiTex1(k).fixTo(c.texCoordsAccumFormat)
+         output.tmuConfig := state.tmuConfig
+         output.pixelConfig := state.pixelConfig
+         if (c.trace.enabled) {
+@@ -212,6 +369,8 @@ object Rasterizer {
+         next.hiS := (state.hiS + state.stepX.tex(0)).fixTo(c.texCoordsHiFormat)
+         next.hiT := (state.hiT + state.stepX.tex(1)).fixTo(c.texCoordsHiFormat)
+         next.hiAlpha := (state.hiAlpha + state.stepX.alpha).fixTo(c.texCoordsHiFormat)
++        if (c.tmuCount > 1) for (k <- 0 until 2)
++          next.hiTex1(k) := (state.hiTex1(k) + state.stepX.tex1(k)).fixTo(c.texCoordsHiFormat)
+ 
+         val isLast = toPixelCoord(state.x) >= toPixelCoord(state.xEnd)
+         (next, isLast)
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..cc7fe34 100644
+index 59df4ba..49fc44a 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -5,6 +5,20 @@ import spinal.core.formal._
@@ -4247,7 +4324,20 @@ index 59df4ba..cc7fe34 100644
  
    private val lowGradFormats = Seq(
      c.vColorFormat,
-@@ -75,310 +65,249 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -67,6 +57,12 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+     dst.texDy(0) := input.texHi.dSdY
+     dst.texDy(1) := input.texHi.dTdY
+     dst.alphaDx := input.hiAlpha.dAdX
++    if (c.tmuCount > 1) {
++      dst.tex1Dx(0) := input.texHi1.dSdX
++      dst.tex1Dx(1) := input.texHi1.dTdX
++      dst.tex1Dy(0) := input.texHi1.dSdY
++      dst.tex1Dy(1) := input.texHi1.dTdY
++    }
+     dst.alphaDy := input.hiAlpha.dAdY
+     dst.tmuConfig := TriangleSetup.TmuConfig.fromPerTriangle(c, input.config)
+     dst.pixelConfig := TriangleSetup.PixelPipelineConfig.fromPerTriangle(c, input.config)
+@@ -75,310 +71,256 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
      dst.clipRight := input.config.clipRight
      dst.clipLowY := input.config.clipLowY
      dst.clipHighY := input.config.clipHighY
@@ -4271,11 +4361,13 @@ index 59df4ba..cc7fe34 100644
 +    val hiS = AFix(c.texCoordsHiFormat)
 +    val hiT = AFix(c.texCoordsHiFormat)
 +    val hiAlpha = AFix(c.texCoordsHiFormat)
-+    def all: Seq[AFix] = linear.all ++ Seq(hiS, hiT, hiAlpha)
++    val hiTex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null // TMU1 S, T
++    def all: Seq[AFix] = linear.all ++ Seq(hiS, hiT, hiAlpha) ++ (if (hiTex1 != null) hiTex1.toSeq else Nil)
 +  }
-+  def dxAll: Seq[AFix] = triangleConst.linearDx.all ++ Seq(triangleConst.texDx(0), triangleConst.texDx(1), triangleConst.alphaDx)
-+  def dyAll: Seq[AFix] = triangleConst.linearDy.all ++ Seq(triangleConst.texDy(0), triangleConst.texDy(1), triangleConst.alphaDy)
-+  def formats: Seq[QFormat] = lowGradFormats ++ Seq.fill(3)(c.texCoordsHiFormat)
++  private def tex1(v: Vec[AFix]): Seq[AFix] = if (c.tmuCount > 1) v.toSeq else Nil
++  def dxAll: Seq[AFix] = triangleConst.linearDx.all ++ Seq(triangleConst.texDx(0), triangleConst.texDx(1), triangleConst.alphaDx) ++ tex1(triangleConst.tex1Dx)
++  def dyAll: Seq[AFix] = triangleConst.linearDy.all ++ Seq(triangleConst.texDy(0), triangleConst.texDy(1), triangleConst.alphaDy) ++ tex1(triangleConst.tex1Dy)
++  def formats: Seq[QFormat] = lowGradFormats ++ Seq.fill(if (c.tmuCount > 1) 5 else 3)(c.texCoordsHiFormat)
 +
 +  // Row edge bounds (xi, x2i) of row y; covered pixels are [xi, x2i] when
 +  // xdirPos, else [x2i, xi].
@@ -4665,12 +4757,13 @@ index 59df4ba..cc7fe34 100644
 +        (m.k << c.vertexFormat.fraction).resize(c.vertexFormat.width bits)).asBits
 +      out.xEnd := pixelToVertex(m.end)
 +      out.y := m.y
-+      val starts = out.linear.all ++ Seq(out.hiS, out.hiT, out.hiAlpha)
++      val starts = out.linear.all ++ Seq(out.hiS, out.hiT, out.hiAlpha) ++ tex1(out.hiTex1)
 +      for (((dst, v), idx) <- starts.zip(m.vals.all).zipWithIndex)
 +        dst.raw := (v.raw.asSInt + m.prod(idx).asSInt).resize(formats(idx).width bits).asBits
 +      out.stepX.linear := triangleConst.linearDx
 +      out.stepX.tex := triangleConst.texDx
 +      out.stepX.alpha := triangleConst.alphaDx
++      if (c.tmuCount > 1) out.stepX.tex1 := triangleConst.tex1Dx
 +      out.tmuConfig := triangleConst.tmuConfig
 +      out.pixelConfig := triangleConst.pixelConfig
 +      out.firstSpan := m.firstSpan
@@ -4689,7 +4782,8 @@ index 59df4ba..cc7fe34 100644
 -    firstSpanPending := False
 -    prepareNextRow(leftEdge, leftBiasedGuess = true)
 -  }
--
++  o << spans
+ 
 -  // Span discovery still reaches EmitSpan for some fully off-screen or reversed
 -  // rows. Drop them here so negative or out-of-range coordinates do not wrap in
 -  // later framebuffer address generation.
@@ -4697,8 +4791,7 @@ index 59df4ba..cc7fe34 100644
 -    firstSpanPending := False
 -    prepareNextRow(leftEdge, leftBiasedGuess = true)
 -  }
-+  o << spans
- 
+-
 -  when(state === WalkerState.AdvanceRow) {
 -    val nextY = (nextRowBase.coords(1) + one).fixTo(c.vertexFormat)
 -    when(nextY >= triangleConst.yrange(1)) {
@@ -4723,7 +4816,6 @@ index 59df4ba..cc7fe34 100644
 -      when(nextRowLeftBiased) {
 -        state := WalkerState.RecoverLeft
 -      }
--    }
 +  val pipeBusy = genActive || setupCycle || bounds.valid || clippedReg.valid || multiplied.valid
 +  running := pipeBusy
 +  i.ready := !pipeBusy
@@ -4735,6 +4827,10 @@ index 59df4ba..cc7fe34 100644
 +    rowVals.hiS := i.payload.texHi.sStart
 +    rowVals.hiT := i.payload.texHi.tStart
 +    rowVals.hiAlpha := i.payload.hiAlpha.start
++    if (c.tmuCount > 1) {
++      rowVals.hiTex1(0) := i.payload.texHi1.sStart
++      rowVals.hiTex1(1) := i.payload.texHi1.tStart
+     }
 +    firstPending := True
 +    genActive := True
 +    setupCycle := True
@@ -4764,7 +4860,24 @@ index 59df4ba..cc7fe34 100644
  }
  
  object SpanWalker {
-@@ -416,6 +345,9 @@ object SpanWalker {
+@@ -397,6 +339,7 @@ object SpanWalker {
+     val linear = LinearState(c)
+     val tex = Vec.fill(2)(AFix(c.texCoordsHiFormat))
+     val alpha = AFix(c.texCoordsHiFormat)
++    val tex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
+   }
+ 
+   case class TriangleConst(c: Config) extends Bundle {
+@@ -409,6 +352,8 @@ object SpanWalker {
+     val texDy = Vec.fill(2)(AFix(c.texCoordsHiFormat))
+     val alphaDx = AFix(c.texCoordsHiFormat)
+     val alphaDy = AFix(c.texCoordsHiFormat)
++    val tex1Dx = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
++    val tex1Dy = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
+     val tmuConfig = TriangleSetup.TmuConfig(c)
+     val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
+     val enableClipping = Bool()
+@@ -416,6 +361,9 @@ object SpanWalker {
      val clipRight = UInt(10 bits)
      val clipLowY = UInt(10 bits)
      val clipHighY = UInt(10 bits)
@@ -4774,7 +4887,7 @@ index 59df4ba..cc7fe34 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,6 +358,7 @@ object SpanWalker {
+@@ -426,6 +374,7 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -4782,11 +4895,19 @@ index 59df4ba..cc7fe34 100644
    }
  
    case class Output(c: Config) extends Bundle {
+@@ -436,6 +385,7 @@ object SpanWalker {
+     val hiS = AFix(c.texCoordsHiFormat)
+     val hiT = AFix(c.texCoordsHiFormat)
+     val hiAlpha = AFix(c.texCoordsHiFormat)
++    val hiTex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
+     val stepX = StepX(c)
+     val tmuConfig = TriangleSetup.TmuConfig(c)
+     val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
 diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
-index fb95365..1119870 100644
+index fb95365..b448a05 100644
 --- a/src/voodoo/raster/TriangleSetup.scala
 +++ b/src/voodoo/raster/TriangleSetup.scala
-@@ -8,216 +8,207 @@ import spinal.lib._
+@@ -8,216 +8,216 @@ import spinal.lib._
  case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Component {
    val i = slave(Stream(TriangleSetup.Input(c)))
    val o = master(Stream(TriangleSetup.Output(c)))
@@ -4878,7 +4999,10 @@ index fb95365..1119870 100644
 +    new Channel(pending.texHi.sStart, pending.texHi.dSdX, pending.texHi.dSdY),
 +    new Channel(pending.texHi.tStart, pending.texHi.dTdX, pending.texHi.dTdY),
 +    new Channel(pending.hiAlpha.start, pending.hiAlpha.dAdX, pending.hiAlpha.dAdY)
-+  )
++  ) ++ (if (c.tmuCount > 1) Seq(
++    new Channel(pending.texHi1.sStart, pending.texHi1.dSdX, pending.texHi1.dSdY),
++    new Channel(pending.texHi1.tStart, pending.texHi1.dTdX, pending.texHi1.dTdY)
++  ) else Nil)
 +  val opWidth = channels.map(_.width).max
 +  val prodWidth = opWidth + 4
 +  val mulWidth = 20 // 16-bit signed pixel delta, 4 subpixel bits
@@ -5108,10 +5232,28 @@ index fb95365..1119870 100644
 -    hiSStart,
 -    hiTStart,
 -    hiAlphaStart
+-  )
+-
+-  i.ready := state === SetupState.Idle
 +  // ---------------------------------------------------------------------
 +  i.ready := state === SetupState.Done && o.ready
 +  busy := state =/= SetupState.Idle
-+  o.valid := state === SetupState.Done
+   o.valid := state === SetupState.Done
+-  copySetupOutput(o.payload, outputReg)
+-  o.payload.grads.redGrad.start.raw := redStart.resultBits
+-  o.payload.grads.greenGrad.start.raw := greenStart.resultBits
+-  o.payload.grads.blueGrad.start.raw := blueStart.resultBits
+-  o.payload.grads.depthGrad.start.raw := depthStart.resultBits
+-  o.payload.grads.alphaGrad.start.raw := alphaStart.resultBits
+-  o.payload.grads.wGrad.start.raw := wStart.resultBits
+-  o.payload.grads.sGrad.start.raw := sStart.resultBits
+-  o.payload.grads.tGrad.start.raw := tStart.resultBits
+-  o.payload.texHi.sStart.raw := hiSStart.resultBits
+-  o.payload.texHi.tStart.raw := hiTStart.resultBits
+-  o.payload.hiAlpha.start.raw := hiAlphaStart.resultBits
+-
+-  when(state === SetupState.Idle && i.fire) {
+-    copySetupInput(pending, i.payload)
 +  o.payload.coeffs := coeffsReg
 +  o.payload.edgeStart := edgeStartReg
 +  o.payload.xrange := xrangeReg
@@ -5129,6 +5271,12 @@ index fb95365..1119870 100644
 +  o.payload.texHi.dTdY := pending.texHi.dTdY
 +  o.payload.hiAlpha.dAdX := pending.hiAlpha.dAdX
 +  o.payload.hiAlpha.dAdY := pending.hiAlpha.dAdY
++  if (c.tmuCount > 1) {
++    o.payload.texHi1.dSdX := pending.texHi1.dSdX
++    o.payload.texHi1.dTdX := pending.texHi1.dTdX
++    o.payload.texHi1.dSdY := pending.texHi1.dSdY
++    o.payload.texHi1.dTdY := pending.texHi1.dTdY
++  }
 +  o.payload.config := pending.config
 +  if (c.trace.enabled) copyTrace(o.payload.trace, pending.trace)
 +  val outStarts = Seq(
@@ -5143,26 +5291,9 @@ index fb95365..1119870 100644
 +    o.payload.texHi.sStart,
 +    o.payload.texHi.tStart,
 +    o.payload.hiAlpha.start
-   )
++  ) ++ (if (c.tmuCount > 1) Seq(o.payload.texHi1.sStart, o.payload.texHi1.tStart) else Nil)
 +  outStarts.zip(channels).foreach { case (dst, ch) => dst.raw := ch.result }
- 
--  i.ready := state === SetupState.Idle
--  o.valid := state === SetupState.Done
--  copySetupOutput(o.payload, outputReg)
--  o.payload.grads.redGrad.start.raw := redStart.resultBits
--  o.payload.grads.greenGrad.start.raw := greenStart.resultBits
--  o.payload.grads.blueGrad.start.raw := blueStart.resultBits
--  o.payload.grads.depthGrad.start.raw := depthStart.resultBits
--  o.payload.grads.alphaGrad.start.raw := alphaStart.resultBits
--  o.payload.grads.wGrad.start.raw := wStart.resultBits
--  o.payload.grads.sGrad.start.raw := sStart.resultBits
--  o.payload.grads.tGrad.start.raw := tStart.resultBits
--  o.payload.texHi.sStart.raw := hiSStart.resultBits
--  o.payload.texHi.tStart.raw := hiTStart.resultBits
--  o.payload.hiAlpha.start.raw := hiAlphaStart.resultBits
--
--  when(state === SetupState.Idle && i.fire) {
--    copySetupInput(pending, i.payload)
++
 +  when(state === SetupState.Idle && i.valid) {
      state := SetupState.Prep
    }
@@ -5177,7 +5308,7 @@ index fb95365..1119870 100644
    when(state === SetupState.Prep) {
      val input = pending
      val tri = input.triWithSign.tri
-@@ -282,47 +273,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+@@ -282,47 +282,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
      val dxPix = (startXPix - aXPix).resize(16 bits)
      val dyPix = (startYPix - aYPix).resize(16 bits)
  
@@ -5223,6 +5354,10 @@ index fb95365..1119870 100644
 +    divIter := 0
 +    divBusy := True
 +    state := SetupState.Work
++  }
++
++  when(state === SetupState.Work && !divBusy && !chBusy) {
++    state := SetupState.ScanMul
    }
  
 -  when(state === SetupState.Iterate) {
@@ -5235,10 +5370,6 @@ index fb95365..1119870 100644
 -      state := SetupState.Done
 -    }.otherwise {
 -      iterIndex := iterIndex + 1
-+  when(state === SetupState.Work && !divBusy && !chBusy) {
-+    state := SetupState.ScanMul
-+  }
-+
 +  when(state === SetupState.ScanMul) {
 +    val dxAB = divs(0).quotient
 +    val dxBC = divs(1).quotient
@@ -5266,33 +5397,85 @@ index fb95365..1119870 100644
    GenerationFlags.formal {
      when(o.valid) {
        val tri = pending.triWithSign.tri
-@@ -419,7 +418,6 @@ object TriangleSetup {
+@@ -351,7 +359,8 @@ object TriangleSetup {
+       texHi: HiTexCoords,
+       config: PerTriangleConfig,
+       traceDrawId: UInt,
+-      tracePrimitiveId: UInt
++      tracePrimitiveId: UInt,
++      texHi1: HiTexCoords = null
+   ): Input = {
+     val out = Input(c)
+     out.triWithSign.tri(0)(0).raw := ax.asBits
+@@ -364,6 +373,7 @@ object TriangleSetup {
+     out.grads := grads
+     out.hiAlpha := hiAlpha
+     out.texHi := texHi
++    if (c.tmuCount > 1) out.texHi1 := texHi1
+     out.config := config
+     if (c.trace.enabled) {
+       out.trace.valid := True
+@@ -407,6 +417,16 @@ object TriangleSetup {
+     }
+   }
+ 
++  /** TMU1's per-triangle registers (two-TMU builds). */
++  case class Tmu1Config() extends Bundle {
++    val textureMode = Bits(30 bits) // incl. its texture combine fields
++    val tLOD = Bits(27 bits)
++    val texBaseAddr = UInt(24 bits)
++    val texBaseAddr1 = UInt(24 bits)
++    val texBaseAddr2 = UInt(24 bits)
++    val texBaseAddr38 = UInt(24 bits)
++  }
++
+   case class TmuConfig(c: Config) extends Bundle {
+     val textureEnable = Bool()
+     val textureMode = Bits(12 bits)
+@@ -419,7 +439,9 @@ object TriangleSetup {
      val dTdX = AFix(c.texCoordsFormat)
      val dSdY = AFix(c.texCoordsFormat)
      val dTdY = AFix(c.texCoordsFormat)
 -    val texTables = if (c.packedTexLayout) TexLayoutTables.Tables() else null
++    // Two TMUs: TMU0's texture combine fields (textureMode 29:12) and TMU1.
++    val tmu0Combine = if (c.tmuCount > 1) Bits(18 bits) else null
++    val tmu1 = if (c.tmuCount > 1) Tmu1Config() else null
    }
  
    object TmuConfig {
-@@ -436,7 +434,6 @@ object TriangleSetup {
+@@ -436,7 +458,10 @@ object TriangleSetup {
        out.dTdX := src.tmudTdX
        out.dSdY := src.tmudSdY
        out.dTdY := src.tmudTdY
 -      if (c.packedTexLayout) out.texTables := src.texTables
++      if (c.tmuCount > 1) {
++        out.tmu0Combine := src.tmu0Combine
++        out.tmu1 := src.tmu1
++      }
        out
      }
    }
-@@ -468,9 +465,6 @@ object TriangleSetup {
+@@ -468,9 +493,8 @@ object TriangleSetup {
      val tmudTdX = AFix(c.texCoordsFormat)
      val tmudSdY = AFix(c.texCoordsFormat)
      val tmudTdY = AFix(c.texCoordsFormat)
 -
 -    // Packed texture layout tables (computed at triangle capture time)
 -    val texTables = if (c.packedTexLayout) TexLayoutTables.Tables() else null
++    val tmu0Combine = if (c.tmuCount > 1) Bits(18 bits) else null
++    val tmu1 = if (c.tmuCount > 1) Tmu1Config() else null
    }
  
    /** Input bundle - triangle with gradients and render config captured at command time */
-@@ -489,6 +483,11 @@ object TriangleSetup {
+@@ -479,6 +503,7 @@ object TriangleSetup {
+     val grads = Rasterizer.GradientBundle(Rasterizer.InputGradient(_), c)
+     val hiAlpha = HiAlpha(c)
+     val texHi = HiTexCoords(c)
++    val texHi1 = if (c.tmuCount > 1) HiTexCoords(c) else null // TMU1 S/T
+     val config = PerTriangleConfig(c)
+     val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
+   }
+@@ -489,9 +514,15 @@ object TriangleSetup {
      val xrange = vertex2d(c.vertexFormat)
      val yrange = vertex2d(c.vertexFormat)
      val edgeStart = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -5304,6 +5487,10 @@ index fb95365..1119870 100644
      val grads = Rasterizer.GradientBundle(Rasterizer.InputGradient(_), c)
      val hiAlpha = HiAlpha(c)
      val texHi = HiTexCoords(c)
++    val texHi1 = if (c.tmuCount > 1) HiTexCoords(c) else null // TMU1 S/T
+     val config = PerTriangleConfig(c)
+     val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
+   }
 diff --git a/src/voodoo/texture/TexLayoutTables.scala b/src/voodoo/texture/TexLayoutTables.scala
 index fbf774f..6f372f1 100644
 --- a/src/voodoo/texture/TexLayoutTables.scala
