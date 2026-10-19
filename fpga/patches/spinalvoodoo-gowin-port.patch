@@ -619,7 +619,7 @@ index d163ab7..5ab9b45 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..b90e21d 100644
+index 1b34fa2..e2c196f 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -632,7 +632,7 @@ index 1b34fa2..b90e21d 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,37 @@ case class Config(
+@@ -31,6 +34,40 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -641,6 +641,9 @@ index 1b34fa2..b90e21d 100644
 +    texSmallCacheLines: Int = 0,
 +    // TmuSmallTextureCache line fills in flight (prefetch hints + misses).
 +    texSmallFillSlots: Int = 4,
++    // Texture units: 1 (Voodoo 1) or 2 (two TREX: TMU1 feeds TMU0's texture
++    // combine, the multitexture path of 2-TMU boards and the Voodoo 2).
++    tmuCount: Int = 1,
 +    // Rasterizer span queue (spans between the walker, which issues the
 +    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
 +    spanQueueDepth: Int = 4,
@@ -671,7 +674,7 @@ index 1b34fa2..b90e21d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..ac0f5b0 100644
+index 100f1c6..0577d47 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -710,7 +713,7 @@ index 100f1c6..ac0f5b0 100644
      val fbColorWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbAuxWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbColorReadMem = master(Bmb(Core.fbMemBmbParams(c)))
-@@ -92,6 +114,10 @@ case class Core(c: Config) extends Component {
+@@ -92,12 +114,16 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -721,6 +724,13 @@ index 100f1c6..ac0f5b0 100644
      // Integrated scanout path. Board wrappers provide the physical HDMI transmitter/clocking.
      val hdmi = master(HdmiScanoutPort(c))
  
+   }
+   val addressRemapper =
+-    AddressRemapper(RegisterBank.externalBmbParams(c), RegisterBank.bmbParams(c))
++    AddressRemapper(RegisterBank.externalBmbParams(c), RegisterBank.bmbParams(c), c.tmuCount)
+   val regBank = RegisterBank(c)
+   val pciFifo = PciFifo(
+     busParams = RegisterBank.bmbParams(c),
 @@ -110,7 +136,14 @@ case class Core(c: Config) extends Component {
    val pixelPipeline = PixelPipeline(c)
    val framebufferMem = FramebufferMemSubsystem(c)
@@ -1109,10 +1119,21 @@ index 3a197b9..0f33de9 100644
      *
      * The payload is sampled in the same cycle as the register write and then buffered using the
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..c81fc68 100644
+index 226d60e..0b6eb02 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
-@@ -67,6 +67,8 @@ case class PciFifo(
+@@ -52,6 +52,10 @@ case class PciFifo(
+   }
+ 
+   val busAddrWidth: Int = busParams.access.addressWidth
++  // Register offset without the chip-select tags in bits 11:10
++  // (AddressRemapper): register decodes compare only this.
++  private def regOf(a: UInt): UInt = a(9 downto 0)
++  private def regIs(a: UInt, reg: BigInt): Bool = regOf(a) === U(reg, 10 bits)
+   val busDataWidth: Int = busParams.access.dataWidth
+ 
+   val io = new Bundle {
+@@ -67,6 +71,8 @@ case class PciFifo(
  
      // Drain blocking inputs
      val pipelineBusy = in Bool ()
@@ -1121,7 +1142,7 @@ index 226d60e..c81fc68 100644
      val commandReady = in Vec (Bool(), commandAddresses.size)
  
      // Status outputs
-@@ -97,20 +99,57 @@ case class PciFifo(
+@@ -97,20 +103,57 @@ case class PciFifo(
    // ========================================================================
    // Address categorization signals (assigned in addPrePopTask)
    // ========================================================================
@@ -1186,7 +1207,7 @@ index 226d60e..c81fc68 100644
  
    private case class StagedWrite() extends Bundle {
      val address = UInt(busAddrWidth bits)
-@@ -170,10 +209,10 @@ case class PciFifo(
+@@ -170,10 +213,10 @@ case class PciFifo(
      clearStaged(stagedWriteTx)
  
      when(queueableCpuWrite) {
@@ -1201,7 +1222,16 @@ index 226d60e..c81fc68 100644
        stagedWriteTx.syncRequired := syncRequired
        stagedWriteTx.isFloatAlias := isFloatAlias
        stagedWriteTx.floatTargetAddr := floatTargetAddr
-@@ -283,6 +322,13 @@ case class PciFifo(
+@@ -268,7 +311,7 @@ case class PciFifo(
+ 
+   // wasEnqueued: detect when a specific register write was actually enqueued
+   io.wasEnqueued := queuedWriteTx.fire && !queuedWriteTx.isTexture &&
+-    queuedWriteTx.address === io.wasEnqueuedAddr
++    regOf(queuedWriteTx.address) === regOf(io.wasEnqueuedAddr)
+ 
+   // ========================================================================
+   // 64-entry PCI FIFO
+@@ -283,6 +326,13 @@ case class PciFifo(
    // ========================================================================
    // Drain blocking logic
    // ========================================================================
@@ -1215,7 +1245,7 @@ index 226d60e..c81fc68 100644
    private val drainControl = new Area {
      val canDrain = Bool()
      canDrain := True
-@@ -294,6 +340,44 @@ case class PciFifo(
+@@ -294,6 +344,44 @@ case class PciFifo(
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
        canDrain := False
      }
@@ -1226,9 +1256,9 @@ index 226d60e..c81fc68 100644
 +    // screen while moving). The swap write itself still passes through the
 +    // issue and regBank stages before swapBusy rises; hold those cycles too.
 +    val swapAddr = io.wasEnqueuedAddr
-+    val swapInIssue = issuedWrite.valid && !issuedWrite.isTexture && issuedWrite.address === swapAddr
++    val swapInIssue = issuedWrite.valid && !issuedWrite.isTexture && regOf(issuedWrite.address) === regOf(swapAddr)
 +    val swapInRegStage = regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE &&
-+      regCmdStage.address === swapAddr
++      regOf(regCmdStage.address) === regOf(swapAddr)
 +    val swapGuard = Reg(UInt(2 bits)) init 0
 +    when(swapInRegStage && regCmdStage.ready) {
 +      swapGuard := 3
@@ -1260,7 +1290,7 @@ index 226d60e..c81fc68 100644
  
      val commandStreamBlocked = Bool()
      commandStreamBlocked := False
-@@ -303,7 +387,8 @@ case class PciFifo(
+@@ -303,7 +391,8 @@ case class PciFifo(
  
      val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
      fifoEmpty.simPublic()
@@ -1270,7 +1300,7 @@ index 226d60e..c81fc68 100644
      io.fifoEmpty := fifoEmpty
    }
    private val canDrain = drainControl.canDrain
-@@ -324,11 +409,12 @@ case class PciFifo(
+@@ -324,11 +413,12 @@ case class PciFifo(
      io.texDrain.pciAddr := drainedWrite.texPciAddr
      io.texDrain.data := drainedWrite.data
      io.texDrain.mask := drainedWrite.mask
@@ -1287,7 +1317,7 @@ index 226d60e..c81fc68 100644
    }
    val isTexDrain = drainRoute.isTexDrain
    val isRegDrain = drainRoute.isRegDrain
-@@ -341,31 +427,31 @@ case class PciFifo(
+@@ -341,31 +431,31 @@ case class PciFifo(
      // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
      // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
      val doWriteDirect = isWriteCmd && fifoBypass
@@ -1336,7 +1366,7 @@ index 226d60e..c81fc68 100644
        (isTexDrain && io.texDrain.ready)
    }
    private val doWriteDirect = regSideMux.doWriteDirect
-@@ -383,16 +469,16 @@ case class PciFifo(
+@@ -383,16 +473,16 @@ case class PciFifo(
      io.regSide.rsp.ready := True
  
      io.cpuSide.rsp.valid := RegNext(
@@ -1357,7 +1387,7 @@ index 226d60e..c81fc68 100644
        pendingRead := True
      }
      when(pendingRead && io.regSide.rsp.valid) {
-@@ -414,18 +500,18 @@ case class PciFifo(
+@@ -414,18 +504,18 @@ case class PciFifo(
    // Stall logic
    // ========================================================================
    private val cpuReady = new Area {
@@ -1383,17 +1413,18 @@ index 226d60e..c81fc68 100644
      }
    }
  
-@@ -453,33 +539,33 @@ case class PciFifo(
+@@ -453,33 +543,35 @@ case class PciFifo(
      println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
  
      // Default: unregistered addresses bypass FIFO
 -    fifoBypass := True
 -    switch(io.cpuSide.cmd.address) {
 +    decodeInfo.fifoBypass := True
-+    switch(cpuCmdIn.payload.address) {
++    switch(regOf(cpuCmdIn.payload.address)) {
        for (addr <- fifoQueueCases) {
-         is(U(addr, busAddrWidth bits)) {
+-        is(U(addr, busAddrWidth bits)) {
 -          fifoBypass := False
++        is(U(addr, 10 bits)) {
 +          decodeInfo.fifoBypass := False
          }
        }
@@ -1402,10 +1433,11 @@ index 226d60e..c81fc68 100644
 -    syncRequired := False
 -    switch(io.cpuSide.cmd.address) {
 +    decodeInfo.syncRequired := False
-+    switch(cpuCmdIn.payload.address) {
++    switch(regOf(cpuCmdIn.payload.address)) {
        for (addr <- syncCases) {
-         is(U(addr, busAddrWidth bits)) {
+-        is(U(addr, busAddrWidth bits)) {
 -          syncRequired := True
++        is(U(addr, 10 bits)) {
 +          decodeInfo.syncRequired := True
          }
        }
@@ -1423,14 +1455,16 @@ index 226d60e..c81fc68 100644
 -        isFloatAlias := True
 -        floatTargetAddr := U(config.targetAddr, busAddrWidth bits)
 -        floatShiftAmount := U(30 - config.fracBits, 5 bits)
-+      when(cpuCmdIn.payload.address === U(floatAddr, busAddrWidth bits)) {
++      when(regIs(cpuCmdIn.payload.address, floatAddr)) {
 +        decodeInfo.isFloatAlias := True
-+        decodeInfo.floatTargetAddr := U(config.targetAddr, busAddrWidth bits)
++        // Keep the chip-select tags on the converted register write.
++        decodeInfo.floatTargetAddr := U(config.targetAddr, busAddrWidth bits) |
++          (cpuCmdIn.payload.address & ~U(0x3ff, busAddrWidth bits))
 +        decodeInfo.floatShiftAmount := U(30 - config.fracBits, 5 bits)
        }
      }
  
-@@ -488,52 +574,61 @@ case class PciFifo(
+@@ -488,52 +580,61 @@ case class PciFifo(
        s"[PciFifo] Command stream addresses: ${commandAddresses.map(a => f"0x$a%03x").mkString(", ")}"
      )
      if (commandAddresses.nonEmpty) {
@@ -1438,13 +1472,14 @@ index 226d60e..c81fc68 100644
 +      // command write while any command write is still in the issue / regBank
 +      // stages so it can't be dropped (two command registers may share one
 +      // buffer, e.g. triangleCMD / ftriangleCMD). Command writes are rare.
-+      def isCommand(a: UInt): Bool = commandAddresses.map(x => a === U(x, busAddrWidth bits)).orR
++      def isCommand(a: UInt): Bool = commandAddresses.map(x => regIs(a, x)).orR
 +      val commandInFlight =
 +        (issuedWrite.valid && !issuedWrite.isTexture && isCommand(issuedWrite.address)) ||
 +          (regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE && isCommand(regCmdStage.address))
        for ((addr, idx) <- commandAddresses.zipWithIndex) {
-         when(pciFifo.io.pop.address === U(addr, busAddrWidth bits)) {
+-        when(pciFifo.io.pop.address === U(addr, busAddrWidth bits)) {
 -          commandStreamBlocked := !io.commandReady(idx)
++        when(regIs(pciFifo.io.pop.address, addr)) {
 +          commandStreamBlocked := !io.commandReady(idx) || commandInFlight
          }
        }
@@ -1512,7 +1547,7 @@ index 226d60e..c81fc68 100644
      }
  
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
-@@ -550,8 +645,8 @@ case class PciFifo(
+@@ -550,8 +651,8 @@ case class PciFifo(
        assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
      }
  
@@ -1523,7 +1558,7 @@ index 226d60e..c81fc68 100644
      }
  
      when(floatWriteRequest && !floatConvertInFlight) {
-@@ -581,12 +676,10 @@ case class PciFifo(
+@@ -581,12 +682,10 @@ case class PciFifo(
        assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
      }
  
@@ -2450,6 +2485,60 @@ index 0000000..286b588
 +    .elsewhen(io.mem.cmd.fire && popped) { fetch.credit := fetch.credit + fetch.pieceWords - 1 }
 +    .elsewhen(popped) { fetch.credit := fetch.credit - 1 }
 +}
+diff --git a/src/voodoo/frontend/AddressRemapper.scala b/src/voodoo/frontend/AddressRemapper.scala
+index df282f3..50f0c61 100644
+--- a/src/voodoo/frontend/AddressRemapper.scala
++++ b/src/voodoo/frontend/AddressRemapper.scala
+@@ -16,7 +16,7 @@ import voodoo.bus.BmbRouting
+   *   - If in remapped float range (0x088-0x0fc base): translate RGBZASTW → standard layout
+   *   - Otherwise: clear bit 21 to access regular registers
+   */
+-case class AddressRemapper(inputParams: BmbParameter, outputParams: BmbParameter)
++case class AddressRemapper(inputParams: BmbParameter, outputParams: BmbParameter, tmuCount: Int = 1)
+     extends Component {
+   val io = new Bundle {
+     val input = slave(Bmb(inputParams))
+@@ -67,10 +67,19 @@ case class AddressRemapper(inputParams: BmbParameter, outputParams: BmbParameter
+     0x0fc -> 0x0fc // fdWdY
+   )
+ 
+-  // Extract address components
++  // Extract address components. Bits 13:10 select the chip (0 = all, 0x400
++  // FBI, 0x800 TMU0, 0x1000 TMU1); the register bus after this carries the
++  // 10-bit register offset plus two tags (RegisterBank.tagTmu1 /
++  // tagSkipMain): bit 10 = TMU1 takes the write, bit 11 = only TMU1 does (the
++  // FBI + TMU0 bank ignores it). Writes for chip select 0x2000 (TMU2) go
++  // nowhere.
+   val inputAddr = io.input.cmd.address
+-  val baseAddr = inputAddr(11 downto 0)
++  val baseAddr = inputAddr(9 downto 0).resize(12 bits)
+   val hasBit21 = inputAddr(21)
++  val chip = inputAddr(13 downto 10)
++  val mainTakes = chip === 0 || chip(0) || chip(1)
++  val tmu1Takes = Bool(tmuCount > 1) && (chip === 0 || chip(2))
++  val tags = (!mainTakes ## tmu1Takes).asUInt << 10
+ 
+   // Check if address is in remapped float range (0x088-0x0fc)
+   val inRemapRange = baseAddr >= 0x088 && baseAddr <= 0x0fc
+@@ -92,14 +101,15 @@ case class AddressRemapper(inputParams: BmbParameter, outputParams: BmbParameter
+       }
+     } otherwise {
+       // Clear bit 21 to access regular registers (just use lower bits)
+-      translatedAddr := (inputAddr & ~(U(1, inputAddr.getWidth bits) |<< 21)).resized
++      translatedAddr := baseAddr.resized
+     }
+   } otherwise {
+     // No translation needed
+-    translatedAddr := inputAddr.resized
++    translatedAddr := baseAddr.resized
+   }
++  val taggedAddr = translatedAddr | tags.resized
+ 
+-  BmbRouting.driveCmdFrom(io.output, io.input, io.input.cmd.valid, translatedAddr)
++  BmbRouting.driveCmdFrom(io.output, io.input, io.input.cmd.valid, taggedAddr)
+   io.input.cmd.ready := io.output.cmd.ready
+ 
+   // Pass response back unchanged
 diff --git a/src/voodoo/frontend/Lfb.scala b/src/voodoo/frontend/Lfb.scala
 index aeba713..082556f 100644
 --- a/src/voodoo/frontend/Lfb.scala
@@ -2574,10 +2663,10 @@ index aeba713..082556f 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..f75c810 100644
+index c5a4cd8..b5912c6 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
-@@ -72,8 +72,6 @@ case class RegisterBank(config: Config) extends Component {
+@@ -72,15 +72,29 @@ case class RegisterBank(config: Config) extends Component {
    io.paletteWrite.payload.address := 0
    io.paletteWrite.payload.data := 0
  
@@ -2586,7 +2675,129 @@ index c5a4cd8..f75c810 100644
    private val texCoordsHiWidth = AFix(config.texCoordsHiFormat).raw.getWidth
  
    // Create BMB bus interface for RegIf - shared across all Areas
-@@ -576,10 +574,6 @@ case class RegisterBank(config: Config) extends Component {
+   // Address remapping (for bit 21 set) is handled by AddressRemapper before this
+   implicit val moduleName: spinal.lib.bus.regif.ClassName =
+     spinal.lib.bus.regif.ClassName("RegisterBank")
+-  val busif = BmbBusInterface(io.bus, SizeMapping(0x000, 4 KiB), "VDO")
++  // Chip-select tags from AddressRemapper (bits 11:10 of the bus address):
++  // tagTmu1 = TMU1 takes the write, tagSkipMain = only TMU1 does. The
++  // register file here is the FBI + TMU0 bank; it decodes the 10-bit offset
++  // and sees a TMU1-only write as one to an unmapped register (0x3fc).
++  val regBus = Bmb(io.bus.p)
++  private val busTagTmu1 = io.bus.cmd.address(RegisterBank.tagTmu1Bit)
++  private val busSkipMain = io.bus.cmd.address(RegisterBank.tagSkipMainBit)
++  regBus.cmd.valid := io.bus.cmd.valid
++  regBus.cmd.payload := io.bus.cmd.payload
++  regBus.cmd.address.allowOverride := Mux(
++    busSkipMain && io.bus.cmd.opcode === Bmb.Cmd.Opcode.WRITE,
++    U(RegisterBank.unmappedReg, regBus.p.access.addressWidth bits),
++    io.bus.cmd.address(9 downto 0).resize(regBus.p.access.addressWidth bits)
++  )
++  io.bus.cmd.ready := regBus.cmd.ready
++  io.bus.rsp << regBus.rsp
++  val busif = BmbBusInterface(regBus, SizeMapping(0x000, 4 KiB), "VDO")
+   import busif.FieldFloatAlias // Bring .withFloatAlias() implicit into scope
+ 
+   private val triangleDrawTraceId = if (config.trace.enabled) Reg(UInt(32 bits)) init (0) else null
+@@ -109,7 +123,7 @@ case class RegisterBank(config: Config) extends Component {
+   private val floatShadowDAdY = Reg(SInt(texCoordsHiWidth bits)) init (0)
+ 
+   private def setFloatShadowRaw(address: UInt, raw: SInt): Unit = {
+-    switch(address) {
++    switch(Mux(address(RegisterBank.tagSkipMainBit), U(RegisterBank.unmappedReg, 12 bits), address(9 downto 0).resize(12 bits))) {
+       is(U(0x030, 12 bits)) { floatShadowStartA := raw.resize(texCoordsHiWidth bits) }
+       is(U(0x034, 12 bits)) { floatShadowStartS := raw.resize(texCoordsHiWidth bits) }
+       is(U(0x038, 12 bits)) { floatShadowStartT := raw.resize(texCoordsHiWidth bits) }
+@@ -127,15 +141,15 @@ case class RegisterBank(config: Config) extends Component {
+ 
+   when(io.floatShadow.valid) {
+     setFloatShadowRaw(io.floatShadow.address, io.floatShadow.raw)
+-  }.elsewhen(io.bus.cmd.fire && io.bus.cmd.opcode === Bmb.Cmd.Opcode.WRITE) {
+-    when(io.bus.cmd.address === U(0x228, 12 bits)) {
+-      val clutIndex = io.bus.cmd.data(29 downto 24).asUInt
++  }.elsewhen(regBus.cmd.fire && regBus.cmd.opcode === Bmb.Cmd.Opcode.WRITE) {
++    when(regBus.cmd.address === U(0x228, 12 bits)) {
++      val clutIndex = regBus.cmd.data(29 downto 24).asUInt
+       when(clutIndex <= 32) {
+-        gammaLut(clutIndex.resized) := io.bus.cmd.data(23 downto 0)
++        gammaLut(clutIndex.resized) := regBus.cmd.data(23 downto 0)
+       }
+     }
+ 
+-    val paletteRegHit = io.bus.cmd.address.mux(
++    val paletteRegHit = regBus.cmd.address.mux(
+       U(0x334, 12 bits) -> True,
+       U(0x338, 12 bits) -> True,
+       U(0x33c, 12 bits) -> True,
+@@ -146,47 +160,47 @@ case class RegisterBank(config: Config) extends Component {
+       U(0x350, 12 bits) -> True,
+       default -> False
+     )
+-    when(paletteRegHit && io.bus.cmd.data(31)) {
+-      val evenEntry = io.bus.cmd.data(30 downto 23).asUInt & U(0xfe, 8 bits)
+-      val isOddReg = io.bus.cmd.address === U(0x338, 12 bits) ||
+-        io.bus.cmd.address === U(0x340, 12 bits) ||
+-        io.bus.cmd.address === U(0x348, 12 bits) ||
+-        io.bus.cmd.address === U(0x350, 12 bits)
++    when(paletteRegHit && regBus.cmd.data(31)) {
++      val evenEntry = regBus.cmd.data(30 downto 23).asUInt & U(0xfe, 8 bits)
++      val isOddReg = regBus.cmd.address === U(0x338, 12 bits) ||
++        regBus.cmd.address === U(0x340, 12 bits) ||
++        regBus.cmd.address === U(0x348, 12 bits) ||
++        regBus.cmd.address === U(0x350, 12 bits)
+       io.paletteWrite.valid := True
+       io.paletteWrite.payload.address := (evenEntry | isOddReg.asUInt.resize(8 bits)).resized
+-      io.paletteWrite.payload.data := io.bus.cmd.data(23 downto 0)
++      io.paletteWrite.payload.data := regBus.cmd.data(23 downto 0)
+     }
+-    switch(io.bus.cmd.address) {
++    switch(regBus.cmd.address) {
+       is(U(0x030, 12 bits)) {
+-        floatShadowStartA := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
++        floatShadowStartA := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
+       }
+       is(U(0x034, 12 bits)) {
+-        floatShadowStartS := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
++        floatShadowStartS := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
+       }
+       is(U(0x038, 12 bits)) {
+-        floatShadowStartT := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
++        floatShadowStartT := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
+       }
+-      is(U(0x03c, 12 bits)) { floatShadowStartW := io.bus.cmd.data.asSInt.resize(60 bits) }
++      is(U(0x03c, 12 bits)) { floatShadowStartW := regBus.cmd.data.asSInt.resize(60 bits) }
+       is(U(0x050, 12 bits)) {
+-        floatShadowDAdX := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
++        floatShadowDAdX := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
+       }
+       is(U(0x054, 12 bits)) {
+-        floatShadowDSdX := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
++        floatShadowDSdX := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
+       }
+       is(U(0x058, 12 bits)) {
+-        floatShadowDTdX := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
++        floatShadowDTdX := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
+       }
+-      is(U(0x05c, 12 bits)) { floatShadowDWdX := io.bus.cmd.data.asSInt.resize(60 bits) }
++      is(U(0x05c, 12 bits)) { floatShadowDWdX := regBus.cmd.data.asSInt.resize(60 bits) }
+       is(U(0x070, 12 bits)) {
+-        floatShadowDAdY := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
++        floatShadowDAdY := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
+       }
+       is(U(0x074, 12 bits)) {
+-        floatShadowDSdY := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
++        floatShadowDSdY := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
+       }
+       is(U(0x078, 12 bits)) {
+-        floatShadowDTdY := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
++        floatShadowDTdY := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
+       }
+-      is(U(0x07c, 12 bits)) { floatShadowDWdY := io.bus.cmd.data.asSInt.resize(60 bits) }
++      is(U(0x07c, 12 bits)) { floatShadowDWdY := regBus.cmd.data.asSInt.resize(60 bits) }
+     }
+   }
+ 
+@@ -576,10 +590,6 @@ case class RegisterBank(config: Config) extends Component {
      cfg.tmudSdY.raw := g.dSdY.asBits
      cfg.tmudTdY.raw := g.dTdY.asBits
  
@@ -2597,7 +2808,7 @@ index c5a4cd8..f75c810 100644
      cfg
    }
  
-@@ -649,28 +643,26 @@ case class RegisterBank(config: Config) extends Component {
+@@ -649,28 +659,26 @@ case class RegisterBank(config: Config) extends Component {
    // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
    // ========================================================================
    val commands = new Area {
@@ -2627,7 +2838,7 @@ index c5a4cd8..f75c810 100644
 +      ) { (isFloat, payload) =>
          Component.current.addPrePopTask { () =>
 -          payload.assignFromBits(buildTriangleCommandInput(io.bus.cmd.data(31), True).asBits)
-+          payload.assignFromBits(buildTriangleCommandInput(io.bus.cmd.data(31), isFloat).asBits)
++          payload.assignFromBits(buildTriangleCommandInput(regBus.cmd.data(31), isFloat).asBits)
          }
        }
 +    // Kept for the PixelPipeline / test interface; never valid.
@@ -2637,7 +2848,16 @@ index c5a4cd8..f75c810 100644
      val (nopCmdReg, nopCmdStream) =
        busif.newCommandRegWithPayload(
          0x120,
-@@ -691,7 +683,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -679,7 +687,7 @@ case class RegisterBank(config: Config) extends Component {
+         HardType(Bits(32 bits))
+       ) { (_, payload) =>
+         Component.current.addPrePopTask { () =>
+-          payload := io.bus.cmd.data.asBits
++          payload := regBus.cmd.data.asBits
+         }
+       }
+     val (fastfillCmdReg, fastfillCmdStream) =
+@@ -691,7 +699,7 @@ case class RegisterBank(config: Config) extends Component {
          when(swapbufferCmdStream.fire) {
            triangleDrawTraceId := triangleDrawTraceId + 1
          }
@@ -2646,7 +2866,7 @@ index c5a4cd8..f75c810 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1087,33 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1103,33 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -2681,7 +2901,7 @@ index c5a4cd8..f75c810 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1132,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1148,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -2690,7 +2910,7 @@ index c5a4cd8..f75c810 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1144,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1160,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -2699,7 +2919,7 @@ index c5a4cd8..f75c810 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1204,9 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1220,53 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -2718,12 +2938,82 @@ index c5a4cd8..f75c810 100644
 -    texTablesRegOpt = Some(triangleTexTablesReg)
 -    triangleTexTablesRegOpt = Some(triangleTexTablesReg)
 -  }
++  // TMU1: the same registers and its own S/T (start and gradients, at the
++  // precision of the TMU0 shadows), written by broadcast or TMU1-addressed
++  // writes. W is shared with TMU0 / FBI (Glide sends a separate TMU1 W only
++  // with GR_STWHINT_W_DIFF_TMU1).
++  val tmu1 = if (config.tmuCount > 1) new Area {
++    val regs = Reg(RegisterBank.Tmu1Regs())
++    regs.textureMode init (0)
++    regs.tLOD init (0)
++    regs.tDetail init (0)
++    regs.texBaseAddr init (0)
++    regs.texBaseAddr1 init (0)
++    regs.texBaseAddr2 init (0)
++    regs.texBaseAddr38 init (0)
++    regs.trexInit1 init (0)
++    val startS, startT, dSdX, dTdX, dSdY, dTdY = Reg(SInt(texCoordsHiWidth bits)) init (0)
++    private def hiOf(data: Bits): SInt = data.asSInt.resize(texCoordsHiWidth bits) |<< 12
++    private def setHi(reg: UInt, v: SInt): Unit = switch(reg) {
++      is(U(0x034, 10 bits)) { startS := v }
++      is(U(0x038, 10 bits)) { startT := v }
++      is(U(0x054, 10 bits)) { dSdX := v }
++      is(U(0x058, 10 bits)) { dTdX := v }
++      is(U(0x074, 10 bits)) { dSdY := v }
++      is(U(0x078, 10 bits)) { dTdY := v }
++    }
++    val write = io.bus.cmd.fire && io.bus.cmd.opcode === Bmb.Cmd.Opcode.WRITE && busTagTmu1
++    val reg = io.bus.cmd.address(9 downto 0)
++    val data = io.bus.cmd.data
++    when(io.floatShadow.valid && io.floatShadow.address(RegisterBank.tagTmu1Bit)) {
++      setHi(io.floatShadow.address(9 downto 0), io.floatShadow.raw.resize(texCoordsHiWidth bits))
++    }.elsewhen(write) {
++      setHi(reg, hiOf(data))
++      switch(reg) {
++        is(U(0x300, 10 bits)) { regs.textureMode := data }
++        is(U(0x304, 10 bits)) { regs.tLOD := data }
++        is(U(0x308, 10 bits)) { regs.tDetail := data }
++        is(U(0x30c, 10 bits)) { regs.texBaseAddr := data(23 downto 0).asUInt }
++        is(U(0x310, 10 bits)) { regs.texBaseAddr1 := data(23 downto 0).asUInt }
++        is(U(0x314, 10 bits)) { regs.texBaseAddr2 := data(23 downto 0).asUInt }
++        is(U(0x318, 10 bits)) { regs.texBaseAddr38 := data(23 downto 0).asUInt }
++        is(U(0x320, 10 bits)) { regs.trexInit1 := data }
++      }
++    }
++  } else null
++
 +  // The packed-layout LOD tables are a function of these per-triangle
 +  // registers; the TMU computes them right before texel addressing instead of
 +  // every pipeline stage carrying ~430 bits of tables per pixel.
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
+@@ -1250,6 +1312,25 @@ case class RegisterBank(config: Config) extends Component {
+ }
+ 
+ object RegisterBank {
++  // Chip-select tags in the register bus address (AddressRemapper).
++  val tagTmu1Bit = 10
++  val tagSkipMainBit = 11
++  // A register offset nothing decodes: where the FBI + TMU0 bank sends
++  // TMU1-only writes.
++  val unmappedReg = 0x3fc
++
++  /** TMU1's copy of the TMU registers (two-TMU builds). */
++  case class Tmu1Regs() extends Bundle {
++    val textureMode = Bits(32 bits)
++    val tLOD = Bits(32 bits)
++    val tDetail = Bits(32 bits)
++    val texBaseAddr = UInt(24 bits)
++    val texBaseAddr1 = UInt(24 bits)
++    val texBaseAddr2 = UInt(24 bits)
++    val texBaseAddr38 = UInt(24 bits)
++    val trexInit1 = Bits(32 bits)
++  }
++
+   case class PaletteWrite() extends Bundle {
+     val address = UInt(8 bits)
+     val data = Bits(24 bits)
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
 index de14d02..3b650aa 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
