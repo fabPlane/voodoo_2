@@ -183,7 +183,7 @@ index d36865c..e261ebf 100644
      }
  }
 diff --git a/emu/sim/harness/sim_harness.cpp b/emu/sim/harness/sim_harness.cpp
-index eda5bba..e888df0 100644
+index eda5bba..b8efdda 100644
 --- a/emu/sim/harness/sim_harness.cpp
 +++ b/emu/sim/harness/sim_harness.cpp
 @@ -474,6 +474,85 @@ static void tick_one(void) {
@@ -257,8 +257,8 @@ index eda5bba..e888df0 100644
 +            int16_t cy = sext12(r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_output_payload_coords_y);
 +            if (cx == watch_x && cy == watch_y) {
 +                fprintf(stderr, "[PIXEL %d,%d] sh3=%u base3=%u CC tex=%u,%u,%u out=%u,%u,%u\n", cx, cy,
-+                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_meta_config_texTables_texShift_3,
-+                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_meta_config_texTables_texBase_3,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_texTables_texShift_3,
++                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__tmu_1__DOT__coordGen_stageB_payload_texTables_texBase_3,
 +                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_r,
 +                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_g,
 +                        r->CoreSim__DOT__core_1__DOT__pixelPipeline_1__DOT__colorCombine_1__DOT__io_input_payload_texture_b,
@@ -2264,10 +2264,30 @@ index aeba713..06fa63b 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..639813d 100644
+index c5a4cd8..f75c810 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
-@@ -649,28 +649,26 @@ case class RegisterBank(config: Config) extends Component {
+@@ -72,8 +72,6 @@ case class RegisterBank(config: Config) extends Component {
+   io.paletteWrite.payload.address := 0
+   io.paletteWrite.payload.data := 0
+ 
+-  var texTablesRegOpt: Option[TexLayoutTables.Tables] = None
+-  var triangleTexTablesRegOpt: Option[TexLayoutTables.Tables] = None
+   private val texCoordsHiWidth = AFix(config.texCoordsHiFormat).raw.getWidth
+ 
+   // Create BMB bus interface for RegIf - shared across all Areas
+@@ -576,10 +574,6 @@ case class RegisterBank(config: Config) extends Component {
+     cfg.tmudSdY.raw := g.dSdY.asBits
+     cfg.tmudTdY.raw := g.dTdY.asBits
+ 
+-    if (config.packedTexLayout) {
+-      cfg.texTables := triangleTexTablesRegOpt.get
+-    }
+-
+     cfg
+   }
+ 
+@@ -649,28 +643,26 @@ case class RegisterBank(config: Config) extends Component {
    // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
    // ========================================================================
    val commands = new Area {
@@ -2307,7 +2327,7 @@ index c5a4cd8..639813d 100644
      val (nopCmdReg, nopCmdStream) =
        busif.newCommandRegWithPayload(
          0x120,
-@@ -691,7 +689,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -691,7 +683,7 @@ case class RegisterBank(config: Config) extends Component {
          when(swapbufferCmdStream.fire) {
            triangleDrawTraceId := triangleDrawTraceId + 1
          }
@@ -2316,7 +2336,7 @@ index c5a4cd8..639813d 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1093,33 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1087,33 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -2351,7 +2371,7 @@ index c5a4cd8..639813d 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1138,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1132,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -2360,7 +2380,7 @@ index c5a4cd8..639813d 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1150,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1144,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -2369,6 +2389,31 @@ index c5a4cd8..639813d 100644
    }
  
    // ========================================================================
+@@ -1190,21 +1204,9 @@ case class RegisterBank(config: Config) extends Component {
+     val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
+   }
+ 
+-  if (config.packedTexLayout) {
+-    val texCfg = TexLayoutTables.TexConfig()
+-    texCfg.texBaseAddr := tmuConfig.texBaseAddr(18 downto 0)
+-    texCfg.texBaseAddr1 := tmuConfig.texBaseAddr1(18 downto 0)
+-    texCfg.texBaseAddr2 := tmuConfig.texBaseAddr2(18 downto 0)
+-    texCfg.texBaseAddr38 := tmuConfig.texBaseAddr38(18 downto 0)
+-    texCfg.tformat := tmuConfig.textureMode(11 downto 8).asUInt
+-    texCfg.tLOD_aspect := tmuConfig.tLOD(22 downto 21).asUInt
+-    texCfg.tLOD_sIsWider := tmuConfig.tLOD(20)
+-    texCfg.tLOD_multibase := tmuConfig.tLOD(24)
+-    val triangleTexTablesReg = Reg(TexLayoutTables.Tables())
+-    triangleTexTablesReg := TexLayoutTables.compute(texCfg)
+-    texTablesRegOpt = Some(triangleTexTablesReg)
+-    triangleTexTablesRegOpt = Some(triangleTexTablesReg)
+-  }
++  // The packed-layout LOD tables are a function of these per-triangle
++  // registers; the TMU computes them right before texel addressing instead of
++  // every pipeline stage carrying ~430 bits of tables per pixel.
+ 
+   // ========================================================================
+   // NCC Table Registers (0x324-0x380)
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
 index de14d02..3e5def1 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
@@ -3778,10 +3823,10 @@ index 59df4ba..cc7fe34 100644
  
    case class Output(c: Config) extends Bundle {
 diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
-index fb95365..fbb5f3a 100644
+index fb95365..1119870 100644
 --- a/src/voodoo/raster/TriangleSetup.scala
 +++ b/src/voodoo/raster/TriangleSetup.scala
-@@ -8,17 +8,37 @@ import spinal.lib._
+@@ -8,216 +8,207 @@ import spinal.lib._
  case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Component {
    val i = slave(Stream(TriangleSetup.Input(c)))
    val o = master(Stream(TriangleSetup.Output(c)))
@@ -3802,17 +3847,21 @@ index fb95365..fbb5f3a 100644
 +  //    old "paramAdjust correction, then + dx*dxPix + dy*dyPix" modulo 2^w.
 +  //  * Pass-through fields come straight from `pending` (held until the
 +  //    output fires) instead of a second copy in an output register.
++  //  * `pending` is the input payload itself: the command is accepted only
++  //    when the result leaves, so the register bank's triangle snapshot
++  //    stays stable meanwhile (a copy here was ~1.6k flip-flops).
    object SetupState extends SpinalEnum {
 -    val Idle, Prep, Iterate, Done = newElement()
 +    val Idle, Prep, Work, ScanMul, Done = newElement()
    }
  
    val state = RegInit(SetupState.Idle)
-   val pending = Reg(TriangleSetup.Input(c))
+-  val pending = Reg(TriangleSetup.Input(c))
 -  val outputReg = Reg(TriangleSetup.Output(c))
 -  val iterIndex = Reg(UInt(3 bits)) init (0)
 -  val dxMagWork = Reg(UInt(16 bits)) init (0)
 -  val dyMagWork = Reg(UInt(16 bits)) init (0)
++  val pending = i.payload
 +
 +  val coeffsReg = Reg(Vec.fill(3)(Coefficients(c)))
 +  val edgeStartReg = Reg(Vec.fill(3)(AFix(c.coefficientFormat)))
@@ -3825,24 +3874,21 @@ index fb95365..fbb5f3a 100644
  
    def copyTrace[T <: Data](dst: T, src: T): Unit = dst := src
  
-@@ -41,183 +61,171 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
-     if (c.trace.enabled) copyTrace(dst.trace, src.trace)
-   }
- 
--  def copySetupOutput(dst: TriangleSetup.Output, src: TriangleSetup.Output): Unit = {
--    dst.coeffs := src.coeffs
--    dst.edgeStart := src.edgeStart
--    dst.xrange := src.xrange
--    dst.yrange := src.yrange
+-  def copySetupInput(dst: TriangleSetup.Input, src: TriangleSetup.Input): Unit = {
+-    dst.triWithSign := src.triWithSign
 -    dst.grads.all.zip(src.grads.all).foreach { case (d, s) =>
+-      d.start.raw := s.start.raw
 -      d.d := s.d
 -    }
--    dst.texHi.dSdX := src.texHi.dSdX
--    dst.texHi.dTdX := src.texHi.dTdX
--    dst.texHi.dSdY := src.texHi.dSdY
--    dst.texHi.dTdY := src.texHi.dTdY
--    dst.hiAlpha.dAdX := src.hiAlpha.dAdX
--    dst.hiAlpha.dAdY := src.hiAlpha.dAdY
+-    dst.hiAlpha.start.raw := src.hiAlpha.start.raw
+-    dst.hiAlpha.dAdX.raw := src.hiAlpha.dAdX.raw
+-    dst.hiAlpha.dAdY.raw := src.hiAlpha.dAdY.raw
+-    dst.texHi.sStart.raw := src.texHi.sStart.raw
+-    dst.texHi.tStart.raw := src.texHi.tStart.raw
+-    dst.texHi.dSdX.raw := src.texHi.dSdX.raw
+-    dst.texHi.dTdX.raw := src.texHi.dTdX.raw
+-    dst.texHi.dSdY.raw := src.texHi.dSdY.raw
+-    dst.texHi.dTdY.raw := src.texHi.dTdY.raw
 -    dst.config := src.config
 -    if (c.trace.enabled) copyTrace(dst.trace, src.trace)
 +  // ---------------------------------------------------------------------
@@ -3853,12 +3899,13 @@ index fb95365..fbb5f3a 100644
 +    val result = Reg(Bits(width bits)) init (0)
    }
  
--  def mulBySubpixel(value: SInt, coeff: UInt): SInt = {
--    val width = value.getWidth + coeff.getWidth
--    val zero = S(0, width bits)
--    val terms = (0 until coeff.getWidth).map { bit =>
--      val shifted = (value.resize(width bits) |<< bit).resize(width bits)
--      Mux(coeff(bit), shifted, zero)
+-  def copySetupOutput(dst: TriangleSetup.Output, src: TriangleSetup.Output): Unit = {
+-    dst.coeffs := src.coeffs
+-    dst.edgeStart := src.edgeStart
+-    dst.xrange := src.xrange
+-    dst.yrange := src.yrange
+-    dst.grads.all.zip(src.grads.all).foreach { case (d, s) =>
+-      d.d := s.d
 +  val channels = Seq(
 +    new Channel(pending.grads.redGrad.start, pending.grads.redGrad.d(0), pending.grads.redGrad.d(1)),
 +    new Channel(pending.grads.greenGrad.start, pending.grads.greenGrad.d(0), pending.grads.greenGrad.d(1)),
@@ -3896,9 +3943,38 @@ index fb95365..fbb5f3a 100644
 +    when(chIdx === channels.size - 1) {
 +      chIssue := False
      }
--    terms.reduce(_ + _).resize(width bits)
+-    dst.texHi.dSdX := src.texHi.dSdX
+-    dst.texHi.dTdX := src.texHi.dTdX
+-    dst.texHi.dSdY := src.texHi.dSdY
+-    dst.texHi.dTdY := src.texHi.dTdY
+-    dst.hiAlpha.dAdX := src.hiAlpha.dAdX
+-    dst.hiAlpha.dAdY := src.hiAlpha.dAdY
+-    dst.config := src.config
+-    if (c.trace.enabled) copyTrace(dst.trace, src.trace)
    }
  
+-  def mulBySubpixel(value: SInt, coeff: UInt): SInt = {
+-    val width = value.getWidth + coeff.getWidth
+-    val zero = S(0, width bits)
+-    val terms = (0 until coeff.getWidth).map { bit =>
+-      val shifted = (value.resize(width bits) |<< bit).resize(width bits)
+-      Mux(coeff(bit), shifted, zero)
++  // Stage 1: products (mod 2^prodWidth; only bits [w+3:4] are used).
++  val s1Valid = RegNext(s0Valid) init (False)
++  val s1Idx = RegNext(s0Idx)
++  val s1Px = RegNext((s0Dx * mxReg).resize(prodWidth bits))
++  val s1Py = RegNext((s0Dy * myReg).resize(prodWidth bits))
++
++  // Stage 2: start + (sum >> 4), written into the channel's result.
++  val s2Corr = (s1Px + s1Py)(prodWidth - 1 downto 4)
++  val s2Sum = (chanSelect(s1Idx, _.start) + s2Corr).asBits
++  channels.zipWithIndex.foreach { case (ch, n) =>
++    when(s1Valid && s1Idx === n) {
++      ch.result := s2Sum(ch.width - 1 downto 0)
+     }
+-    terms.reduce(_ + _).resize(width bits)
+-  }
+-
 -  def signedMagnitude(value: SInt): UInt = {
 -    val wide = value.resize(value.getWidth + 1 bits)
 -    Mux(
@@ -3911,7 +3987,7 @@ index fb95365..fbb5f3a 100644
 -  def signAdjust(value: SInt, negate: Bool, width: Int): SInt = {
 -    val resized = value.resize(width bits)
 -    Mux(negate, (-resized).resize(width bits), resized)
--  }
+   }
 -
 -  def scaleByChunk(term: SInt, chunk: UInt): SInt = {
 -    val scaled = SInt(term.getWidth bits)
@@ -3926,21 +4002,6 @@ index fb95365..fbb5f3a 100644
 -      is(U"2'b11") {
 -        scaled := (term + (term |<< 1)).resize(term.getWidth bits)
 -      }
-+  // Stage 1: products (mod 2^prodWidth; only bits [w+3:4] are used).
-+  val s1Valid = RegNext(s0Valid) init (False)
-+  val s1Idx = RegNext(s0Idx)
-+  val s1Px = RegNext((s0Dx * mxReg).resize(prodWidth bits))
-+  val s1Py = RegNext((s0Dy * myReg).resize(prodWidth bits))
-+
-+  // Stage 2: start + (sum >> 4), written into the channel's result.
-+  val s2Corr = (s1Px + s1Py)(prodWidth - 1 downto 4)
-+  val s2Sum = (chanSelect(s1Idx, _.start) + s2Corr).asBits
-+  channels.zipWithIndex.foreach { case (ch, n) =>
-+    when(s1Valid && s1Idx === n) {
-+      ch.result := s2Sum(ch.width - 1 downto 0)
-     }
--    scaled
-   }
 +  val chBusy = chIssue || s0Valid || s1Valid
 +
 +  // ---------------------------------------------------------------------
@@ -3963,7 +4024,9 @@ index fb95365..fbb5f3a 100644
 +      den := dys.abs.resize(16 bits)
 +      rem := 0
 +      work := (dxs.abs.resize(16 bits) ## U(0, 16 bits)).asUInt
-+    }
+     }
+-    scaled
+-  }
  
 -  case class IterChannel(inStart: AFix, dxRaw: SInt, dyRaw: SInt) extends Area {
 -    val startWidth = inStart.raw.getWidth
@@ -4085,24 +4148,10 @@ index fb95365..fbb5f3a 100644
 -    hiSStart,
 -    hiTStart,
 -    hiAlphaStart
--  )
--
 +  // ---------------------------------------------------------------------
-   i.ready := state === SetupState.Idle
++  i.ready := state === SetupState.Done && o.ready
 +  busy := state =/= SetupState.Idle
-   o.valid := state === SetupState.Done
--  copySetupOutput(o.payload, outputReg)
--  o.payload.grads.redGrad.start.raw := redStart.resultBits
--  o.payload.grads.greenGrad.start.raw := greenStart.resultBits
--  o.payload.grads.blueGrad.start.raw := blueStart.resultBits
--  o.payload.grads.depthGrad.start.raw := depthStart.resultBits
--  o.payload.grads.alphaGrad.start.raw := alphaStart.resultBits
--  o.payload.grads.wGrad.start.raw := wStart.resultBits
--  o.payload.grads.sGrad.start.raw := sStart.resultBits
--  o.payload.grads.tGrad.start.raw := tStart.resultBits
--  o.payload.texHi.sStart.raw := hiSStart.resultBits
--  o.payload.texHi.tStart.raw := hiTStart.resultBits
--  o.payload.hiAlpha.start.raw := hiAlphaStart.resultBits
++  o.valid := state === SetupState.Done
 +  o.payload.coeffs := coeffsReg
 +  o.payload.edgeStart := edgeStartReg
 +  o.payload.xrange := xrangeReg
@@ -4134,11 +4183,27 @@ index fb95365..fbb5f3a 100644
 +    o.payload.texHi.sStart,
 +    o.payload.texHi.tStart,
 +    o.payload.hiAlpha.start
-+  )
+   )
 +  outStarts.zip(channels).foreach { case (dst, ch) => dst.raw := ch.result }
  
-   when(state === SetupState.Idle && i.fire) {
-     copySetupInput(pending, i.payload)
+-  i.ready := state === SetupState.Idle
+-  o.valid := state === SetupState.Done
+-  copySetupOutput(o.payload, outputReg)
+-  o.payload.grads.redGrad.start.raw := redStart.resultBits
+-  o.payload.grads.greenGrad.start.raw := greenStart.resultBits
+-  o.payload.grads.blueGrad.start.raw := blueStart.resultBits
+-  o.payload.grads.depthGrad.start.raw := depthStart.resultBits
+-  o.payload.grads.alphaGrad.start.raw := alphaStart.resultBits
+-  o.payload.grads.wGrad.start.raw := wStart.resultBits
+-  o.payload.grads.sGrad.start.raw := sStart.resultBits
+-  o.payload.grads.tGrad.start.raw := tStart.resultBits
+-  o.payload.texHi.sStart.raw := hiSStart.resultBits
+-  o.payload.texHi.tStart.raw := hiTStart.resultBits
+-  o.payload.hiAlpha.start.raw := hiAlphaStart.resultBits
+-
+-  when(state === SetupState.Idle && i.fire) {
+-    copySetupInput(pending, i.payload)
++  when(state === SetupState.Idle && i.valid) {
      state := SetupState.Prep
    }
  
@@ -4152,7 +4217,7 @@ index fb95365..fbb5f3a 100644
    when(state === SetupState.Prep) {
      val input = pending
      val tri = input.triWithSign.tri
-@@ -282,47 +290,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+@@ -282,47 +273,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
      val dxPix = (startXPix - aXPix).resize(16 bits)
      val dyPix = (startYPix - aYPix).resize(16 bits)
  
@@ -4198,10 +4263,6 @@ index fb95365..fbb5f3a 100644
 +    divIter := 0
 +    divBusy := True
 +    state := SetupState.Work
-+  }
-+
-+  when(state === SetupState.Work && !divBusy && !chBusy) {
-+    state := SetupState.ScanMul
    }
  
 -  when(state === SetupState.Iterate) {
@@ -4214,6 +4275,10 @@ index fb95365..fbb5f3a 100644
 -      state := SetupState.Done
 -    }.otherwise {
 -      iterIndex := iterIndex + 1
++  when(state === SetupState.Work && !divBusy && !chBusy) {
++    state := SetupState.ScanMul
++  }
++
 +  when(state === SetupState.ScanMul) {
 +    val dxAB = divs(0).quotient
 +    val dxBC = divs(1).quotient
@@ -4241,7 +4306,33 @@ index fb95365..fbb5f3a 100644
    GenerationFlags.formal {
      when(o.valid) {
        val tri = pending.triWithSign.tri
-@@ -489,6 +505,11 @@ object TriangleSetup {
+@@ -419,7 +418,6 @@ object TriangleSetup {
+     val dTdX = AFix(c.texCoordsFormat)
+     val dSdY = AFix(c.texCoordsFormat)
+     val dTdY = AFix(c.texCoordsFormat)
+-    val texTables = if (c.packedTexLayout) TexLayoutTables.Tables() else null
+   }
+ 
+   object TmuConfig {
+@@ -436,7 +434,6 @@ object TriangleSetup {
+       out.dTdX := src.tmudTdX
+       out.dSdY := src.tmudSdY
+       out.dTdY := src.tmudTdY
+-      if (c.packedTexLayout) out.texTables := src.texTables
+       out
+     }
+   }
+@@ -468,9 +465,6 @@ object TriangleSetup {
+     val tmudTdX = AFix(c.texCoordsFormat)
+     val tmudSdY = AFix(c.texCoordsFormat)
+     val tmudTdY = AFix(c.texCoordsFormat)
+-
+-    // Packed texture layout tables (computed at triangle capture time)
+-    val texTables = if (c.packedTexLayout) TexLayoutTables.Tables() else null
+   }
+ 
+   /** Input bundle - triangle with gradients and render config captured at command time */
+@@ -489,6 +483,11 @@ object TriangleSetup {
      val xrange = vertex2d(c.vertexFormat)
      val yrange = vertex2d(c.vertexFormat)
      val edgeStart = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -4366,7 +4457,7 @@ index fbf774f..6f372f1 100644
  
      tables
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..9cac492 100644
+index 8b06179..406cd1f 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -4622,7 +4713,43 @@ index 8b06179..9cac492 100644
    }
    val stageGrad = lodPipeline.stageGrad
    val stageLodPrep = lodPipeline.stageLodPrep
-@@ -513,15 +587,14 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -362,6 +436,8 @@ case class Tmu(c: voodoo.Config) extends Component {
+         out.lodLevel := stageLod.payload.lodLevel
+         out.texWidthBits := stageLod.payload.texWidthBits
+         out.texHeightBits := stageLod.payload.texHeightBits
++        if (c.packedTexLayout)
++          out.texTables := TexLayoutTables.compute(Tmu.texLayoutConfigOf(stageLod.payload.meta.config))
+         out.meta := stageLod.payload.meta
+         out
+       }
+@@ -376,7 +452,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+   val is16BitFormat = stageBTexMode.format >= Tmu.TextureFormat.ARGB8332
+   val bytesPerTexel = Mux(is16BitFormat, U(2), U(1))
+   val addressGen = new Area {
+-    val packedTables = if (c.packedTexLayout) stageB.payload.meta.config.texTables else null
++    val packedTables = if (c.packedTexLayout) stageB.payload.texTables else null
+     val packedLodBase =
+       if (c.packedTexLayout)
+         packedTables.texBase(stageB.payload.lodLevel).resize(c.addressWidth.value bits)
+@@ -397,7 +473,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+ 
+     def texelAddr(x: UInt, y: UInt): UInt = {
+       if (c.packedTexLayout) {
+-        val tables = stageB.payload.meta.config.texTables
++        val tables = stageB.payload.texTables
+         val lodBase = tables.texBase(stageB.payload.lodLevel)
+         val lodShift = tables.texShift(stageB.payload.lodLevel)
+         Mux(
+@@ -503,7 +579,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+       req.lodShift := packedLodShift
+       req.is16Bit := is16BitFormat
+       if (c.packedTexLayout) {
+-        req.texTables := stageB.payload.meta.config.texTables
++        req.texTables := stageB.payload.texTables
+       }
+       for (i <- 0 until 4) {
+         req.tapLineBase(i) := tapLineBase(i)
+@@ -513,15 +589,14 @@ case class Tmu(c: voodoo.Config) extends Component {
        req
      }
      .stage()
@@ -4644,7 +4771,7 @@ index 8b06179..9cac492 100644
        val startupTexShift = (0 until 9).map(sampleRequestPrep.payload.texTables.texShift(_))
        val tapAddr = Vec(UInt(c.addressWidth.value bits), 4)
        tapAddr(
-@@ -530,45 +603,65 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -530,45 +605,65 @@ case class Tmu(c: voodoo.Config) extends Component {
        tapAddr(1) := sampleRequestPrep.payload.biAddr1
        tapAddr(2) := sampleRequestPrep.payload.biAddr2
        tapAddr(3) := sampleRequestPrep.payload.biAddr3
@@ -4737,7 +4864,7 @@ index 8b06179..9cac492 100644
  
    val bypassOutput = Stream(Tmu.Output(c))
    val bypassTexture = !stageB.payload.meta.config.textureEnable
-@@ -594,9 +687,12 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -594,9 +689,12 @@ case class Tmu(c: voodoo.Config) extends Component {
    )
  
    val texturePath: TmuTexturePathBase =
@@ -4751,7 +4878,7 @@ index 8b06179..9cac492 100644
    io.texRead <> texturePath.io.texRead
  
    val texelDecoder = TmuTexelDecoder(c)
-@@ -621,7 +717,7 @@ case class Tmu(c: voodoo.Config) extends Component {
+@@ -621,7 +719,7 @@ case class Tmu(c: voodoo.Config) extends Component {
    }.elsewhen(!(sampleRequest.fire || bypassOutput.fire) && io.output.fire) {
      inFlightCount := inFlightCount - 1
    }
@@ -4760,7 +4887,7 @@ index 8b06179..9cac492 100644
  
    /** BMB parameters for texture memory access */
    def bmbParams(c: voodoo.Config) = BmbParameter(
-@@ -694,12 +790,82 @@ object Tmu {
+@@ -694,12 +792,82 @@ object Tmu {
      bankMsb := byteOffsLow(shift)
      bankLsb := byteOffsLow(0)
      when(is16Bit) {
@@ -4844,7 +4971,7 @@ index 8b06179..9cac492 100644
    def packedStartupDecode4(
        lineBase: UInt,
        is16Bit: Bool,
-@@ -822,6 +988,53 @@ object Tmu {
+@@ -822,6 +990,53 @@ object Tmu {
      if (trace != null) dst.trace := trace
    }
  
@@ -4898,7 +5025,7 @@ index 8b06179..9cac492 100644
    def copySampleRequest(dst: SampleRequest, src: SampleRequest, c: voodoo.Config): Unit = {
      dst.pointAddr := src.pointAddr
      dst.biAddr0 := src.biAddr0
-@@ -866,6 +1079,25 @@ object Tmu {
+@@ -866,6 +1081,25 @@ object Tmu {
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
@@ -4924,7 +5051,7 @@ index 8b06179..9cac492 100644
    case class FrontRecipPrep(c: voodoo.Config) extends Bundle {
      val s = AFix(c.texCoordsAccumFormat)
      val t = AFix(c.texCoordsAccumFormat)
-@@ -885,6 +1117,12 @@ object Tmu {
+@@ -885,6 +1119,12 @@ object Tmu {
      val meta = FrontMeta(c)
    }
  
@@ -4937,7 +5064,33 @@ index 8b06179..9cac492 100644
    case class FrontA(c: voodoo.Config) extends Bundle {
      val texS = SInt(18 bits)
      val texT = SInt(18 bits)
-@@ -979,6 +1217,12 @@ object Tmu {
+@@ -924,9 +1164,25 @@ object Tmu {
+     val lodLevel = UInt(4 bits)
+     val texWidthBits = UInt(4 bits)
+     val texHeightBits = UInt(4 bits)
++    // Packed-layout LOD tables, computed from meta.config entering this stage.
++    val texTables = if (c.packedTexLayout) TexLayoutTables.Tables() else null
+     val meta = FrontMeta(c)
+   }
+ 
++  /** Packed-layout table inputs from the per-triangle TMU registers. */
++  def texLayoutConfigOf(cfg: TmuConfig): TexLayoutTables.TexConfig = {
++    val texCfg = TexLayoutTables.TexConfig()
++    texCfg.texBaseAddr := cfg.texBaseAddr(18 downto 0)
++    texCfg.texBaseAddr1 := cfg.texBaseAddr1(18 downto 0)
++    texCfg.texBaseAddr2 := cfg.texBaseAddr2(18 downto 0)
++    texCfg.texBaseAddr38 := cfg.texBaseAddr38(18 downto 0)
++    texCfg.tformat := cfg.textureMode(11 downto 8).asUInt
++    texCfg.tLOD_aspect := cfg.tLOD(22 downto 21).asUInt
++    texCfg.tLOD_sIsWider := cfg.tLOD(20)
++    texCfg.tLOD_multibase := cfg.tLOD(24)
++    texCfg
++  }
++
+   case class FrontLodPrep(c: voodoo.Config) extends Bundle {
+     val texS = SInt(18 bits)
+     val texT = SInt(18 bits)
+@@ -979,6 +1235,12 @@ object Tmu {
      val passthrough = TmuPassthrough(c)
    }
  
@@ -4950,6 +5103,22 @@ index 8b06179..9cac492 100644
    case class SampleRequestPrep(c: voodoo.Config) extends Bundle {
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
+@@ -1114,7 +1376,6 @@ object Tmu {
+     val texBaseAddr38 = UInt(24 bits)
+     val tLOD = Bits(27 bits)
+     val textureEnable = Bool()
+-    val texTables = if (c != null && c.packedTexLayout) TexLayoutTables.Tables() else null
+   }
+ 
+   /** TMU input bundle */
+@@ -1149,7 +1410,6 @@ object Tmu {
+       out.config.texBaseAddr38 := in.tmuConfig.texBaseAddr38
+       out.config.tLOD := in.tmuConfig.tLOD
+       out.config.textureEnable := in.tmuConfig.textureEnable
+-      if (c.packedTexLayout) out.config.texTables := in.tmuConfig.texTables
+       out.dSdX := in.tmuConfig.dSdX
+       out.dTdX := in.tmuConfig.dTdX
+       out.dSdY := in.tmuConfig.dSdY
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
 index 465ea78..2acf8c1 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala

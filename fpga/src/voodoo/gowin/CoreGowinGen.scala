@@ -20,7 +20,8 @@ import voodoo.{Config, GenSupport}
 class GowinMemStylePhase(
     registersMaxDepth: Int,
     smallMaxDepth: Int,
-    smallMaxBits: Int
+    smallMaxBits: Int,
+    bsramComponents: Seq[String] = Nil
 ) extends PhaseNetlist {
   // Clock-crossing FIFOs (StreamFifoCC: Axi4CC, AXI-Lite CDC, HDMI pixel
   // FIFO) write in one domain and read in another. Forcing those to
@@ -39,6 +40,7 @@ class GowinMemStylePhase(
 
   override def impl(pc: PhaseContext): Unit = pc.walkDeclarations {
     case mem: Mem[_] if mem.component != null && mem.component.hasTag(GowinKeepBsram) =>
+    case mem: Mem[_] if mem.component != null && bsramComponents.contains(mem.component.getName()) =>
     case mem: Mem[_] if mem.initialContent == null && !isDualClock(mem) =>
       val depth = mem.wordCount
       val small = depth <= smallMaxDepth && depth * mem.getWidth <= smallMaxBits
@@ -111,7 +113,11 @@ object GowinGenSupport {
         // the PCI FIFO, ...) to BSRAM: CLS 83% -> 76% but BSRAM +44 and only
         // 1 of 6 placements closed (BSRAM enables on pipeline-busy / PCI FIFO
         // control paths, core Fmax 42-48 MHz). Kept at 4096.
-        smallMaxBits = 4096
+        smallMaxBits = 4096,
+        // Except the TMU's two 16 x 134-bit sample-request queues: ~4.3k FFs
+        // as registers, 8 BSRAMs here, and their enables are plain stream
+        // handshakes rather than pipeline-busy / PCI FIFO control.
+        bsramComponents = Seq("sampleRequestBasePre_translated_fifo", "io_sampleRequest_translated_fifo")
       )
     )
 }
