@@ -202,10 +202,10 @@ index c71ac23..44c086a 100644
       * scanout path and does not need the legacy SST video read-modify-write
       * sequence here; that sequence can touch unsupported/reset-sensitive
 diff --git a/emu/glide/swlibs/newpci/pcilib/fxsim.c b/emu/glide/swlibs/newpci/pcilib/fxsim.c
-index d36865c..b6736fe 100644
+index d36865c..c4c27ab 100644
 --- a/emu/glide/swlibs/newpci/pcilib/fxsim.c
 +++ b/emu/glide/swlibs/newpci/pcilib/fxsim.c
-@@ -298,8 +298,82 @@ static int simGetDebugLevel(void) {
+@@ -298,8 +298,89 @@ static int simGetDebugLevel(void) {
  #define TEX_NUM_PAGES    (TEX_MEM_SIZE / TEX_PAGE_SIZE) /* 2048 */
  
  static unsigned char texDirtyPages[TEX_NUM_PAGES];
@@ -221,8 +221,11 @@ index d36865c..b6736fe 100644
 + * memory holds, so a word the card already has is not sent again: the Mesa
 + * fx driver re-downloads evicted textures every frame when they do not all
 + * fit. VOODOO_TEX_NODEDUPE=1 sends everything. */
-+static FxU32 texRegMode, texRegLod, texRegBase[4]; /* base, base1, base2, base3_8 */
++/* Per TMU (index 1 only with SIM_DUAL_TMU): its layout registers, and its
++ * texture memory in the shadow (TMU1 is TEX_SHADOW_BYTES up). */
++static FxU32 texRegMode[2], texRegLod[2], texRegBase[2][4]; /* base, base1, base2, base3_8 */
 +#define TEX_SHADOW_BYTES (1u << 22) /* the RTL masks packed addresses to 22 bits */
++static int simDualTmu(void);
 +static FxU32 *texShadow;            /* card texture memory, by word */
 +static FxU32 *texShadowValid;       /* one bit per word */
 +static int texDedupe = -1;
@@ -238,10 +241,14 @@ index d36865c..b6736fe 100644
 + * the card drops the write. */
 +static long texPackedAddr(FxU32 pciAddr) {
 +    FxU32 lod = (pciAddr >> 17) & 0xf, t = (pciAddr >> 9) & 0xff, s, lodBase, shift;
-+    int tformat = (texRegMode >> 8) & 0xf, is16 = tformat >= 8, seq8 = (texRegMode >> 31) & 1;
-+    int aspect = (texRegLod >> 21) & 3, sIsWider = (texRegLod >> 20) & 1;
-+    int multibase = (texRegLod >> 24) & 1, k;
-+    if ((pciAddr & 0x600000) || lod > 8) return -1;
++    int tmu = (pciAddr >> 21) & 3;
++    FxU32 *base;
++    int tformat, is16, seq8, aspect, sIsWider, multibase, k;
++    if (tmu > 1 || (tmu == 1 && !simDualTmu()) || lod > 8) return -1;
++    base = texRegBase[tmu];
++    tformat = (texRegMode[tmu] >> 8) & 0xf; is16 = tformat >= 8; seq8 = (texRegMode[tmu] >> 31) & 1;
++    aspect = (texRegLod[tmu] >> 21) & 3; sIsWider = (texRegLod[tmu] >> 20) & 1;
++    multibase = (texRegLod[tmu] >> 24) & 1;
 +    if (is16) s = (pciAddr >> 1) & 0xfe;
 +    else if (seq8) s = pciAddr & 0xfc;
 +    else s = (pciAddr >> 1) & 0xfc;
@@ -250,17 +257,17 @@ index d36865c..b6736fe 100644
 +        int narrow = 8 - aspect - (int)lod > 0 ? 8 - aspect - (int)lod : 0;
 +        shift = sIsWider ? wide : narrow;
 +    }
-+    if (multibase && lod == 1) lodBase = (texRegBase[1] & 0x7ffff) << 3;
-+    else if (multibase && lod == 2) lodBase = (texRegBase[2] & 0x7ffff) << 3;
++    if (multibase && lod == 1) lodBase = (base[1] & 0x7ffff) << 3;
++    else if (multibase && lod == 2) lodBase = (base[2] & 0x7ffff) << 3;
 +    else if (multibase && lod >= 3) {
-+        lodBase = (texRegBase[3] & 0x7ffff) << 3;
++        lodBase = (base[3] & 0x7ffff) << 3;
 +        for (k = 3; k < (int)lod; k++) lodBase += texLodSize(k, aspect, is16);
 +    } else {
-+        lodBase = (texRegBase[0] & 0x7ffff) << 3;
++        lodBase = (base[0] & 0x7ffff) << 3;
 +        for (k = 0; k < (int)lod; k++) lodBase += texLodSize(k, aspect, is16);
 +    }
-+    if (is16) return (lodBase + (s << 1) + (t << (shift + 1))) & (TEX_SHADOW_BYTES - 1);
-+    return (lodBase + s + (t << shift)) & (TEX_SHADOW_BYTES - 1);
++    if (is16) return ((lodBase + (s << 1) + (t << (shift + 1))) & (TEX_SHADOW_BYTES - 1)) + (long)tmu * TEX_SHADOW_BYTES;
++    return ((lodBase + s + (t << shift)) & (TEX_SHADOW_BYTES - 1)) + (long)tmu * TEX_SHADOW_BYTES;
 +}
 +
 +/* 1 = send the word (and remember it), 0 = the card already holds it. */
@@ -270,8 +277,8 @@ index d36865c..b6736fe 100644
 +    if (texDedupe < 0) {
 +        texDedupe = getenv("VOODOO_TEX_NODEDUPE") == NULL;
 +        if (texDedupe) {
-+            texShadow = calloc(TEX_SHADOW_BYTES / 4, sizeof(FxU32));
-+            texShadowValid = calloc(TEX_SHADOW_BYTES / 4 / 32, sizeof(FxU32));
++            texShadow = calloc(2 * TEX_SHADOW_BYTES / 4, sizeof(FxU32));
++            texShadowValid = calloc(2 * TEX_SHADOW_BYTES / 4 / 32, sizeof(FxU32));
 +            if (!texShadow || !texShadowValid) texDedupe = 0;
 +        }
 +    }
@@ -288,7 +295,7 @@ index d36865c..b6736fe 100644
  static void simFlushTexture(void) {
      if (!texHasDirty || !simInitialized) return;
  
-@@ -326,20 +400,37 @@ static void simFlushTexture(void) {
+@@ -326,20 +407,37 @@ static void simFlushTexture(void) {
          FxU32 words = length / 4;
          FxU32 j;
          for (j = 0; j < words; j++) {
@@ -330,7 +337,7 @@ index d36865c..b6736fe 100644
  void simWriteReg(volatile void *addr, FxU32 value) {
      FxU32 offset = (FxU32)((char *)addr - (char *)simBasePtr);
      if (simGetDebugLevel() >= 2) {
-@@ -367,10 +458,14 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+@@ -367,10 +465,22 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              simFlushTexture();
          }
  
@@ -341,14 +348,22 @@ index d36865c..b6736fe 100644
 +         * texBaseAddr change: Core decodes each texture write with the layout
 +         * those registers select, so the data must land before they move. */
 +        if (regOff == 0x300 || regOff == 0x304 || (regOff >= 0x30C && regOff <= 0x318)) {
++            /* Which TMUs take it: as AddressRemapper (chip 0 = all; the
++             * FBI + TMU0 bank takes FBI / TMU0 writes, TMU1 its own). */
++            FxU32 chip = simDualTmu() ? (offset >> 10) & 0xF : 0;
++            int t;
              simFlushTexture();
-+            if (regOff == 0x300) texRegMode = value;
-+            else if (regOff == 0x304) texRegLod = value;
-+            else texRegBase[(regOff - 0x30C) >> 2] = value;
++            for (t = 0; t < 2; t++) {
++                int takes = t == 0 ? (chip == 0 || (chip & 3)) : (simDualTmu() && (chip == 0 || (chip & 4)));
++                if (!takes) continue;
++                if (regOff == 0x300) texRegMode[t] = value;
++                else if (regOff == 0x304) texRegLod[t] = value;
++                else texRegBase[t][(regOff - 0x30C) >> 2] = value;
++            }
          }
  
          /* Wait for pipeline drain before swapbuffer */
-@@ -378,7 +473,7 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+@@ -378,7 +488,7 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              sim_idle_wait();
          }
  
@@ -357,7 +372,7 @@ index d36865c..b6736fe 100644
      } else if (offset < 0x800000) {
          /* LFB space: 0x400000-0x7FFFFF */
          FxU32 lfbAddr = offset & 0x3FFFFF;
-@@ -404,17 +499,20 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+@@ -404,17 +514,17 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              fprintf(stderr, "[fxsim] TEX WRITE stats at #%d: %d non-zero, range 0x%06x-0x%06x\n",
                      texWriteCount, texNonZeroCount, texMinOffset, texMaxOffset);
          }
@@ -371,15 +386,13 @@ index d36865c..b6736fe 100644
 -                texDirtyPages[(texOffset + 3) >> TEX_PAGE_SHIFT] = 1;
 -            }
 -            texHasDirty = 1;
+-        }
 +        /* Bits 22:21 select the TMU and Core only has TMU0. Glide's packer
 +         * workaround writes a dummy word to TMU "3" (0xe20000) around every
 +         * triangle; buffering it would re-send its whole page each time. */
-+        if (simDualTmu()) {
-+            if ((texOff & 0x600000) == 0x600000) return; /* packer dummy, TMU "3" */
-+            sim_write(0x800000 | (texOff & 0x7FFFFC), value);
-+            return;
-         }
-+        if (texOff & 0x600000) return;
++        /* With SIM_DUAL_TMU, TMU1's writes (bit 21) are buffered and
++         * deduplicated like TMU0's. */
++        if (texOff & (simDualTmu() ? 0x400000 : 0x600000)) return;
 +        FxU32 texOffset = offset & 0x7FFFFC;
 +        FxU32 w = texOffset >> 2;
 +        texDirtyPages[texOffset >> TEX_PAGE_SHIFT] = 1;
@@ -388,7 +401,7 @@ index d36865c..b6736fe 100644
      }
  }
  
-@@ -474,6 +572,7 @@ void simWriteTex(FxU32 offset, const void *data, FxU32 length) {
+@@ -474,6 +584,7 @@ void simWriteTex(FxU32 offset, const void *data, FxU32 length) {
      FxU32 numWords = length / 4;
      FxU32 i;
      for (i = 0; i < numWords; i++) {
