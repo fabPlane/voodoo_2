@@ -21,9 +21,11 @@ DEV="${DEV:-$(lspci -D -d 22c2: | cut -d" " -f1 | head -1)}"
 setpci -s "$DEV" COMMAND=0006   # memory + bus master for the frame DMA
 "$P/voodoo-stream" --setup-only
 # DDR3 throttle (window 31 0x64, B43+): [7:0] idle cycles after every DDR3
-# command, [11:8] max reads in flight. Faster settings reload the FPGA under
-# GLQuake on this dock; 0x160 (gap 96, 1 read) survived a 15-min soak.
-THROTTLE="${THROTTLE:-0x160}"
+# command, [11:8] max reads in flight (0 = all), [15:12] arbitration policy.
+# 0x160 (gap 96, 1 read) was needed around B45, when faster settings reloaded
+# the FPGA; autoplay has run 0x000 for hours since ~B67, and own DDR3 (the
+# default since B128) passes its 1 GiB BIST at gap 0.
+THROTTLE="${THROTTLE:-0x000}"
 python3 - "$DEV" "$THROTTLE" <<'PY'
 import mmap, os, sys
 fd = os.open('/sys/bus/pci/devices/%s/resource0' % sys.argv[1], os.O_RDWR | os.O_SYNC)

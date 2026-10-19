@@ -303,34 +303,51 @@ case class Axi4ToGowinDdrNative(
     data.io.push.valid := io.ddr.rdDataValid
     data.io.push.payload := io.ddr.rdData
 
-    // Unpack the head line into its port's R channel.
-    val started = RegInit(False)
-    val idxReg = Reg(UInt(wordIdxBits bits)) init (0)
+    // Each read port has a one-line stager that unpacks into its R channel;
+    // the head line moves to its port's stager when that is empty. With one
+    // shared unpacker (8 DDR cycles per line, one port at a time) returned
+    // lines waited ~34 DDR cycles in `data` behind other ports' lines,
+    // against ~15 cycles of controller latency (B128 + own DDR3).
     val head = meta.io.pop.payload
-    val idx = Mux(started, idxReg, head.firstIdx)
-    val words = data.io.pop.payload.subdivideIn(32 bits)
     val headValid = meta.io.pop.valid && data.io.pop.valid
-    val endOfLine = idx === head.lastWordIdx
     val ports = Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux) ++ Option(io.col)
     val portIdx = Seq(0, 1) ++ (if (hasScan) Seq(2) else Nil) ++ (if (hasAux) Seq(3) else Nil) ++
       (if (hasCol) Seq(4) else Nil)
-    val rReady = Bool()
-    rReady := io.fb.r.ready
-    for ((axi, p) <- ports.zip(portIdx)) {
-      when(head.port === p) { rReady := axi.r.ready }
-      when(headValid && head.port === p) {
+    class Stager(val axi: Axi4, val p: Int) extends Area {
+      val valid = RegInit(False)
+      val line = Reg(Bits(nativeDataWidth bits))
+      val id = Reg(UInt(idWidth bits)) init (0)
+      val idx = Reg(UInt(wordIdxBits bits)) init (0)
+      val lastWordIdx = Reg(UInt(wordIdxBits bits)) init (0)
+      val last = Reg(Bool()) init (False)
+      val endOfLine = idx === lastWordIdx
+      when(valid) {
         axi.r.valid := True
-        axi.r.data := words(idx)
-        axi.r.last := head.last && endOfLine
+        axi.r.data := line.subdivideIn(32 bits)(idx)
+        axi.r.last := last && endOfLine
+      }
+      when(axi.r.fire) {
+        idx := idx + 1
+        when(endOfLine) { valid := False }
       }
     }
-    val lineDone = headValid && rReady && endOfLine
+    val stagers = ports.zip(portIdx).map { case (a, p) => new Stager(a, p) }
+    // rReady: the head's stager is empty (registered state only).
+    val rReady = Bool()
+    rReady := False
+    for (st <- stagers) when(head.port === st.p) { rReady := !st.valid }
+    val lineDone = headValid && rReady
     meta.io.pop.ready := lineDone
     data.io.pop.ready := lineDone
-    when(headValid && rReady) {
-      started := !endOfLine
-      idxReg := idx + 1
+    for (st <- stagers) when(lineDone && head.port === st.p) {
+      st.valid := True
+      st.line := data.io.pop.payload
+      st.id := head.id
+      st.idx := head.firstIdx
+      st.lastWordIdx := head.lastWordIdx
+      st.last := head.last
     }
+    def stagedId(p: Int): UInt = stagers.find(_.p == p).get.id
 
     val inFlightNext = UInt(inFlight.getWidth bits)
     inFlightNext := inFlight
@@ -340,12 +357,12 @@ case class Axi4ToGowinDdrNative(
     slotFree := inFlightNext < readLimit
     slotFreeUrgent := inFlightNext =/= readsInFlight
   }
-  if (fbConfig.useId) io.fb.r.id := rd.head.id.resized
-  if (texConfig.useId) io.tex.r.id := rd.head.id.resized
-  if (hasScan && scanConfig.useId) io.scan.r.id := rd.head.id.resized
-  if (hasAux && auxConfig.useId) io.aux.r.id := rd.head.id.resized
+  if (fbConfig.useId) io.fb.r.id := rd.stagedId(0).resized
+  if (texConfig.useId) io.tex.r.id := rd.stagedId(1).resized
+  if (hasScan && scanConfig.useId) io.scan.r.id := rd.stagedId(2).resized
+  if (hasAux && auxConfig.useId) io.aux.r.id := rd.stagedId(3).resized
   if (hasAux && auxConfig.useId) io.aux.b.id := 0
-  if (hasCol && colConfig.useId) io.col.r.id := rd.head.id.resized
+  if (hasCol && colConfig.useId) io.col.r.id := rd.stagedId(4).resized
   if (hasCol && colConfig.useId) io.col.b.id := 0
   if (hasScan) {
     if (scanConfig.useId) io.scan.b.id := 0
