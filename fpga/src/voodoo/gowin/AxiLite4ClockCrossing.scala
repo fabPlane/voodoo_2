@@ -25,11 +25,20 @@ case class AxiLite4ClockCrossing(
   val r = StreamFifoCC(io.output.r.payload, depth, outputCd, inputCd)
 
   aw.io.push << io.input.aw
-  io.output.aw << aw.io.pop
+  // Output side registered both ways (valid and ready): the pops' ready came
+  // combinationally from the raw-window split / merge into the fb crossing
+  // and missed 48 MHz into the FIFOs' read registers (Tang dock B137).
+  private def popPipe[T <: Data](s: Stream[T]): Stream[T] = s.s2mPipe().m2sPipe()
+  val outRegs = new ClockingArea(outputCd) {
+    val awOut = popPipe(aw.io.pop)
+    val wOut = popPipe(w.io.pop)
+    val arOut = popPipe(ar.io.pop)
+  }
+  io.output.aw << outRegs.awOut
   w.io.push << io.input.w
-  io.output.w << w.io.pop
+  io.output.w << outRegs.wOut
   ar.io.push << io.input.ar
-  io.output.ar << ar.io.pop
+  io.output.ar << outRegs.arOut
   b.io.push << io.output.b
   io.input.b << b.io.pop
   r.io.push << io.output.r

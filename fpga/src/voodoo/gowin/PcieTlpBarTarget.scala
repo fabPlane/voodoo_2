@@ -71,7 +71,7 @@ case class PcieTlpBarTarget(
     data(255 - index * 32 downto 224 - index * 32)
 
   object State extends SpinalEnum {
-    val idle, axiWrite, axiRead, cpl, drop = newElement()
+    val idle, axiWrite, axiRead, localRead, cpl, drop = newElement()
   }
 
   val state = RegInit(State.idle)
@@ -166,7 +166,12 @@ case class PcieTlpBarTarget(
   val isLocal = window === localWindow && !isWindowReg
   val isWedgeReg = isLocal && offset20(7 downto 0) === 0x40
   io.localWrite := False
-  io.localAddr := offset20(7 downto 0)
+  // Local reads take a cycle: the address is latched, then the read mux is
+  // sampled from the latch (TLP address -> window 31 read mux -> readData
+  // missed 75 MHz in one cycle, B134/B137).
+  val localReadAddr = Reg(UInt(8 bits)) init (0)
+  val localReadWedge = Reg(Bool()) init (False)
+  io.localAddr := Mux(state === State.localRead, localReadAddr, offset20(7 downto 0))
   io.localWdata := capturedData
   io.tlRxWait := False
   io.tlTxSop := False
@@ -261,8 +266,9 @@ case class PcieTlpBarTarget(
               state := State.drop
             }
           } otherwise {
-            readData := Mux(isWedgeReg, wedgeStatus, io.localRdata)
-            state := State.cpl
+            localReadAddr := offset20(7 downto 0)
+            localReadWedge := isWedgeReg
+            state := State.localRead
           }
         } elsewhen (wedged) {
           dropTlp()
@@ -291,6 +297,11 @@ case class PcieTlpBarTarget(
           state := State.drop
         }
       }
+    }
+    is(State.localRead) {
+      io.tlRxWait := True
+      readData := Mux(localReadWedge, wedgeStatus, io.localRdata)
+      state := State.cpl
     }
     is(State.axiWrite) {
       io.tlRxWait := True

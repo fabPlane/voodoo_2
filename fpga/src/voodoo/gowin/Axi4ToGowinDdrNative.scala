@@ -244,12 +244,17 @@ case class Axi4ToGowinDdrNative(
     val wantsCmd = active && addrSettled && (slotFree || urgentSync && slotFreeUrgent)
     val issue = Bool() // driven by the command arbiter below
 
-    meta.io.push.valid := issue
-    meta.io.push.port := port
-    meta.io.push.id := id
-    meta.io.push.firstIdx := firstIdx
-    meta.io.push.lastWordIdx := lastWordIdx
-    meta.io.push.last := lastLine
+    // Pushed the cycle after issue: as registers, meta's write enables fan
+    // out to every entry, and grant -> them missed 100 MHz (B137). The line
+    // comes back >= ~15 cycles later, so the entry is always there first.
+    val metaIn = ReadMeta()
+    metaIn.port := port
+    metaIn.id := id
+    metaIn.firstIdx := firstIdx
+    metaIn.lastWordIdx := lastWordIdx
+    metaIn.last := lastLine
+    meta.io.push.valid := RegNext(issue) init (False)
+    meta.io.push.payload := RegNext(metaIn)
 
     // Ports take turns (round robin) when several want a read. With fb
     // strictly first, a texture miss waited behind the scanout's line
