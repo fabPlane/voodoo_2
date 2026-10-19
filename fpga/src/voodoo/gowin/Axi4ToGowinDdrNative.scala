@@ -237,7 +237,11 @@ case class Axi4ToGowinDdrNative(
     // Registered like slotFree: the inFlight compare fed the grant and the
     // write path's enables combinationally (ddr_clk misses, B93).
     val slotFreeUrgent = RegInit(True)
-    val wantsCmd = active && addrSettled && (slotFree || urgentSync && slotFreeUrgent) && meta.io.push.ready
+    // meta holds exactly the inFlight commands (pushed on issue, popped on
+    // lineDone), so the registered slot flags already imply room in it; its
+    // pointer compare on this path missed 100 MHz into the controller's
+    // write-queue enables (B134).
+    val wantsCmd = active && addrSettled && (slotFree || urgentSync && slotFreeUrgent)
     val issue = Bool() // driven by the command arbiter below
 
     meta.io.push.valid := issue
