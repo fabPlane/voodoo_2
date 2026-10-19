@@ -1554,7 +1554,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..ce01740 100644
+index 7797711..ea5d1ae 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -1635,7 +1635,7 @@ index 7797711..ce01740 100644
  
    val spanPrefetchFork = StreamFork2(rasterizer.prefetchSpan, synchronous = true)
    val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
-@@ -367,8 +381,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,17 +381,19 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1646,9 +1646,53 @@ index 7797711..ce01740 100644
 +  io.prefetchColor << colorPrefetcher.io.readReq.m2sPipe()
 +  io.prefetchAux << auxPrefetcher.io.readReq.m2sPipe()
  
-   val ckBits = colorCombine.io.output.payload.chromaKey
+-  val ckBits = colorCombine.io.output.payload.chromaKey
++  val ckBits = io.controls.syncRender.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,10 +669,11 @@ case class PixelPipeline(c: Config) extends Component {
+   val ckG = ckBits(15 downto 8).asUInt
+   val ckB = ckBits(7 downto 0).asUInt
+   val ccColor = colorCombine.io.output.payload.color
+   val chromaKill =
+     if (c.enableChromaKey)
+-      colorCombine.io.output.payload.fbzMode.enableChromaKey && ccColor.r === ckR &&
++      io.controls.syncRender.fbzMode.enableChromaKey && ccColor.r === ckR &&
+       ccColor.g === ckG && ccColor.b === ckB
+     else False
+ 
+@@ -400,11 +416,8 @@ case class PixelPipeline(c: Config) extends Component {
+     dst.depth := src.depth
+     dst.wDepth := 0
+     dst.colorBeforeFog := src.color
+-    dst.chromaKey := src.chromaKey
+-    dst.zaColor := src.zaColor
+     dst.alphaMode := src.alphaMode
+-    dst.fbzMode := src.fbzMode
+-    dst.routing := src.routing
++    dst.isLfb := src.isLfb
+     if (c.trace.enabled) dst.trace := src.trace
+   }
+ 
+@@ -413,6 +426,7 @@ case class PixelPipeline(c: Config) extends Component {
+     fog.io.input.simPublic()
+     fog.io.output.simPublic()
+     fog.io.fogTable := io.controls.fogTable
++    fog.io.fogColor := io.controls.syncRender.fogColor
+     fogArbiterInput >/-> fog.io.input
+     fogOutput << fog.io.output
+     fogBusy := fog.io.busy
+@@ -439,6 +453,11 @@ case class PixelPipeline(c: Config) extends Component {
+   val alphaKill = if (c.enableAlphaTest) alphaTestEnable && !alphaPassed else False
+ 
+   fogOutput >/-> fbAccess.io.input
++  fbAccess.io.live.fbzMode := io.controls.syncRender.fbzMode
++  fbAccess.io.live.zaColor := io.controls.syncRender.zaColor
++  fbAccess.io.live.chromaKey := io.controls.syncRender.chromaKey
++  fbAccess.io.live.drawRouting := io.controls.syncRender.routing
++  fbAccess.io.live.lfbRouting := io.controls.lfb.writeRouting
+   fbAccess.io.fbReadColorRsp << io.colorReadRsp
+   fbAccess.io.fbReadAuxRsp << io.auxReadRsp
+   io.colorReadReq << fbAccess.io.fbReadColorReq.s2mPipe()
+@@ -653,10 +672,11 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -1662,7 +1706,7 @@ index 7797711..ce01740 100644
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
        fastfillWriter.io.running || fastfillWriter.io.wordValid ||
-@@ -666,12 +683,81 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +686,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1745,7 +1789,7 @@ index 7797711..ce01740 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +793,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +796,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -2167,10 +2211,25 @@ index 0000000..286b588
 +    .elsewhen(popped) { fetch.credit := fetch.credit - 1 }
 +}
 diff --git a/src/voodoo/frontend/Lfb.scala b/src/voodoo/frontend/Lfb.scala
-index aeba713..06fa63b 100644
+index aeba713..082556f 100644
 --- a/src/voodoo/frontend/Lfb.scala
 +++ b/src/voodoo/frontend/Lfb.scala
-@@ -86,6 +86,11 @@ case class Lfb(c: Config) extends Component {
+@@ -71,13 +71,9 @@ case class Lfb(c: Config) extends Component {
+     out.depth.raw := (decodedDepth.asUInt.resize(32 bits) |<< 12).asBits
+     out.iteratedAlpha := decodedAlpha
+     out.rawW := S(0, 32 bits)
+-    out.fogColor := io.regs.fogColor
+-    out.chromaKey := B(0, 32 bits)
+-    out.zaColor := io.regs.zaColor
+     out.alphaMode := io.regs.alphaMode
+     out.fogMode := io.regs.fogMode
+-    out.fbzMode := io.regs.fbzMode
+-    out.routing := io.regs.writeRouting
++    out.isLfb := True
+     if (c.trace.enabled) out.trace := Trace.originPixelKey(Trace.Origin.lfb)
+     out
+   }
+@@ -86,6 +82,11 @@ case class Lfb(c: Config) extends Component {
    val capturedAddr = Reg(UInt(22 bits))
    val capturedData = Reg(Bits(32 bits))
    val capturedMask = Reg(Bits(4 bits)) init (0)
@@ -2182,7 +2241,7 @@ index aeba713..06fa63b 100644
    val capturedIsRead = Reg(Bool()) init (False)
    val rspPending = Reg(Bool()) init (False)
  
-@@ -98,8 +103,8 @@ case class Lfb(c: Config) extends Component {
+@@ -98,8 +99,8 @@ case class Lfb(c: Config) extends Component {
  
    // Is this a dual-pixel format?
    val isDualPixel =
@@ -2193,7 +2252,7 @@ index aeba713..06fa63b 100644
  
    // State machine: 3 bits to hold 6 states
    val state = RegInit(U(0, 3 bits))
-@@ -111,8 +116,10 @@ case class Lfb(c: Config) extends Component {
+@@ -111,8 +112,10 @@ case class Lfb(c: Config) extends Component {
    val stateRresp = U(5, 3 bits)
    val stateRwait = U(6, 3 bits)
  
@@ -2206,7 +2265,7 @@ index aeba713..06fa63b 100644
  
    // Apply word swap and byte swizzle to incoming write data
    val afterByteSwizzle =
-@@ -138,7 +145,7 @@ case class Lfb(c: Config) extends Component {
+@@ -138,7 +141,7 @@ case class Lfb(c: Config) extends Component {
    }
  
    // Address decode: depends on format stride (for writes)
@@ -2215,7 +2274,7 @@ index aeba713..06fa63b 100644
    val pixelX = UInt(10 bits)
    val pixelY = UInt(10 bits)
    when(is32bitStride) {
-@@ -231,7 +238,7 @@ case class Lfb(c: Config) extends Component {
+@@ -231,7 +234,7 @@ case class Lfb(c: Config) extends Component {
    }
  
    // Format decode logic
@@ -2224,7 +2283,7 @@ index aeba713..06fa63b 100644
      is(0) { // RGB565 - dual pixel
        val rgb = expandRgb565(pixelData16)
        decodedR := rgb.r; decodedG := rgb.g; decodedB := rgb.b
-@@ -248,12 +255,12 @@ case class Lfb(c: Config) extends Component {
+@@ -248,12 +251,12 @@ case class Lfb(c: Config) extends Component {
        decodedRgbWrite := True; decodedAuxWrite := io.regs.fbzMode.enableAlphaPlanes
      }
      is(4) { // XRGB8888 - single pixel
@@ -2239,7 +2298,7 @@ index aeba713..06fa63b 100644
        decodedR := r; decodedG := g; decodedB := b
        decodedRgbWrite := True; decodedAuxWrite := io.regs.fbzMode.enableAlphaPlanes
      }
-@@ -284,9 +291,9 @@ case class Lfb(c: Config) extends Component {
+@@ -284,9 +287,9 @@ case class Lfb(c: Config) extends Component {
    // Decode alpha for pipeline mode
    val decodedAlpha = UInt(8 bits)
    decodedAlpha := U(0xff, 8 bits) // Default: fully opaque
@@ -2251,7 +2310,7 @@ index aeba713..06fa63b 100644
      }
      is(2) { // ARGB1555 dual pixel: bit 15
        decodedAlpha := pixelData16(15) ? U(0xff, 8 bits) | U(0, 8 bits)
-@@ -303,19 +310,19 @@ case class Lfb(c: Config) extends Component {
+@@ -303,19 +306,19 @@ case class Lfb(c: Config) extends Component {
    val pixel1X = (isHalfWordWrite && useHiHalfForPixel1) ? pixel2X | pixelX
    val currentX = (state === statePixel2) ? pixel2X | pixel1X
  
@@ -2715,7 +2774,7 @@ index de14d02..3b650aa 100644
    io.status.x := BufferCC(hdmi.scan.io.x.resize(10 bits), U(0, 10 bits))
    io.status.y := BufferCC(hdmi.scan.io.y.resize(10 bits), U(0, 10 bits))
 diff --git a/src/voodoo/pixel/ColorCombine.scala b/src/voodoo/pixel/ColorCombine.scala
-index 049fbed..5fc4e39 100644
+index 049fbed..0f289c4 100644
 --- a/src/voodoo/pixel/ColorCombine.scala
 +++ b/src/voodoo/pixel/ColorCombine.scala
 @@ -72,24 +72,15 @@ object ColorCombine {
@@ -2761,7 +2820,34 @@ index 049fbed..5fc4e39 100644
        if (c.trace.enabled) out.trace := rasterOut.trace
        out
      }
-@@ -167,6 +153,10 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+@@ -144,21 +130,15 @@ object ColorCombine {
+     val iteratedAlpha = UInt(8 bits) // Pass-through for fog alpha mode
+     val rawW = SInt(32 bits) // Pass-through for fog wDepth calculation
+ 
+-    // Fog color (per-triangle, pass-through for Fog stage)
+-    val fogColor = Bits(32 bits)
+-    val chromaKey = Bits(32 bits)
+-    val zaColor = Bits(32 bits)
+-
+     // Per-triangle FIFO registers (pass-through for downstream stages)
+     val alphaMode = AlphaMode()
+     val fogMode = FogMode()
+-    val fbzMode = FbzMode()
+-    val routing = FbRouting(c)
++    // LFB write through the pixel pipeline (Lfb), not a triangle pixel. The
++    // Sync=Yes registers (fogColor, chromaKey, zaColor, fbzMode, routing) are
++    // read live downstream (FramebufferAccess.LiveRegs); LFB pixels use the
++    // LFB write routing and no chroma key.
++    val isLfb = Bool()
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+-
+-    def drawColorBufferBase: UInt = routing.colorBaseAddr
+-    def drawAuxBufferBase: UInt = routing.auxBaseAddr
+-    def fbPixelStride: UInt = routing.pixelStride
+   }
+ }
+ 
+@@ -167,6 +147,10 @@ case class ColorCombine(c: voodoo.Config) extends Component {
    val io = new Bundle {
      val input = slave Stream (ColorCombine.Input(c))
      val output = master Stream (ColorCombine.Output(c))
@@ -2772,7 +2858,7 @@ index 049fbed..5fc4e39 100644
    }
  
    import ColorCombine._
-@@ -178,18 +168,9 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+@@ -178,18 +162,9 @@ case class ColorCombine(c: voodoo.Config) extends Component {
    val RAW_W = Payload(SInt(32 bits))
    val CONFIG = Payload(ColorCombine.Config())
  
@@ -2791,7 +2877,7 @@ index 049fbed..5fc4e39 100644
    val TRACE = if (c.trace.enabled) Payload(Trace.PixelKey()) else null
  
    // Color payloads at various precisions
-@@ -250,15 +231,8 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+@@ -250,15 +225,8 @@ case class ColorCombine(c: voodoo.Config) extends Component {
      self(ITERATED_ALPHA_PT) := payload.iteratedAlpha
      self(RAW_W) := payload.rawW
      self(CONFIG) := payload.config
@@ -2807,28 +2893,24 @@ index 049fbed..5fc4e39 100644
      if (c.trace.enabled) {
        self(TRACE) := payload.trace
      }
-@@ -332,15 +306,13 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+@@ -332,15 +300,9 @@ case class ColorCombine(c: voodoo.Config) extends Component {
      payload.depth := self(DEPTH)
      payload.iteratedAlpha := self(ITERATED_ALPHA_PT)
      payload.rawW := self(RAW_W)
 -    payload.fogColor := self(FOG_COLOR)
 -    payload.chromaKey := self(CHROMA_KEY)
 -    payload.zaColor := self(ZA_COLOR)
-+    payload.fogColor := io.sync.fogColor
-+    payload.chromaKey := io.sync.chromaKey
-+    payload.zaColor := io.sync.zaColor
++    payload.isLfb := False
      payload.alphaMode := self(ALPHA_MODE)
      payload.fogMode := self(FOG_MODE)
 -    payload.fbzMode := self(FBZ_MODE)
 -    payload.drawColorBufferBase := self(DRAW_COLOR_BUFFER_BASE)
 -    payload.drawAuxBufferBase := self(DRAW_AUX_BUFFER_BASE)
 -    payload.fbPixelStride := self(FB_PIXEL_STRIDE)
-+    payload.fbzMode := io.sync.fbzMode
-+    payload.routing := io.sync.routing
      if (c.trace.enabled) {
        payload.trace := self(TRACE)
      }
-@@ -386,6 +358,8 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+@@ -386,6 +348,8 @@ case class ColorCombine(c: voodoo.Config) extends Component {
      StageLink(n7, n8)
    )
  
@@ -2985,10 +3067,74 @@ index 604a5c3..50f65bb 100644
 -  }
  }
 diff --git a/src/voodoo/pixel/Fog.scala b/src/voodoo/pixel/Fog.scala
-index 1a3a34c..e46f94b 100644
+index 1a3a34c..7e6fde3 100644
 --- a/src/voodoo/pixel/Fog.scala
 +++ b/src/voodoo/pixel/Fog.scala
-@@ -203,10 +203,12 @@ case class Fog(c: Config) extends Component {
+@@ -39,18 +39,10 @@ object Fog {
+       UInt(8 bits),
+       UInt(8 bits)
+     ) // pre-fog color for ACOLORBEFOREFOG blend factor
+-    val chromaKey = Bits(32 bits)
+-    val zaColor = Bits(32 bits)
+-
+     // Per-triangle FIFO registers (pass-through for alpha test and framebuffer access)
+     val alphaMode = AlphaMode()
+-    val fbzMode = FbzMode()
+-    val routing = FbRouting(c)
++    val isLfb = Bool() // see ColorCombine.Output.isLfb
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+-
+-    def drawColorBufferBase: UInt = routing.colorBaseAddr
+-    def drawAuxBufferBase: UInt = routing.auxBaseAddr
+-    def fbPixelStride: UInt = routing.pixelStride
+   }
+ }
+ 
+@@ -64,6 +56,8 @@ case class Fog(c: Config) extends Component {
+     val input = slave Stream (ColorCombine.Output(c))
+     val output = master Stream (Fog.Output(c))
+     val fogTable = in Vec (Bits(16 bits), 64)
++    // Sync=Yes: constant while pixels are in flight here.
++    val fogColor = in Bits (32 bits)
+     val busy = out Bool ()
+   }
+ 
+@@ -75,11 +69,8 @@ case class Fog(c: Config) extends Component {
+     dst.depth := src.depth
+     dst.wDepth := src.wDepth
+     dst.colorBeforeFog := src.colorBeforeFog
+-    dst.chromaKey := src.chromaKey
+-    dst.zaColor := src.zaColor
+     dst.alphaMode := src.alphaMode
+-    dst.fbzMode := src.fbzMode
+-    dst.routing := src.routing
++    dst.isLfb := src.isLfb
+     if (c.trace.enabled) dst.trace := src.trace
+   }
+ 
+@@ -91,7 +82,7 @@ case class Fog(c: Config) extends Component {
+   val fogModeSelect = payload.fogMode.fogModeSelect
+ 
+   // Fog color as Color bundle (from per-triangle captured config)
+-  val fogRgb = rgb888Color(payload.fogColor)
++  val fogRgb = rgb888Color(io.fogColor)
+ 
+   // --- Fog factor (fogA) selection ---
+   // Depth value for Z-based fog: bits [27:20] of the 20.12 depth
+@@ -175,11 +166,8 @@ case class Fog(c: Config) extends Component {
+       out.payload.depth := payload.depth
+       out.payload.wDepth := wDepth
+       out.payload.colorBeforeFog := payload.color
+-      out.payload.chromaKey := payload.chromaKey
+-      out.payload.zaColor := payload.zaColor
+       out.payload.alphaMode := payload.alphaMode
+-      out.payload.fbzMode := payload.fbzMode
+-      out.payload.routing := payload.routing
++      out.payload.isLfb := payload.isLfb
+       if (c.trace.enabled) {
+         out.payload.trace := payload.trace
+       }
+@@ -203,10 +191,12 @@ case class Fog(c: Config) extends Component {
        val tableIdx = wStage.payload.payload.wDepth(15 downto 10)
        val tableEntry = io.fogTable(tableIdx)
        val fogBase = tableEntry(7 downto 0).asUInt
@@ -3006,10 +3152,15 @@ index 1a3a34c..e46f94b 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..739257e 100644
+index c6b2ec5..15756b4 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
-@@ -29,6 +29,11 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -26,9 +26,16 @@ case class FramebufferAccess(c: Config) extends Component {
+     val fbReadColorRsp = slave Stream (FramebufferPlaneBuffer.ReadRsp())
+     val fbReadAuxReq = master Stream (FramebufferPlaneBuffer.ReadReq(c))
+     val fbReadAuxRsp = slave Stream (FramebufferPlaneBuffer.ReadRsp())
++    // Sync=Yes registers, constant while pixels are in flight (io.busy).
++    val live = in(FramebufferAccess.LiveRegs(c))
  
      // Pipeline busy: pixels in flight inside fork-queue-join
      val busy = out Bool ()
@@ -3021,7 +3172,70 @@ index c6b2ec5..739257e 100644
      val zFuncFail = out Bool ()
      val debug = out Bits (32 bits)
    }
-@@ -137,7 +142,11 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -47,14 +54,15 @@ case class FramebufferAccess(c: Config) extends Component {
+   inFlightCount.simPublic()
+ 
+   val payload = io.input.payload
+-  val fbzMode = payload.fbzMode
++  val fbzMode = io.live.fbzMode
++  val routing = payload.isLfb ? io.live.lfbRouting | io.live.drawRouting
+ 
+   // ========================================================================
+   // Step 1: Compute newDepth (combinational, before fork)
+   // ========================================================================
+ 
+   // Depth source selection
+-  val zaDepth = payload.zaColor(15 downto 0).asUInt
++  val zaDepth = io.live.zaColor(15 downto 0).asUInt
+ 
+   // Z-buffer depth: clamp SQ(32,12) >> 12 to 16 bits
+   val depthRaw = payload.depth.raw.asSInt
+@@ -75,7 +83,7 @@ case class FramebufferAccess(c: Config) extends Component {
+   val compDepthPreBias = fbzMode.depthSourceSelect ? zaDepth | baseDepth
+ 
+   // Depth bias: signed add of zaColor[15:0]
+-  val zaColorSigned = payload.zaColor(15 downto 0).asSInt
++  val zaColorSigned = io.live.zaColor(15 downto 0).asSInt
+   val biasedDepthRaw = (compDepthPreBias.resize(17 bits).asSInt + zaColorSigned.resize(17 bits))
+   val biasedDepth = UInt(16 bits)
+   when(biasedDepthRaw < 0) {
+@@ -97,16 +105,10 @@ case class FramebufferAccess(c: Config) extends Component {
+     val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
+     val alpha = UInt(8 bits)
+     val colorBeforeFog = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
+-    val chromaKey = Bits(32 bits)
+     val newDepth = UInt(16 bits)
+     val alphaMode = AlphaMode()
+-    val fbzMode = FbzMode()
+-    val routing = FbRouting(c)
++    val isLfb = Bool()
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+-
+-    def fbColorBaseAddr: UInt = routing.colorBaseAddr
+-    def fbAuxBaseAddr: UInt = routing.auxBaseAddr
+-    def fbPixelStride: UInt = routing.pixelStride
+   }
+ 
+   // Create internal stream with computed address and passthrough data
+@@ -123,31 +125,33 @@ case class FramebufferAccess(c: Config) extends Component {
+   val pixelY = payload.coords(1).asUInt
+   val colorPlaneAddress =
+     FramebufferAddressMath.planeAddress(
+-      payload.drawColorBufferBase,
++      routing.colorBaseAddr,
+       pixelX,
+       pixelY,
+-      payload.fbPixelStride
++      routing.pixelStride
+     )
+   val auxPlaneAddress =
+     FramebufferAddressMath.planeAddress(
+-      payload.drawAuxBufferBase,
++      routing.auxBaseAddr,
+       pixelX,
+       pixelY,
+-      payload.fbPixelStride
++      routing.pixelStride
      )
    request.colorAddress := (colorPlaneAddress(c.addressWidth.value - 1 downto 1) ## U"1'b0").asUInt
    request.auxAddress := (auxPlaneAddress(c.addressWidth.value - 1 downto 1) ## U"1'b0").asUInt
@@ -3034,7 +3248,18 @@ index c6b2ec5..739257e 100644
    request.needAuxRead := fbzMode.enableDepthBuffer
    request.passthrough.coords := payload.coords
    request.passthrough.color := payload.color
-@@ -165,7 +174,8 @@ case class FramebufferAccess(c: Config) extends Component {
+   request.passthrough.alpha := payload.alpha
+   request.passthrough.colorBeforeFog := payload.colorBeforeFog
+-  request.passthrough.chromaKey := payload.chromaKey
+   request.passthrough.newDepth := compDepth
+   request.passthrough.alphaMode := payload.alphaMode
+-  request.passthrough.fbzMode := fbzMode
+-  request.passthrough.routing := payload.routing
++  request.passthrough.isLfb := payload.isLfb
+   if (c.trace.enabled) {
+     request.passthrough.trace := payload.trace
+   }
+@@ -165,7 +169,8 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -3044,7 +3269,7 @@ index c6b2ec5..739257e 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
-@@ -199,45 +209,23 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -199,45 +204,23 @@ case class FramebufferAccess(c: Config) extends Component {
    val colorRspBuf = io.fbReadColorRsp.queue(4)
    val auxRspBuf = io.fbReadAuxRsp.queue(4)
  
@@ -3106,7 +3331,21 @@ index c6b2ec5..739257e 100644
  
    val fetchedRaw = StreamJoin(StreamJoin(colorRsp, auxRsp), passMeta).translateWith {
      val out = FetchResult()
-@@ -281,6 +269,9 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -266,7 +249,7 @@ case class FramebufferAccess(c: Config) extends Component {
+   val pdata = fetched.payload.passthrough
+   val oldDepth = auxData.asUInt
+ 
+-  val depthPassed = pdata.fbzMode.depthFunction.mux(
++  val depthPassed = fbzMode.depthFunction.mux(
+     U(0) -> False,
+     U(1) -> (pdata.newDepth < oldDepth),
+     U(2) -> (pdata.newDepth === oldDepth),
+@@ -277,10 +260,13 @@ case class FramebufferAccess(c: Config) extends Component {
+     U(7) -> True
+   )
+ 
+-  val depthKill = pdata.fbzMode.enableDepthBuffer && !depthPassed
++  val depthKill = fbzMode.enableDepthBuffer && !depthPassed
    io.zFuncFail := fetched.fire && depthKill
    val afterDepthTest = fetched.throwWhen(depthKill)
    val afterDepthTestPiped = afterDepthTest.m2sPipe()
@@ -3116,7 +3355,7 @@ index c6b2ec5..739257e 100644
  
    // ========================================================================
    // Step 4: Alpha blend
-@@ -291,27 +282,17 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -291,28 +277,18 @@ case class FramebufferAccess(c: Config) extends Component {
  
    val oldColor565 = afterColorData.asUInt
    val destColor = expandRgb565(oldColor565)
@@ -3145,14 +3384,16 @@ index c6b2ec5..739257e 100644
 -  destDsub.b := dsubRbRom(
 -    ditherAddr(destColor.b, afterPdata.fbzMode.ditherAlgorithm, dsubX, dsubY)
 -  )
-+  val dsub2x2 = afterPdata.fbzMode.ditherAlgorithm
+-  val blendDestColor = afterPdata.fbzMode.enableDitherSubtract ? destDsub | destColor
++  val dsub2x2 = fbzMode.ditherAlgorithm
 +  destDsub.r := Dither.subtract(destColor.r, dsubX, dsubY, dsub2x2, green = false)
 +  destDsub.g := Dither.subtract(destColor.g, dsubX, dsubY, dsub2x2, green = true)
 +  destDsub.b := Dither.subtract(destColor.b, dsubX, dsubY, dsub2x2, green = false)
-   val blendDestColor = afterPdata.fbzMode.enableDitherSubtract ? destDsub | destColor
++  val blendDestColor = fbzMode.enableDitherSubtract ? destDsub | destColor
    val destA = U(0xff, 8 bits)
  
-@@ -395,6 +376,7 @@ case class FramebufferAccess(c: Config) extends Component {
+   val srcColor = afterPdata.color
+@@ -395,6 +371,7 @@ case class FramebufferAccess(c: Config) extends Component {
      }
      .m2sPipe()
  
@@ -3160,7 +3401,7 @@ index c6b2ec5..739257e 100644
    io.debug := 0
    io.debug(0) := io.input.valid
    io.debug(1) := io.input.ready
-@@ -417,10 +399,10 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -417,10 +394,10 @@ case class FramebufferAccess(c: Config) extends Component {
    io.debug(18) := auxCtlBase.ready
    io.debug(19) := passMeta.valid
    io.debug(20) := passMeta.ready
@@ -3175,6 +3416,45 @@ index c6b2ec5..739257e 100644
    io.debug(25) := fetched.valid
    io.debug(26) := fetched.ready
    io.debug(31 downto 27) := inFlightCount.asBits
+@@ -454,14 +431,14 @@ case class FramebufferAccess(c: Config) extends Component {
+     out.colorBeforeFog := pd.colorBeforeFog
+     out.newDepth := pd.newDepth
+     out.alphaMode := pd.alphaMode
+-    out.fbzMode := pd.fbzMode
+-    out.chromaKey := pd.chromaKey
+-    out.rgbWrite := pd.fbzMode.rgbBufferMask
+-    out.auxWrite := pd.fbzMode.auxBufferMask
+-    out.enableAlphaPlanes := pd.fbzMode.enableAlphaPlanes
+-    out.enableDithering := pd.fbzMode.enableDithering
+-    out.ditherAlgorithm := pd.fbzMode.ditherAlgorithm
+-    out.routing := pd.routing
++    out.fbzMode := fbzMode
++    out.chromaKey := pd.isLfb ? B(0, 32 bits) | io.live.chromaKey
++    out.rgbWrite := fbzMode.rgbBufferMask
++    out.auxWrite := fbzMode.auxBufferMask
++    out.enableAlphaPlanes := fbzMode.enableAlphaPlanes
++    out.enableDithering := fbzMode.enableDithering
++    out.ditherAlgorithm := fbzMode.ditherAlgorithm
++    out.routing := pd.isLfb ? io.live.lfbRouting | io.live.drawRouting
+     if (c.trace.enabled) {
+       out.trace := pd.trace
+     }
+@@ -469,6 +446,15 @@ case class FramebufferAccess(c: Config) extends Component {
+ }
+ 
+ object FramebufferAccess {
++  /** Sync=Yes registers read live by the pixel stages after color combine. */
++  case class LiveRegs(c: Config) extends Bundle {
++    val fbzMode = FbzMode()
++    val zaColor = Bits(32 bits)
++    val chromaKey = Bits(32 bits)
++    val drawRouting = FbRouting(c)
++    val lfbRouting = FbRouting(c)
++  }
++
+   case class Output(c: Config) extends Bundle {
+     val coords = PixelCoords(c)
+     val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
 index cee86c0..a762225 100644
 --- a/src/voodoo/raster/Rasterizer.scala

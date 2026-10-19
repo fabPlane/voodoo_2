@@ -117,7 +117,7 @@ object GowinGenSupport {
         // Except the TMU's two 16 x 134-bit sample-request queues: ~4.3k FFs
         // as registers, 8 BSRAMs here, and their enables are plain stream
         // handshakes rather than pipeline-busy / PCI FIFO control.
-        bsramComponents = Seq("sampleRequestBasePre_translated_fifo", "io_sampleRequest_translated_fifo")
+        bsramComponents = sys.env.get("GOWIN_TMU_QUEUES_BSRAM").map(_ => Seq("sampleRequestBasePre_translated_fifo", "io_sampleRequest_translated_fifo")).getOrElse(Nil)
       )
     )
 }
