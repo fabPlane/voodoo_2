@@ -432,7 +432,6 @@ case class Axi4ToGowinDdrNative(
       for (wp <- writePorts) when(iPort === wp.idx) { wp.axi.b.valid := True }
       when(bReady) { iDone := True }
     }
-    val iFree = !iValid || iDone
 
     when(!collecting) {
       when(io.ddr.initCalibComplete) {
@@ -456,13 +455,15 @@ case class Axi4ToGowinDdrNative(
       }
     }
 
-    // A beat that completes the line is only taken when the issue buffer can
-    // take the line in the same cycle, and not in the cycle right after the
-    // burst's address was loaded: nextLine() is only valid a cycle later.
+    // A beat that completes the line is only taken when the issue buffer is
+    // empty (registered: deciding on this cycle's grant put cmd_ready ->
+    // grant -> collector enables in one path, B128 missed 100 MHz), and not
+    // in the cycle right after the burst's address was loaded: nextLine() is
+    // only valid a cycle later.
     val justStarted = RegNext(!collecting && io.ddr.initCalibComplete &&
       (io.fb.aw.valid || io.tex.aw.valid || (if (hasAuxW) io.auxW.aw.valid else False))) init (False)
     val completes = groupIdx === lastIdx || wLast || beatsLeft === 1
-    val wReady = collecting && (!completes || (iFree && !justStarted))
+    val wReady = collecting && (!completes || (!iValid && !justStarted))
     for (wp <- writePorts) when(port === wp.idx) { wp.axi.w.ready := wReady }
     val beat = wValid && wReady
     when(iDone) { iValid := False; iResp := False }
