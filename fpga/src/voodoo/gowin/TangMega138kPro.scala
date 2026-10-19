@@ -142,7 +142,10 @@ case class TangMega138kPro(c: Config) extends Component {
     val ddrSnapToggle = RegInit(False)
     when(localWrite && localAddr === 0x74) { ddrSnapToggle := !ddrSnapToggle }
     val ddrStatsIn = Vec(Bits(32 bits), 8)
-    val ddrStats = ddrStatsIn.map(BufferCC(_, init = B(0, 32 bits)))
+    // ddrShadow (DDR domain) only changes on the 0x74 toggle and is stable
+    // while the host reads it, so it needs no synchronizer flops here.
+    ddrStatsIn.foreach(_.addTag(crossClockDomain))
+    val ddrStats = ddrStatsIn
     // On-chip supply / temperature monitor. Also sent with every frame-DMA
     // status write, so the host logs it without touching the BAR:
     // 0x68 / extra 0: vcc [15:0] | temp [31:16]; 0x6C / extra 1: vccMin |

@@ -1554,7 +1554,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..be89af6 100644
+index 7797711..ce01740 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -1627,7 +1627,15 @@ index 7797711..be89af6 100644
      tmuBusy := False
    }
  
-@@ -367,8 +380,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -351,6 +364,7 @@ case class PixelPipeline(c: Config) extends Component {
+     out := ColorCombine.Input.fromTmuAndRaster(c, payload._1, payload._2, io.controls.syncRender)
+   )
+   colorCombineInput >/-> colorCombine.io.input
++  colorCombine.io.sync := io.controls.syncRender
+ 
+   val spanPrefetchFork = StreamFork2(rasterizer.prefetchSpan, synchronous = true)
+   val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
+@@ -367,8 +381,10 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -1640,7 +1648,7 @@ index 7797711..be89af6 100644
  
    val ckBits = colorCombine.io.output.payload.chromaKey
    val ckR = ckBits(23 downto 16).asUInt
-@@ -653,8 +668,9 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,10 +669,11 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -1649,9 +1657,12 @@ index 7797711..be89af6 100644
 -    triangleSetup.o.valid || rasterizer.running || tmuInputValid ||
 +    triangleSetup.busy || rasterizer.running || tmuInputValid ||
        tmuBusy || fbAccess.io.busy ||
-       colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
+-      colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
++      colorCombine.io.input.valid || colorCombine.io.busy || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
-@@ -666,12 +682,81 @@ case class PixelPipeline(c: Config) extends Component {
+       writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
+       fastfillWriter.io.running || fastfillWriter.io.wordValid ||
+@@ -666,12 +683,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -1669,7 +1680,7 @@ index 7797711..be89af6 100644
 +  // With fbFlushReq asserted, colorBusy also covers a not yet drained run.
 +  val busyAfterSetup =
 +    rasterizer.running || rasterYPipe.valid || tmuInputValid || tmuBusy || fbAccess.io.busy ||
-+      colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
++      colorCombine.io.input.valid || colorCombine.io.busy || fogBusy || fbAccess.io.input.valid ||
 +      writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
 +      writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
 +      fastfillWriter.io.running || fastfillWriter.io.wordValid ||
@@ -1734,7 +1745,7 @@ index 7797711..be89af6 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +792,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +793,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -2415,7 +2426,7 @@ index c5a4cd8..f75c810 100644
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
-index de14d02..3e5def1 100644
+index de14d02..3b650aa 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
 +++ b/src/voodoo/hdmi/HdmiScanout.scala
 @@ -107,12 +107,15 @@ case class HdmiScanoutStatus(c: Config) extends Bundle {
@@ -2629,7 +2640,23 @@ index de14d02..3e5def1 100644
      is(B"10") { outstanding := outstanding + 1 }
      is(B"01") { outstanding := outstanding - 1 }
      default {}
-@@ -470,23 +551,35 @@ case class HdmiCdcFramebufferScanout(
+@@ -453,10 +534,11 @@ case class HdmiCdcFramebufferScanout(
+ 
+   val hdmi = new ClockingArea(hdmiClockDomain) {
+     val testPatternEnable = BufferCC(io.regs.testPatternEnable, False)
+-    val gammaLut = Vec(Bits(24 bits), 33)
+-    for (i <- 0 until 33) {
+-      gammaLut(i) := BufferCC(io.regs.gammaLut(i), B(0, 24 bits))
+-    }
++    // The gamma table only changes when software writes clutData, so read the
++    // register bank's copy directly: a two-flop synchronizer per bit was ~1.6k
++    // flip-flops, and a torn update just tints part of one frame.
++    io.regs.gammaLut.foreach(_.addTag(crossClockDomain))
++    val gammaLut = io.regs.gammaLut
+     val contentWidth = BufferCC(io.regs.displayWidth, U(0, 10 bits)).resize(hWidth)
+     val contentHeight = BufferCC(io.regs.displayHeight, U(0, 10 bits)).resize(vWidth)
+     val scan = VideoScanout(timing)
+@@ -470,23 +552,35 @@ case class HdmiCdcFramebufferScanout(
  
      val useFramebuffer = !testPatternEnable
      val startArmed = BufferCC(scanoutRun, False)
@@ -2673,7 +2700,7 @@ index de14d02..3e5def1 100644
        io.video.rgb := Rgb888.black()
      }
      io.video.de := scan.io.active
-@@ -496,11 +589,13 @@ case class HdmiCdcFramebufferScanout(
+@@ -496,11 +590,13 @@ case class HdmiCdcFramebufferScanout(
  
    val newFrameCore = PulseCCByToggle(hdmi.scan.io.newFrame, hdmiClockDomain, coreClockDomain)
  
@@ -2687,6 +2714,129 @@ index de14d02..3e5def1 100644
    io.status.active := BufferCC(hdmi.contentActive, False)
    io.status.x := BufferCC(hdmi.scan.io.x.resize(10 bits), U(0, 10 bits))
    io.status.y := BufferCC(hdmi.scan.io.y.resize(10 bits), U(0, 10 bits))
+diff --git a/src/voodoo/pixel/ColorCombine.scala b/src/voodoo/pixel/ColorCombine.scala
+index 049fbed..5fc4e39 100644
+--- a/src/voodoo/pixel/ColorCombine.scala
++++ b/src/voodoo/pixel/ColorCombine.scala
+@@ -72,24 +72,15 @@ object ColorCombine {
+     val color0Alpha = UInt(8 bits) // Alpha byte from color0 register (bits 31:24)
+     val color1Alpha = UInt(8 bits) // Alpha byte from color1 register (bits 31:24)
+ 
+-    // Fog color (per-triangle, passed through to Fog stage)
+-    val fogColor = Bits(32 bits)
+-    val chromaKey = Bits(32 bits)
+-    val zaColor = Bits(32 bits)
+-
+     // Configuration (decoded enums)
+     val config = ColorCombine.Config()
+ 
+-    // Per-triangle FIFO registers (captured at triangle command time, must travel with pixels)
++    // Per-triangle FIFO registers (captured at triangle command time, must travel with pixels).
++    // The Sync=Yes ones (fogColor, chromaKey, zaColor, fbzMode, routing) come from io.sync at
++    // the output instead: their writes wait until the pipeline, these stages included, is idle.
+     val alphaMode = AlphaMode()
+     val fogMode = FogMode()
+-    val fbzMode = FbzMode()
+-    val routing = FbRouting(c)
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+-
+-    def drawColorBufferBase: UInt = routing.colorBaseAddr
+-    def drawAuxBufferBase: UInt = routing.auxBaseAddr
+-    def fbPixelStride: UInt = routing.pixelStride
+   }
+ 
+   object Input {
+@@ -122,14 +113,9 @@ object ColorCombine {
+       out.color0Alpha := sync.color0(31 downto 24).asUInt
+       assignRgb888(out.color1, sync.color1)
+       out.color1Alpha := sync.color1(31 downto 24).asUInt
+-      out.fogColor := sync.fogColor
+-      out.chromaKey := sync.chromaKey
+-      out.zaColor := sync.zaColor
+       out.config := Config.fromFbzColorPath(rasterOut.config.fbzColorPath)
+       out.alphaMode := rasterOut.config.alphaMode
+       out.fogMode := rasterOut.config.fogMode
+-      out.fbzMode := sync.fbzMode
+-      out.routing := sync.routing
+       if (c.trace.enabled) out.trace := rasterOut.trace
+       out
+     }
+@@ -167,6 +153,10 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+   val io = new Bundle {
+     val input = slave Stream (ColorCombine.Input(c))
+     val output = master Stream (ColorCombine.Output(c))
++    // Sync=Yes registers, constant while any pixel is in here (see busy).
++    val sync = in(PixelPipeline.SyncRender(c))
++    // A pixel is inside the stages: Sync=Yes register writes must wait.
++    val busy = out Bool ()
+   }
+ 
+   import ColorCombine._
+@@ -178,18 +168,9 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+   val RAW_W = Payload(SInt(32 bits))
+   val CONFIG = Payload(ColorCombine.Config())
+ 
+-  // Fog color pass-through (per-triangle, must travel with pixels through pipeline)
+-  val FOG_COLOR = Payload(Bits(32 bits))
+-  val CHROMA_KEY = Payload(Bits(32 bits))
+-  val ZA_COLOR = Payload(Bits(32 bits))
+-
+   // Per-triangle FIFO registers pass-through (must travel with pixels through pipeline)
+   val ALPHA_MODE = Payload(AlphaMode())
+   val FOG_MODE = Payload(FogMode())
+-  val FBZ_MODE = Payload(FbzMode())
+-  val DRAW_COLOR_BUFFER_BASE = Payload(UInt(c.addressWidth.value bits))
+-  val DRAW_AUX_BUFFER_BASE = Payload(UInt(c.addressWidth.value bits))
+-  val FB_PIXEL_STRIDE = Payload(UInt(11 bits))
+   val TRACE = if (c.trace.enabled) Payload(Trace.PixelKey()) else null
+ 
+   // Color payloads at various precisions
+@@ -250,15 +231,8 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+     self(ITERATED_ALPHA_PT) := payload.iteratedAlpha
+     self(RAW_W) := payload.rawW
+     self(CONFIG) := payload.config
+-    self(FOG_COLOR) := payload.fogColor
+-    self(CHROMA_KEY) := payload.chromaKey
+-    self(ZA_COLOR) := payload.zaColor
+     self(ALPHA_MODE) := payload.alphaMode
+     self(FOG_MODE) := payload.fogMode
+-    self(FBZ_MODE) := payload.fbzMode
+-    self(DRAW_COLOR_BUFFER_BASE) := payload.drawColorBufferBase
+-    self(DRAW_AUX_BUFFER_BASE) := payload.drawAuxBufferBase
+-    self(FB_PIXEL_STRIDE) := payload.fbPixelStride
+     if (c.trace.enabled) {
+       self(TRACE) := payload.trace
+     }
+@@ -332,15 +306,13 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+     payload.depth := self(DEPTH)
+     payload.iteratedAlpha := self(ITERATED_ALPHA_PT)
+     payload.rawW := self(RAW_W)
+-    payload.fogColor := self(FOG_COLOR)
+-    payload.chromaKey := self(CHROMA_KEY)
+-    payload.zaColor := self(ZA_COLOR)
++    payload.fogColor := io.sync.fogColor
++    payload.chromaKey := io.sync.chromaKey
++    payload.zaColor := io.sync.zaColor
+     payload.alphaMode := self(ALPHA_MODE)
+     payload.fogMode := self(FOG_MODE)
+-    payload.fbzMode := self(FBZ_MODE)
+-    payload.drawColorBufferBase := self(DRAW_COLOR_BUFFER_BASE)
+-    payload.drawAuxBufferBase := self(DRAW_AUX_BUFFER_BASE)
+-    payload.fbPixelStride := self(FB_PIXEL_STRIDE)
++    payload.fbzMode := io.sync.fbzMode
++    payload.routing := io.sync.routing
+     if (c.trace.enabled) {
+       payload.trace := self(TRACE)
+     }
+@@ -386,6 +358,8 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+     StageLink(n7, n8)
+   )
+ 
++  io.busy := Seq(n1, n2, n3, n4, n5, n6, n7, n8).map(_.isValid).orR
++
+   // Connect input stream to first node
+   n0.driveFrom(io.input) { (self, payload) =>
+     loadPassThrough(self, payload)
 diff --git a/src/voodoo/pixel/Dither.scala b/src/voodoo/pixel/Dither.scala
 index 604a5c3..50f65bb 100644
 --- a/src/voodoo/pixel/Dither.scala
