@@ -604,4 +604,86 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       assert(errors.isEmpty, errors.mkString("; "))
     }
   }
+
+  test("streaming fb + auxW writes across 16 KiB boundaries, mid-line starts and random strobes land byte-exact") {
+    compiledAuxW.doSim("auxw-stream", seed = 9) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      val rnd = new scala.util.Random(77)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      dut.io.policy #= 0
+      for (axi <- Seq(dut.io.fb, dut.io.tex, dut.io.scan, dut.io.aux, dut.io.col, dut.io.auxW)) {
+        axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
+        axi.ar.valid #= false; axi.r.ready #= false
+      }
+      // Native lines in the DDR model; expected bytes in `want`.
+      val mem = mutable.HashMap[BigInt, BigInt]()
+      val want = mutable.HashMap[Long, Int]()
+      var cycle = 0L
+      var stall = true
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        dut.io.ddr.cmdReady #= !stall || rnd.nextInt(4) != 0
+        dut.io.ddr.wrDataRdy #= !stall || rnd.nextInt(4) != 0
+        if (dut.io.ddr.cmdEn.toBoolean && dut.io.ddr.cmd.toInt == 0) {
+          val a = dut.io.ddr.addr.toBigInt
+          val data = dut.io.ddr.wrData.toBigInt; val mask = dut.io.ddr.wrDataMask.toBigInt
+          var line = mem.getOrElse(a, BigInt(0))
+          for (b <- 0 until 32 if !mask.testBit(b)) {
+            val byte = (data >> (8 * b)) & 0xff
+            line = (line & ~(BigInt(0xff) << (8 * b))) | (byte << (8 * b))
+          }
+          mem(a) = line
+        }
+      }
+      // Byte address -> (native line address, byte lane), as the adapter maps it.
+      def nativeLine(byteAddr: Long): (BigInt, Int) = (BigInt((byteAddr >> 5) << 3), (byteAddr & 31).toInt)
+      def writer(port: Int, axi: spinal.lib.bus.amba4.axi.Axi4, bases: Seq[Long], gaps: Boolean) = fork {
+        for (base <- bases; k <- 0 until 12) {
+          val beats = Seq(1, 2, 7, 8, 9, 16, 31)(rnd.nextInt(7))
+          val a = base + 64L * k + 4 * rnd.nextInt(8)
+          axi.aw.valid #= true; axi.aw.addr #= a; axi.aw.len #= beats - 1
+          axi.aw.size #= 2; axi.aw.burst #= 1; axi.aw.id #= port
+          dut.clockDomain.waitSamplingWhere(axi.aw.ready.toBoolean)
+          axi.aw.valid #= false
+          for (i <- 0 until beats) {
+            if (gaps && rnd.nextInt(3) == 0) { axi.w.valid #= false; dut.clockDomain.waitSampling(1 + rnd.nextInt(3)) }
+            val d = rnd.nextLong() & 0xffffffffL
+            val strb = if (rnd.nextInt(6) == 0) 0 else Seq(0xf, 0xf, 0x3, 0xc, 0x5)(rnd.nextInt(5))
+            axi.w.valid #= true; axi.w.data #= d; axi.w.strb #= strb; axi.w.last #= i == beats - 1
+            dut.clockDomain.waitSamplingWhere(axi.w.ready.toBoolean)
+            for (b <- 0 until 4 if ((strb >> b) & 1) == 1) want(a + 4 * i + b) = ((d >> (8 * b)) & 0xff).toInt
+          }
+          axi.w.valid #= false
+        }
+        dut.clockDomain.waitSamplingWhere(axi.b.valid.toBoolean)
+      }
+      // Ranges straddling 16 KiB (nextLine's registered carry) boundaries.
+      val t0 = writer(0, dut.io.fb, Seq(0x3e00L, 0x13e00L), gaps = true)
+      val t2 = writer(2, dut.io.auxW, Seq(0x7e00L, 0x2be00L), gaps = true)
+      t0.join(); t2.join()
+      dut.clockDomain.waitSampling(50)
+      var bad = 0
+      for ((byteAddr, v) <- want) {
+        val (line, lane) = nativeLine(byteAddr)
+        val got = ((mem.getOrElse(line, BigInt(0)) >> (8 * lane)) & 0xff).toInt
+        if (got != v) { if (bad < 5) println(f"byte $byteAddr%x: got $got%02x want $v%02x"); bad += 1 }
+      }
+      assert(bad == 0, s"$bad bytes wrong")
+
+      // Throughput: both ports stream 8-beat bursts with no gaps or stalls.
+      stall = false
+      val c0 = cycle
+      val s0 = writer(0, dut.io.fb, Seq(0x40000L), gaps = false)
+      val s2 = writer(2, dut.io.auxW, Seq(0x50000L), gaps = false)
+      s0.join(); s2.join()
+      println(f"[auxw-stream] ${(cycle - c0)} cycles for two ports' 12 bursts each")
+    }
+  }
 }

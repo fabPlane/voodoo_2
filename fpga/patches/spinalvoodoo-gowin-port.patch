@@ -379,7 +379,7 @@ index d163ab7..5ab9b45 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..acd58a1 100644
+index 1b34fa2..ca69bb1 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -392,13 +392,15 @@ index 1b34fa2..acd58a1 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,32 @@ case class Config(
+@@ -31,6 +34,34 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
 +    // Lines of the small direct-mapped texture cache used when
 +    // useTexFillCache is off (TmuSmallTextureCache); 0 = no cache.
 +    texSmallCacheLines: Int = 0,
++    // TmuSmallTextureCache line fills in flight (prefetch hints + misses).
++    texSmallFillSlots: Int = 4,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -625,7 +627,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..3681cdd 100644
+index 6051025..f0b9e9a 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -10,21 +10,32 @@ object CoreSimGen extends App {
@@ -666,14 +668,15 @@ index 6051025..3681cdd 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,9 @@ object CoreSimGen extends App {
+@@ -37,7 +48,10 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
 -        argIntValue("--tex-fill-request-window").getOrElse(Config.voodoo1().texFillRequestWindow)
 +        argIntValue("--tex-fill-request-window").getOrElse(Config.voodoo1().texFillRequestWindow),
 +      texSmallCacheLines =
-+        argIntValue("--tex-small-cache-lines").getOrElse(if (gowin) 512 else Config.voodoo1().texSmallCacheLines)
++        argIntValue("--tex-small-cache-lines").getOrElse(if (gowin) 512 else Config.voodoo1().texSmallCacheLines),
++      texSmallFillSlots = argIntValue("--tex-small-fill-slots").getOrElse(4)
      )
  
    val memTiming = SimMemoryTiming(
@@ -4944,7 +4947,7 @@ index 8b06179..9cac492 100644
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..6a7a5c8 100644
+index 465ea78..2acf8c1 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -5033,7 +5036,7 @@ index 465ea78..6a7a5c8 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,319 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,320 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
@@ -5083,7 +5086,8 @@ index 465ea78..6a7a5c8 100644
 +  // looks up again after each completed fill. A hint fill can evict a line a
 +  // queued request still needs; that request then misses and refetches it.
 +  val lanes = 4
-+  val fillSlots = 4
++  val fillSlots = c.texSmallFillSlots
++  require(isPow2(fillSlots) && fillSlots >= 2)
 +  case class Lookup() extends Bundle {
 +    val addr = Vec(UInt(aw bits), lanes)
 +    val active = Bits(lanes bits)

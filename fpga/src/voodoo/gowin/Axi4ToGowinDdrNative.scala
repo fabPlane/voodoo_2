@@ -353,42 +353,59 @@ case class Axi4ToGowinDdrNative(
 
   // ---------------------------------------------------------------- writes
   case class WritePort(idx: Int, axi: Axi4, cfg: Axi4Config)
+  // Two stages, so collecting a line's beats overlaps issuing the previous
+  // line: with one serial engine (address, 8 beats, command, B, idle) a 32-byte
+  // line took 12+ DDR cycles and the colour and depth write ports, which share
+  // it, were blocked 6-7% of cycles under GLQuake (B126). The collector takes
+  // a burst's beats into a line; a full line moves to the issue buffer (if it
+  // is free), which waits for the command arbiter and, after a burst's last
+  // line, returns B.
   val wr = new Area {
-    object State extends SpinalEnum {
-      val idle, collect, issue, resp = newElement()
-    }
     // Write ports: 0 fb (colour writes, LFB), 1 tex (texture downloads),
     // 2 auxW (depth writes) when present.
     val writePorts = Seq(WritePort(0, io.fb, fbConfig), WritePort(1, io.tex, texConfig)) ++
       (if (hasAuxW) Seq(WritePort(2, io.auxW, auxWConfig)) else Nil)
-    val state = RegInit(State.idle)
+
+    // ---- collector
+    val collecting = RegInit(False)
     val port = Reg(UInt(2 bits)) init (0)
     // fb and auxW take turns; texture downloads go when neither waits.
     val auxWNext = RegInit(False)
-    val addr = Reg(UInt(32 bits)) init (0)
-    val addrNext = nextLine(addr)
+    val cAddr = Reg(UInt(32 bits)) init (0)
+    val cAddrNext = nextLine(cAddr)
     val beatsLeft = Reg(UInt(9 bits)) init (0)
-    val id = Reg(UInt(idWidth bits)) init (0)
+    val cId = Reg(UInt(idWidth bits)) init (0)
     val groupIdx = Reg(UInt(wordIdxBits bits)) init (0)
-    val words = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
-    val strbs = Vec(Reg(Bits(4 bits)) init (0), nativeWords)
+    val cWords = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
+    val cStrbs = Vec(Reg(Bits(4 bits)) init (0), nativeWords)
     // Do not spend a native DDR command on a line made entirely of padding.
     // Registered while the line is collected: OR-ing the 32 strobe bits fed
     // the command arbiter combinationally and missed 100 MHz (B55).
-    val groupHasData = RegInit(False)
-    val wantsCmd = state === State.issue && groupHasData && io.ddr.wrDataRdy
+    val cHasData = RegInit(False)
+
+    // ---- issue buffer
+    val iValid = RegInit(False)
+    val iResp = RegInit(False) // command done, B being returned
+    val iPort = Reg(UInt(2 bits)) init (0)
+    val iLast = Reg(Bool()) init (False)
+    val addr = Reg(UInt(32 bits)) init (0)
+    val id = Reg(UInt(idWidth bits)) init (0)
+    val words = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
+    val strbs = Vec(Reg(Bits(4 bits)) init (0), nativeWords)
+    val iHasData = RegInit(False)
+    val wantsCmd = iValid && !iResp && iHasData && io.ddr.wrDataRdy
     val issue = Bool() // driven by the command arbiter below
 
     def start(wp: WritePort): Unit = {
       wp.axi.aw.ready := True
       port := wp.idx
-      addr := wp.axi.aw.addr.resized
+      cAddr := wp.axi.aw.addr.resized
       beatsLeft := (wp.axi.aw.len.resize(9) + 1).resized
-      if (wp.cfg.useId) id := wp.axi.aw.id.resized
+      if (wp.cfg.useId) cId := wp.axi.aw.id.resized
       groupIdx := wordIdx(wp.axi.aw.addr.resize(32))
-      strbs.foreach(_ := 0)
-      groupHasData := False
-      state := State.collect
+      cStrbs.foreach(_ := 0)
+      cHasData := False
+      collecting := True
     }
     val wValid = Bool()
     val wData = Bits(32 bits)
@@ -401,66 +418,83 @@ case class Axi4ToGowinDdrNative(
       wData := wp.axi.w.data
       wStrb := wp.axi.w.strb
       wLast := wp.axi.w.last
-      bReady := wp.axi.b.ready
+    }
+    for (wp <- writePorts) when(iPort === wp.idx) { bReady := wp.axi.b.ready }
+
+    // Issue buffer: free once its line is issued (or was all padding) and,
+    // for a burst's last line, its B has been taken.
+    val iDone = Bool()
+    iDone := False
+    when(iValid && !iResp && (!iHasData || issue)) {
+      when(iLast) { iResp := True } otherwise { iDone := True }
+    }
+    when(iResp) {
+      for (wp <- writePorts) when(iPort === wp.idx) { wp.axi.b.valid := True }
+      when(bReady) { iDone := True }
+    }
+    val iFree = !iValid || iDone
+
+    when(!collecting) {
+      when(io.ddr.initCalibComplete) {
+        if (hasAuxW) {
+          when(io.auxW.aw.valid && (auxWNext || !io.fb.aw.valid)) {
+            start(writePorts(2))
+            auxWNext := False
+          } elsewhen (io.fb.aw.valid) {
+            start(writePorts(0))
+            auxWNext := True
+          } elsewhen (io.tex.aw.valid) {
+            start(writePorts(1))
+          }
+        } else {
+          when(io.fb.aw.valid) {
+            start(writePorts(0))
+          } elsewhen (io.tex.aw.valid) {
+            start(writePorts(1))
+          }
+        }
+      }
     }
 
-    switch(state) {
-      is(State.idle) {
-        when(io.ddr.initCalibComplete) {
-          if (hasAuxW) {
-            when(io.auxW.aw.valid && (auxWNext || !io.fb.aw.valid)) {
-              start(writePorts(2))
-              auxWNext := False
-            } elsewhen (io.fb.aw.valid) {
-              start(writePorts(0))
-              auxWNext := True
-            } elsewhen (io.tex.aw.valid) {
-              start(writePorts(1))
-            }
-          } else {
-            when(io.fb.aw.valid) {
-              start(writePorts(0))
-            } elsewhen (io.tex.aw.valid) {
-              start(writePorts(1))
-            }
-          }
+    // A beat that completes the line is only taken when the issue buffer can
+    // take the line in the same cycle, and not in the cycle right after the
+    // burst's address was loaded: nextLine() is only valid a cycle later.
+    val justStarted = RegNext(!collecting && io.ddr.initCalibComplete &&
+      (io.fb.aw.valid || io.tex.aw.valid || (if (hasAuxW) io.auxW.aw.valid else False))) init (False)
+    val completes = groupIdx === lastIdx || wLast || beatsLeft === 1
+    val wReady = collecting && (!completes || (iFree && !justStarted))
+    for (wp <- writePorts) when(port === wp.idx) { wp.axi.w.ready := wReady }
+    val beat = wValid && wReady
+    when(iDone) { iValid := False; iResp := False }
+    when(beat) {
+      cWords(groupIdx) := wData
+      // BmbAligner pads a short access to its aligned AXI burst with
+      // WSTRB=0 beats; the data bus is repeated during padding and must
+      // not be written to memory.
+      cStrbs(groupIdx) := wStrb
+      when(wStrb.orR) { cHasData := True }
+      beatsLeft := beatsLeft - 1
+      groupIdx := groupIdx + 1
+      when(completes) {
+        // Hand the line (with this beat) to the issue buffer.
+        iValid := True
+        iResp := False
+        iPort := port
+        id := cId
+        addr := cAddr
+        for (k <- 0 until nativeWords) {
+          val here = groupIdx === k
+          words(k) := Mux(here, wData, cWords(k))
+          strbs(k) := Mux(here, wStrb, cStrbs(k))
         }
-      }
-      is(State.collect) {
-        for (wp <- writePorts) when(port === wp.idx) { wp.axi.w.ready := True }
-        when(wValid) {
-          words(groupIdx) := wData
-          // BmbAligner pads a short access to its aligned AXI burst with
-          // WSTRB=0 beats; the data bus is repeated during padding and must
-          // not be written to memory.
-          strbs(groupIdx) := wStrb
-          when(wStrb.orR) { groupHasData := True }
-          beatsLeft := beatsLeft - 1
-          when(groupIdx === lastIdx || wLast || beatsLeft === 1) {
-            groupIdx := 0
-            state := State.issue
-          } otherwise {
-            groupIdx := groupIdx + 1
-          }
-        }
-      }
-      is(State.issue) {
-        when(!groupHasData || issue) {
-          addr := addrNext
-          when(beatsLeft === 0) {
-            state := State.resp
-          } otherwise {
-            strbs.foreach(_ := 0)
-            groupHasData := False
-            state := State.collect
-          }
-        }
-      }
-      is(State.resp) {
-        for (wp <- writePorts) when(port === wp.idx) { wp.axi.b.valid := True }
-        when(bReady) {
-          state := State.idle
-        }
+        iHasData := cHasData || wStrb.orR
+        val last = beatsLeft === 1
+        iLast := last
+        groupIdx := 0
+        cStrbs.foreach(_ := 0)
+        cHasData := False
+        cAddr := cAddrNext
+        when(last) { collecting := False }
       }
     }
   }
