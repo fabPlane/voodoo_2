@@ -1,3 +1,190 @@
+diff --git a/emu/glide/glide2x/sst1/glide/tests/mtex00.c b/emu/glide/glide2x/sst1/glide/tests/mtex00.c
+new file mode 100644
+index 0000000..bf12599
+--- /dev/null
++++ b/emu/glide/glide2x/sst1/glide/tests/mtex00.c
+@@ -0,0 +1,181 @@
++/*
++ * mtex00 - two-TMU texture combine (Voodoo 1 boards with two TREX, and the
++ * Voodoo 2 multitexture path).
++ *
++ * TMU1 holds a "lightmap", TMU0 a base texture; each quad combines them
++ * differently in TMU0's texture combine unit: multiply (GLQuake's
++ * single-pass lightmapping), add, blend by TMU0 alpha, and TMU1 passed
++ * through. The fifth quad multiplies with perspective (different W per
++ * vertex) and different texture coordinates per TMU.
++ *
++ * Procedural textures, so no .3df files. With the trace runtime, run with
++ * SST_TMUCFG=0x40 (TMU1 present) and SST_TMUMEM_SIZE=2.
++ */
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <assert.h>
++#include <string.h>
++
++#include <glide.h>
++#include "tlib.h"
++
++GrHwConfiguration hwconfig;
++static char version[80];
++
++static const char name[]    = "mtex00";
++static const char purpose[] = "two-TMU texture combine";
++static const char usage[]   = "-n <frames>";
++
++static FxU16 base565[64 * 64];
++static FxU16 light4444[32 * 32];
++
++static void makeTextures(void)
++{
++  int x, y;
++  for (y = 0; y < 64; y++)
++    for (x = 0; x < 64; x++) {
++      int c = ((x >> 3) ^ (y >> 3)) & 1;
++      FxU16 r = c ? 31 : (FxU16)(x >> 1);
++      FxU16 g = c ? (FxU16)(y) : 63;
++      FxU16 b = c ? 8 : (FxU16)((x + y) >> 2);
++      base565[y * 64 + x] = (FxU16)((r << 11) | (g << 5) | b);
++    }
++  /* ARGB4444 so TMU1 also has an alpha channel */
++  for (y = 0; y < 32; y++)
++    for (x = 0; x < 32; x++) {
++      int dx = x - 16, dy = y - 16;
++      int d = 15 - ((dx * dx + dy * dy) >> 4);
++      FxU16 l = (FxU16)(d < 2 ? 2 : d);
++      FxU16 a = (FxU16)((x >> 1) & 15);
++      light4444[y * 32 + x] = (FxU16)((a << 12) | (l << 8) | (l << 4) | ((l * 3) >> 2));
++    }
++}
++
++static void quad(float x0, float y0, float x1, float y1, float w0, float w1, float tmu1Scale)
++{
++  GrVertex v[4];
++  int i;
++  memset(v, 0, sizeof(v));
++  v[0].x = x0; v[0].y = y0;
++  v[1].x = x1; v[1].y = y0;
++  v[2].x = x1; v[2].y = y1;
++  v[3].x = x0; v[3].y = y1;
++  for (i = 0; i < 4; i++) {
++    float u = (i == 1 || i == 2) ? 1.0f : 0.0f;
++    float t = (i >= 2) ? 1.0f : 0.0f;
++    float w = (i == 0 || i == 3) ? w0 : w1;
++    float oow = 1.0f / w;
++    v[i].oow = oow;
++    v[i].r = 255.0f; v[i].g = 255.0f; v[i].b = 255.0f; v[i].a = 255.0f;
++    v[i].tmuvtx[0].sow = u * 255.0f * oow;
++    v[i].tmuvtx[0].tow = t * 255.0f * oow;
++    v[i].tmuvtx[0].oow = oow;
++    v[i].tmuvtx[1].sow = (0.1f + u * tmu1Scale) * 255.0f * oow;
++    v[i].tmuvtx[1].tow = (0.05f + t * tmu1Scale) * 255.0f * oow;
++    v[i].tmuvtx[1].oow = oow;
++  }
++  grDrawTriangle(&v[0], &v[1], &v[2]);
++  grDrawTriangle(&v[0], &v[2], &v[3]);
++}
++
++int
++main(int argc, char **argv)
++{
++  char match;
++  char **remArgs;
++  int  rv;
++  int  frames = -1;
++  GrTexInfo base, light;
++  FxU32 baseAddr, lightAddr;
++  float scrWidth = 640.0f, scrHeight = 480.0f;
++
++  while ((rv = tlGetOpt(argc, argv, "n", &match, &remArgs)) != 0) {
++    if (rv == -1) {
++      printf("%s %s\n", name, usage);
++      return -1;
++    }
++    if (match == 'n') frames = atoi(remArgs[0]);
++  }
++  if (frames == -1) frames = 1;
++
++  tlSetScreen(scrWidth, scrHeight);
++  grGlideGetVersion(version);
++  printf("%s:\n%s\n%s\n", name, purpose, version);
++
++  grGlideInit();
++  assert(grSstQueryHardware(&hwconfig));
++  printf("TMUs: %d\n", hwconfig.SSTs[0].sstBoard.VoodooConfig.nTexelfx);
++  if (hwconfig.SSTs[0].sstBoard.VoodooConfig.nTexelfx < 2) {
++    printf("needs two TMUs (trace runtime: SST_TMUCFG=0x40)\n");
++    return 1;
++  }
++  grSstSelect(0);
++  assert(grSstWinOpen(0, GR_RESOLUTION_640x480, GR_REFRESH_60Hz,
++                      GR_COLORFORMAT_ABGR, GR_ORIGIN_UPPER_LEFT, 2, 1));
++
++  makeTextures();
++  base.smallLod = base.largeLod = GR_LOD_64;
++  base.aspectRatio = GR_ASPECT_1x1;
++  base.format = GR_TEXFMT_RGB_565;
++  base.data = base565;
++  light.smallLod = light.largeLod = GR_LOD_32;
++  light.aspectRatio = GR_ASPECT_1x1;
++  light.format = GR_TEXFMT_ARGB_4444;
++  light.data = light4444;
++
++  baseAddr = grTexMinAddress(GR_TMU0);
++  lightAddr = grTexMinAddress(GR_TMU1);
++  grTexDownloadMipMap(GR_TMU0, baseAddr, GR_MIPMAPLEVELMASK_BOTH, &base);
++  grTexDownloadMipMap(GR_TMU1, lightAddr, GR_MIPMAPLEVELMASK_BOTH, &light);
++  grTexSource(GR_TMU0, baseAddr, GR_MIPMAPLEVELMASK_BOTH, &base);
++  grTexSource(GR_TMU1, lightAddr, GR_MIPMAPLEVELMASK_BOTH, &light);
++  grTexFilterMode(GR_TMU0, GR_TEXTUREFILTER_BILINEAR, GR_TEXTUREFILTER_BILINEAR);
++  grTexFilterMode(GR_TMU1, GR_TEXTUREFILTER_BILINEAR, GR_TEXTUREFILTER_BILINEAR);
++  grTexClampMode(GR_TMU0, GR_TEXTURECLAMP_WRAP, GR_TEXTURECLAMP_WRAP);
++  grTexClampMode(GR_TMU1, GR_TEXTURECLAMP_CLAMP, GR_TEXTURECLAMP_CLAMP);
++  grTexMipMapMode(GR_TMU0, GR_MIPMAP_DISABLE, FXFALSE);
++  grTexMipMapMode(GR_TMU1, GR_MIPMAP_DISABLE, FXFALSE);
++
++  /* Per-TMU texture coordinates. */
++  grHints(GR_HINT_STWHINT, GR_STWHINT_ST_DIFF_TMU1);
++
++  /* The FBI takes TMU0's output. */
++  grColorCombine(GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_ONE,
++                 GR_COMBINE_LOCAL_ITERATED, GR_COMBINE_OTHER_TEXTURE, FXFALSE);
++  grAlphaCombine(GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_ONE,
++                 GR_COMBINE_LOCAL_ITERATED, GR_COMBINE_OTHER_TEXTURE, FXFALSE);
++  /* TMU1: its texel. */
++  grTexCombine(GR_TMU1, GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE,
++               GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE, FXFALSE, FXFALSE);
++
++  while (frames--) {
++    grBufferClear(0x303030, 0, GR_WDEPTHVALUE_FARTHEST);
++
++    /* 1: multiply (lightmap) */
++    grTexCombine(GR_TMU0, GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_LOCAL,
++                 GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_LOCAL_ALPHA, FXFALSE, FXFALSE);
++    quad(20, 20, 200, 200, 1.0f, 1.0f, 1.0f);
++    /* 2: add */
++    grTexCombine(GR_TMU0, GR_COMBINE_FUNCTION_SCALE_OTHER_ADD_LOCAL, GR_COMBINE_FACTOR_ONE,
++                 GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE, FXFALSE, FXFALSE);
++    quad(230, 20, 410, 200, 1.0f, 1.0f, 1.0f);
++    /* 3: blend other/local by TMU0 alpha (1 for RGB565), inverted factor */
++    grTexCombine(GR_TMU0, GR_COMBINE_FUNCTION_BLEND, GR_COMBINE_FACTOR_ONE_MINUS_LOCAL_ALPHA,
++                 GR_COMBINE_FUNCTION_BLEND_OTHER, GR_COMBINE_FACTOR_OTHER_ALPHA, FXFALSE, FXTRUE);
++    quad(440, 20, 620, 200, 1.0f, 1.0f, 1.0f);
++    /* 4: TMU1 passed through TMU0 */
++    grTexCombine(GR_TMU0, GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_ONE,
++                 GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_ONE, FXFALSE, FXFALSE);
++    quad(20, 240, 200, 420, 1.0f, 1.0f, 2.0f);
++    /* 5: multiply, perspective, TMU1 scaled differently */
++    grTexCombine(GR_TMU0, GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_LOCAL,
++                 GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE, FXFALSE, FXFALSE);
++    quad(230, 240, 620, 460, 1.0f, 4.0f, 0.5f);
++
++    grBufferSwap(1);
++  }
++
++  grGlideShutdown();
++  return 0;
++}
 diff --git a/emu/glide/glide2x/sst1/init/initvg/video.c b/emu/glide/glide2x/sst1/init/initvg/video.c
 index c71ac23..44c086a 100644
 --- a/emu/glide/glide2x/sst1/init/initvg/video.c
@@ -15,7 +202,7 @@ index c71ac23..44c086a 100644
       * scanout path and does not need the legacy SST video read-modify-write
       * sequence here; that sequence can touch unsupported/reset-sensitive
 diff --git a/emu/glide/swlibs/newpci/pcilib/fxsim.c b/emu/glide/swlibs/newpci/pcilib/fxsim.c
-index d36865c..e261ebf 100644
+index d36865c..b6736fe 100644
 --- a/emu/glide/swlibs/newpci/pcilib/fxsim.c
 +++ b/emu/glide/swlibs/newpci/pcilib/fxsim.c
 @@ -298,8 +298,82 @@ static int simGetDebugLevel(void) {
@@ -101,7 +288,7 @@ index d36865c..e261ebf 100644
  static void simFlushTexture(void) {
      if (!texHasDirty || !simInitialized) return;
  
-@@ -326,16 +400,23 @@ static void simFlushTexture(void) {
+@@ -326,20 +400,37 @@ static void simFlushTexture(void) {
          FxU32 words = length / 4;
          FxU32 j;
          for (j = 0; j < words; j++) {
@@ -129,7 +316,21 @@ index d36865c..e261ebf 100644
  
      texHasDirty = 0;
  }
-@@ -367,10 +448,14 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+ 
++/* SIM_DUAL_TMU=1: two-TMU traces for the 86Box reference (REF_DUAL_TMUS=1).
++ * Register writes keep their chip-select bits (0x3C00: FBI 0x400, TMU0
++ * 0x800, TMU1 0x1000) and texture writes go out as written, TMU1 (bit 21)
++ * included, instead of folding everything onto TMU0. */
++static int simDualTmu(void) {
++    static int v = -1;
++    if (v < 0) { const char *e = getenv("SIM_DUAL_TMU"); v = e && atoi(e) ? 1 : 0; }
++    return v;
++}
++
+ void simWriteReg(volatile void *addr, FxU32 value) {
+     FxU32 offset = (FxU32)((char *)addr - (char *)simBasePtr);
+     if (simGetDebugLevel() >= 2) {
+@@ -367,10 +458,14 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              simFlushTexture();
          }
  
@@ -147,7 +348,16 @@ index d36865c..e261ebf 100644
          }
  
          /* Wait for pipeline drain before swapbuffer */
-@@ -404,17 +489,15 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+@@ -378,7 +473,7 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+             sim_idle_wait();
+         }
+ 
+-        sim_write(regOff, value);
++        sim_write(simDualTmu() ? (offset & 0x3FFC) : regOff, value);
+     } else if (offset < 0x800000) {
+         /* LFB space: 0x400000-0x7FFFFF */
+         FxU32 lfbAddr = offset & 0x3FFFFF;
+@@ -404,17 +499,20 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              fprintf(stderr, "[fxsim] TEX WRITE stats at #%d: %d non-zero, range 0x%06x-0x%06x\n",
                      texWriteCount, texNonZeroCount, texMinOffset, texMaxOffset);
          }
@@ -161,10 +371,14 @@ index d36865c..e261ebf 100644
 -                texDirtyPages[(texOffset + 3) >> TEX_PAGE_SHIFT] = 1;
 -            }
 -            texHasDirty = 1;
--        }
 +        /* Bits 22:21 select the TMU and Core only has TMU0. Glide's packer
 +         * workaround writes a dummy word to TMU "3" (0xe20000) around every
 +         * triangle; buffering it would re-send its whole page each time. */
++        if (simDualTmu()) {
++            if ((texOff & 0x600000) == 0x600000) return; /* packer dummy, TMU "3" */
++            sim_write(0x800000 | (texOff & 0x7FFFFC), value);
++            return;
+         }
 +        if (texOff & 0x600000) return;
 +        FxU32 texOffset = offset & 0x7FFFFC;
 +        FxU32 w = texOffset >> 2;
@@ -174,7 +388,7 @@ index d36865c..e261ebf 100644
      }
  }
  
-@@ -474,6 +557,7 @@ void simWriteTex(FxU32 offset, const void *data, FxU32 length) {
+@@ -474,6 +572,7 @@ void simWriteTex(FxU32 offset, const void *data, FxU32 length) {
      FxU32 numWords = length / 4;
      FxU32 i;
      for (i = 0; i < numWords; i++) {
@@ -272,6 +486,32 @@ index eda5bba..b8efdda 100644
      /* Check cycle limit (sim_time/2 = tick count) */
      if (cycle_limit && (sim_time / 2) >= cycle_limit) {
          fprintf(stderr, "[sim_harness] Cycle limit reached (%lu ticks), shutting down.\n",
+diff --git a/emu/test/ref_model.c b/emu/test/ref_model.c
+index 3f1a2a8..9bb4a21 100644
+--- a/emu/test/ref_model.c
++++ b/emu/test/ref_model.c
+@@ -544,7 +544,8 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+     if (!voodoo) return -1;
+ 
+     voodoo->type           = VOODOO_1;
+-    voodoo->dual_tmus      = 0;
++    /* REF_DUAL_TMUS=1: two TMUs (TMU1 registers / texture memory). */
++    voodoo->dual_tmus      = getenv("REF_DUAL_TMUS") && atoi(getenv("REF_DUAL_TMUS")) ? 1 : 0;
+     voodoo->render_threads = 1;
+     ref_total_pixels_in = 0;
+     ref_total_pixels_out = 0;
+@@ -566,6 +567,11 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+     voodoo->tex_mem[0]   = (uint8_t *)calloc(1, voodoo->texture_size);
+     voodoo->tex_mem_w[0] = (uint16_t *)voodoo->tex_mem[0];
+     if (!voodoo->tex_mem[0]) return -1;
++    if (voodoo->dual_tmus) {
++        voodoo->tex_mem[1]   = (uint8_t *)calloc(1, voodoo->texture_size);
++        voodoo->tex_mem_w[1] = (uint16_t *)voodoo->tex_mem[1];
++        if (!voodoo->tex_mem[1]) return -1;
++    }
+ 
+     /* Texture cache: allocate data buffers for each cache entry.
+      * Size must hold all LOD levels: 256*256 *2 + 128*128 + 64*64 + ... + 2*2 */
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
 index d163ab7..5ab9b45 100644
 --- a/emu/test/trace_test.cpp
