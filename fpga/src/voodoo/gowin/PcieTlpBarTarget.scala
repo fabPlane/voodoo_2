@@ -169,8 +169,11 @@ case class PcieTlpBarTarget(
   // Local reads take a cycle: the address is latched, then the read mux is
   // sampled from the latch (TLP address -> window 31 read mux -> readData
   // missed 75 MHz in one cycle, B134/B137).
+  // The window register and wedged reads are answered from that state too,
+  // so readData never takes a value decoded from the TLP header directly.
+  object ReadSrc extends SpinalEnum { val local, wedge, window, ones = newElement() }
   val localReadAddr = Reg(UInt(8 bits)) init (0)
-  val localReadWedge = Reg(Bool()) init (False)
+  val localReadSrc = Reg(ReadSrc()) init (ReadSrc.local)
   io.localAddr := Mux(state === State.localRead, localReadAddr, offset20(7 downto 0))
   io.localWdata := capturedData
   io.tlRxWait := False
@@ -250,9 +253,9 @@ case class PcieTlpBarTarget(
               state := State.drop
             }
           } otherwise {
-            readData := window.resize(32 bits).asBits
+            localReadSrc := ReadSrc.window
             tlpAddr := 0
-            state := State.cpl
+            state := State.localRead
           }
         } elsewhen (isLocal) {
           when(hasData) {
@@ -267,7 +270,7 @@ case class PcieTlpBarTarget(
             }
           } otherwise {
             localReadAddr := offset20(7 downto 0)
-            localReadWedge := isWedgeReg
+            localReadSrc := Mux(isWedgeReg, ReadSrc.wedge, ReadSrc.local)
             state := State.localRead
           }
         } elsewhen (wedged) {
@@ -277,8 +280,8 @@ case class PcieTlpBarTarget(
               state := State.drop
             }
           } otherwise {
-            readData := B(0xffffffffL, 32 bits)
-            state := State.cpl
+            localReadSrc := ReadSrc.ones
+            state := State.localRead
           }
         } otherwise {
           tlpAddr := mappedAddr
@@ -300,7 +303,12 @@ case class PcieTlpBarTarget(
     }
     is(State.localRead) {
       io.tlRxWait := True
-      readData := Mux(localReadWedge, wedgeStatus, io.localRdata)
+      switch(localReadSrc) {
+        is(ReadSrc.local) { readData := io.localRdata }
+        is(ReadSrc.wedge) { readData := wedgeStatus }
+        is(ReadSrc.window) { readData := window.resize(32 bits).asBits }
+        is(ReadSrc.ones) { readData := B(0xffffffffL, 32 bits) }
+      }
       state := State.cpl
     }
     is(State.axiWrite) {
