@@ -37,7 +37,7 @@ ROMS   := $(addprefix roms/,$(addsuffix .bin,$(APPS)))
 # Create output dirs at parse time so they can't collide with phony names.
 $(shell mkdir -p build traces roms)
 
-.PHONY: all roms traces summary render clean glide-lib
+.PHONY: all roms traces summary render clean glide-lib pcie
 all: roms
 
 roms: $(ROMS)
@@ -73,6 +73,21 @@ summary: $(TRACES)
 # (the golden model the RTL core is verified against). See render/render.sh.
 render: $(TRACES)
 	@bash render/render.sh
+
+# Live demos on the Tang Mega 138K Pro Dock over PCIe: same apps, linked
+# against the static Glide library plus a sim_harness.h backend that does
+# BAR0 MMIO instead of Verilator / trace capture (pcie/sim_pcie_harness.cpp).
+#   make pcie && sudo build/pcie/hb04_pinwheel 0    # 0 = run until Ctrl-C
+PCIE_EXES := $(addprefix build/pcie/,$(APPS))
+pcie: $(PCIE_EXES)
+
+build/pcie/sim_pcie_harness.o: pcie/sim_pcie_harness.cpp ../pcie/pci_bar.h
+	@mkdir -p build/pcie
+	$(CXX) -O2 -Wall -I$(EXT)/emu/sim/harness -c $< -o $@
+
+build/pcie/%: apps/%.c apps/hbcommon.h build/pcie/sim_pcie_harness.o build/.glidelib.stamp
+	$(CXX) $(CFLAGS) -DHB_LIVE $< build/pcie/sim_pcie_harness.o -o $@ \
+		$(LIBDIR)/libglide2x.a -lm -lstdc++ -lz -lX11 -lXext
 
 clean:
 	rm -rf build traces

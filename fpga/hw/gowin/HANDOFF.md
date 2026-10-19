@@ -5,6 +5,9 @@ Written 2026-09-17 for whoever (human or AI) takes the Gowin port from
 Everything below was checked on the machine that wrote it; anything not
 checked is marked as such.
 
+Live snapshot of what is on this machine, what landed, and the open
+blockers (PnR BSRAM 473 > 340): see `STATUS.md`.
+
 ## 1. What this is
 
 SpinalVoodoo is a 3dfx Voodoo 1 implemented in SpinalHDL
@@ -128,6 +131,35 @@ Expect the first synthesis to surface things Verilator does not:
 
 ### 4.3 Bring-up on the dock
 
+**Verified 2026-10-08 on this machine.** The dock in the slot is
+`GW5AST-LV138FPG676AES` (JTAG idcode `0x1081b`, `GW5AST-138`). Sipeed USB
+Debugger (`0403:6010`, serial `2025071717`) is on the JTAG header. The
+onboard Gowin EDA Education 1.9.11.03 **cannot build** for this 676-pin
+part (Sipeed documents **Standard** Edition + a license, not Education).
+The first programmed image was Sipeed's prebuilt `led` example,
+SRAM only. Six LEDs chase (~125 ms/step). Reset is active-high with a
+pull-up: hold the reset button if they stay off. A power cycle drops SRAM
+and restores flash. That image does **not** enable the PCIe endpoint;
+`lspci` stays empty and a bus rescan does not help.
+
+**Standard 1.9.12.04 is now installed** at
+`$HOME/gowin/standard-1.9.12.04` (IDE + Programmer; LicenseServer tarball
+left packed — not needed). `fpga/hw/gowin/env.sh` prefers that tree.
+`IDE/bin/gwlicense.ini` is Sipeed float `106.55.34.119:10559`
+(`gowinlic.sipeed.com` also answers). `gw_sh` accepts
+`set_device -name GW5AST-138B GW5AST-LV138FPG676AES`. Sys/HDMI PLLs are
+in `hw/gowin/ip/`. First `gw_sh` synthesis of `board_top` completed
+2026-10-08 using Sipeed's pre-generated DDR3 / DVI / `SerDes_Top` (IDs
+`22c2:1100`). PnR stopped: **473 BSRAM vs 340** on GW5AST-138, plus PLL
+VCO out of 650–1300 MHz (sys/hdmi generators now use mdiv 24/25).
+Biggest inferred BRAMs: rasterizer `i_fifo` 54, spanWalker fifo 37, TMU
+path ~51, dither ROMs 27, DDR3 IP 24. Those raster FIFOs are already
+depth 2 and 4 — Gowin is exploding the wide payloads into one 18K tile
+per ~36-bit slice. Next: remap shallow/wide FIFOs off BSRAM and rebuild
+(see `STATUS.md`). Sipeed float
+license drops seats often; retry `gw_sh`. Do not put Programmer/bin on
+`LD_LIBRARY_PATH`; `env.sh` preloads distro freetype.
+
 Program with the Gowin programmer or `openFPGALoader -c ft2232`.
 **Cold-plug** the PCIe finger; Gowin's IP does not hot-plug, and the Sipeed
 demo assumes the FPGA is configured before the host enumerates.
@@ -154,26 +186,25 @@ calibration done, `[3]` host bridge wedged. Order of checks:
    displays 640×480 regardless of whether the host has done anything, so a
    seeded framebuffer (see next step) is the video smoke test.
 
-### 4.4 Host-side tool (nothing exists for PCIe yet)
+### 4.4 Host-side tool
 
-Upstream host tools are all DE10 HPS `/dev/mem` mmaps at `0xC0000000`
-(`ext/SpinalVoodoo/tools/de10-*.c`, `de10-trace-replay.cpp`). Port
-`de10-trace-replay.cpp` to a `pci-trace-replay`:
+`sw/pcie/` is the PCIe port of `ext/SpinalVoodoo/tools/de10-trace-replay.cpp`.
+It mmaps `resource0`, writes the megabyte index to BAR0+0x250 when the target
+crosses a 1 MiB boundary, and treats BAR0+0x254 as the never-hang status word.
 
-- Replace the `/dev/mem` mmap with an mmap of `resource0`.
-- Wrap every register/LFB access in a helper that sets the 0x250 window when
-  the target megabyte changes. Trace replays cross megabytes constantly
-  (registers at 0, LFB at 4 MiB, textures at 8 MiB in the Voodoo map), so
-  cache the current window and only write when it changes.
-- Texture and framebuffer physical addresses differ from DE10: see
-  `GowinAddressMap.scala` (fb 0, tex 4 MiB in DDR3). `kDefaultFbBase` /
-  `kTextureOffset` in the DE10 tool are HPS-side and don't apply.
-- Keep `-DSIM_INTERFACE` style separation so the same replay drives the
-  Verilator `TangMega138kPro` model if you want to compare.
+```
+make -C sw/pcie
+sudo ./sw/pcie/pci-bar status
+sudo ./sw/pcie/pci-trace-replay ext/SpinalVoodoo/traces/logo
+```
 
-Then replay `ext/SpinalVoodoo/traces/*.bin` (start with the 3dfx logo, which is
-exactly known-good: CoreSim matches 86Box on 0/307,200 pixels) and read the
-framebuffer back over the same window for a pixel diff.
+Register / LFB / texture accesses go through the 16 MiB Voodoo map (LFB at
+4 MiB, textures at 8 MiB). The Gowin fabric relocates textures to DDR at
+`GowinAddressMap.texMemBase` (4 MiB). DE10 `kDefaultFbBase` / `/dev/mem` do
+not apply.
+
+Start with the 3dfx logo trace (CoreSim matches 86Box on 0/307,200 pixels)
+and read the framebuffer back over the same window for a pixel diff.
 
 ## 5. Known risks (real, not hypothetical)
 

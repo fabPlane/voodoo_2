@@ -17,6 +17,7 @@
 #   ./build.sh build      # patch + build libs, Mesa and GLQuake; do not run
 #   ./build.sh run        # capture a trace (QUAKE_CMDS, default "map start")
 #   ./build.sh render     # just re-render the last captured trace
+#   ./build.sh pcie       # native -m32 build for the live board (work/native, run-pcie.sh)
 #   SECS=2 ./build.sh     # seconds to free-run (default 2)
 #   QUAKE_CMDS='playdemo demo1' SECS=10 ./build.sh run
 #
@@ -202,7 +203,83 @@ render() {
   echo "[quake-glide] wrote shots/glquake.trace_ref.png (see shots/render.log)"
 }
 
+# --- Live board (PCIe) variant --------------------------------------------
+# Same Mesa 3.4.2 + GLQuake, built natively with the host multilib toolchain
+# (gcc -m32, i386 libX11/libXext/zlib dev packages; no Docker), against a
+# libglide2x whose sim_* backend is sw/glide-homebrew/pcie/sim_pcie_harness.cpp
+# (BAR0 MMIO on the Tang dock) instead of trace capture. The Glide sources are
+# copied to work/native/glide-src and the Glide hunks of
+# spinalvoodoo-glquake.patch (2 MB memory report, even/odd tLOD mask) are
+# applied to the copy, so ext/SpinalVoodoo and its trace build are untouched.
+# Everything lands in work/native/; run it with run-pcie.sh.
+build_pcie() {
+  local N="$WORK/native" PH="$REPO/sw/glide-homebrew/pcie/sim_pcie_harness.cpp"
+  local CXX32="${CXX32:-g++ -m32}" CC32="${CC32:-gcc -m32}"
+  mkdir -p "$N"
+  fetch_sources
+
+  echo "[quake-glide] pcie: building libglide2x with the PCIe BAR backend..."
+  local GS="$N/glide-src/emu/glide"
+  rm -rf "$N/glide-src"; mkdir -p "$GS"
+  cp -r "$EXT/emu/glide/glide2x" "$EXT/emu/glide/swlibs" "$GS/"
+  find "$GS" \( -name '*.o' -o -name '*.a' -o -name '*.so*' \) -delete
+  (cd "$N/glide-src" && git init -q . && \
+   git apply --include='emu/glide/*' "$HERE/patches/spinalvoodoo-glquake.patch" && rm -rf .git)
+  $CXX32 -O2 -Wall -I"$EXT/emu/sim/harness" -c "$PH" -o "$N/sim_pcie_harness.o"
+  make -C "$GS/glide2x/sst1/glide/src" -f Makefile.sim -j"$(nproc)" \
+    TRACE_CAPTURE=1 SIM_DIR="$EXT/emu/sim" CC="$CC32" CXX="$CXX32" \
+    BACKEND_OBJ="$N/sim_pcie_harness.o" BACKEND_DEPS="$N/sim_pcie_harness.o" \
+    >"$N/glide.log" 2>&1 || { tail -20 "$N/glide.log"; return 1; }
+
+  local G="$N/glide-pcie" g2x="$GS/glide2x/sst1" sw="$GS/swlibs"
+  rm -rf "$G"; mkdir -p "$G/include" "$G/lib"
+  cp "$g2x"/glide/src/*.h "$g2x"/incsrc/*.h "$g2x"/init/sst1vid.h "$sw"/fxmisc/3dfx.h "$G/include/"
+  cp -a "$g2x"/lib/sst1/libglide2x.so* "$G/lib/"
+
+  echo "[quake-glide] pcie: building Mesa 3.4.2 fx driver (native -m32)..."
+  if [ ! -f "$N/Mesa-3.4.2/.patched" ]; then
+    rm -rf "$N/Mesa-3.4.2"
+    tar -C "$N" -xf "$WORK/MesaLib-3.4.2.tar.gz"
+    sed -i \
+      -e "s/-ansi -pedantic/-m32 -std=gnu89 -fcommon -D__FUNCTION__=__FILE__ -Wno-implicit-function-declaration -Wno-implicit-int -Wno-incompatible-pointer-types -Wno-int-conversion/g" \
+      -e "s#-I/usr/X11R6/include#-I/usr/include#g" \
+      -e "s#-L/usr/X11R6/lib#-L/usr/lib/i386-linux-gnu#g" \
+      -e "s#-I/usr/include/glide -I/usr/local/glide/include#-I$G/include#" \
+      -e "s#-L/usr/local/glide/lib#-L$G/lib#g" \
+      "$N/Mesa-3.4.2/Make-config"
+    sed -i 's/^gcc -shared/gcc -m32 -shared/' "$N/Mesa-3.4.2/bin/mklib.linux"
+    touch "$N/Mesa-3.4.2/.patched"
+  fi
+  # libGL + libGLU (the widgets-sgi Motif target failing afterwards is fine).
+  make -C "$N/Mesa-3.4.2" -j"$(nproc)" linux-glide >"$N/mesa.log" 2>&1 || true
+  [ -f "$N/Mesa-3.4.2/lib/libGL.so" ] || { tail -20 "$N/mesa.log"; return 1; }
+
+  echo "[quake-glide] pcie: building GLQuake (native -m32)..."
+  rm -rf "$N/Quake"; cp -r "$WORK/Quake" "$N/Quake"
+  local QSRC="$N/Quake/WinQuake" SRCS="" o
+  sed -i "s/^#if defined __i386__.*/#if 0  \/* forced C-only build *\//" "$QSRC/quakedef.h"
+  cp "$HERE/_fpcw_stub.c" "$QSRC/"
+  for o in $(awk "/^GLQUAKE_OBJS=/,/^\$/" "$QSRC/Makefile.linuxi386" | grep -oE "[a-zA-Z0-9_]+\.o" | sed "s/\.o\$/.c/" | sort -u); do
+    [ -f "$QSRC/$o" ] && SRCS="$SRCS $o"
+  done
+  (cd "$QSRC" && $CC32 -std=gnu89 -fcommon -fno-strict-aliasing -w -O2 -DGLQUAKE \
+     -I"$HERE/stubs" -I. -I"$N/Mesa-3.4.2/include" -I"$G/include" \
+     $SRCS gl_vidlinux.c _fpcw_stub.c -o "$N/glquake-pcie" \
+     -L"$N/Mesa-3.4.2/lib" -lGL -lGLU -L"$G/lib" -lglide2x -lX11 -lXext -lm -ldl -lpthread)
+
+  # Game data: link the shareware pak (never copied into git).
+  local PAK=""
+  for c in "$REPO/sw/quake-riscv/id1/pak0.pak" "$WORK/id1/pak0.pak"; do
+    [ -f "$c" ] && PAK="$c" && break
+  done
+  mkdir -p "$N/q/id1"
+  if [ -n "$PAK" ]; then ln -sf "$PAK" "$N/q/id1/pak0.pak"
+  else echo "[quake-glide] NOTE: no pak0.pak found; put it at $N/q/id1/pak0.pak"; fi
+  echo "[quake-glide] pcie: built $N/glquake-pcie; run with run-pcie.sh (see README)"
+}
+
 case "${1:-all}" in
+  pcie) build_pcie ;;
   build)
     stage_patches
     build_host

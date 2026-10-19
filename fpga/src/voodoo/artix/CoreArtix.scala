@@ -207,7 +207,72 @@ case class AxiLite4ToBmbBridge(
 /** BMB master to AXI4 master for MIG: aligns and splits every burst to 2^burstLog2 bytes so
   * nothing crosses a 4 KiB boundary or exceeds AXI's 256-beat limit, then bridges to AXI4.
   */
+/** Splits read bursts at 4 KiB pages. BMB and AXI bursts may not cross a
+  * page, and the library bridges (BmbAligner, BmbLengthFixer, even
+  * BmbAlignedSpliter via Bmb.addToAddress) only increment in-page address
+  * bits, so a crossing burst wrapped to the page start. The core's write
+  * buffer never crosses, but framebuffer reader spans (scanout lines, pixel
+  * spans) can: on the Gowin board every 640-pixel scanline crossing a page
+  * showed data from 4 KiB earlier. Writes pass through. Pieces keep the
+  * input's source/context; the memory side must answer in order (it does on
+  * the fb/tex ports here), and only the final piece's response is `last`.
+  */
+case class BmbPageSplitter(p: BmbParameter, pendingMax: Int = 16) extends Component {
+  val io = new Bundle {
+    val input = slave(Bmb(p))
+    val output = master(Bmb(p))
+  }
+  private val pageBits = 12
+  private val totalWidth = p.access.lengthWidth + 1
+
+  // A read is taken into registers and cut into pieces from there, so no
+  // address arithmetic reaches input.cmd.ready (that path closed timing badly
+  // on the congested Gowin build). Writes pass straight through.
+  val busy = RegInit(False)
+  val cur = Reg(Fragment(BmbCmd(p)))
+  val remaining = Reg(UInt(totalWidth bits))
+  val toPageEnd = U(1 << pageBits, pageBits + 1 bits) - cur.address(pageBits - 1 downto 0).resize(pageBits + 1)
+  val finalPiece = remaining.resize(totalWidth max (pageBits + 1)) <= toPageEnd.resized
+  val pieceBytes = finalPiece ? remaining | toPageEnd.resize(totalWidth)
+
+  // One entry per output command: is it the input burst's final piece?
+  val finals = StreamFifo(Bool(), pendingMax)
+
+  val passWrite = !busy && io.input.cmd.isWrite
+  io.output.cmd.valid := finals.io.push.ready && (busy || (io.input.cmd.valid && io.input.cmd.isWrite))
+  io.output.cmd.payload := io.input.cmd.payload
+  when(busy) {
+    io.output.cmd.payload := cur
+    io.output.cmd.length.allowOverride()
+    io.output.cmd.length := (pieceBytes - 1).resized
+  }
+  io.input.cmd.ready := !busy && (io.input.cmd.isRead || (io.output.cmd.ready && finals.io.push.ready))
+
+  when(!busy && io.input.cmd.valid && io.input.cmd.isRead) {
+    busy := True
+    cur := io.input.cmd.payload
+    remaining := io.input.cmd.length.resize(totalWidth) + 1
+  }
+  when(busy && io.output.cmd.fire) {
+    cur.address := cur.address + pieceBytes.resized
+    remaining := remaining - pieceBytes
+    when(finalPiece) { busy := False }
+  }
+
+  finals.io.push.valid := io.output.cmd.fire && io.output.cmd.last
+  finals.io.push.payload := !busy || finalPiece
+
+  io.input.rsp.valid := io.output.rsp.valid
+  io.input.rsp.payload := io.output.rsp.payload
+  io.input.rsp.last.allowOverride()
+  io.input.rsp.last := io.output.rsp.last && finals.io.pop.payload
+  io.output.rsp.ready := io.input.rsp.ready
+  finals.io.pop.ready := io.output.rsp.fire && io.output.rsp.last
+}
+
 object BmbToAxi4Mem {
+  // Input bursts may cross 4 KiB pages: BmbPageSplitter cuts reads first, so
+  // BmbAligner and BmbLengthFixer (in-page increments only) are safe.
   def alignedParameter(p: BmbParameter, burstLog2: Int): BmbParameter = {
     val aligned = BmbAligner.outputParameter(p.access, burstLog2)
     BmbLengthFixer.outputParameter(aligned, burstLog2).toBmbParameter()
@@ -217,7 +282,12 @@ object BmbToAxi4Mem {
     BmbToAxi4SharedBridge.getAxi4Config(alignedParameter(p, burstLog2))
 }
 
-case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int) extends Component {
+/** `splitPages`: needed where bursts can cross a 4 KiB page (framebuffer
+  * reader spans). Texture fetches are small aligned reads and skip it. */
+/** `pendingMax`: transactions in flight per source in the AXI bridge; its
+  * response-info queues are flip-flops, so the default 31 cost ~1.3k
+  * registers per port on Gowin. The DDR adapter keeps 8 reads in flight. */
+case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = true, pendingMax: Int = 31) extends Component {
   val io = new Bundle {
     val input = slave(Bmb(p))
     val output = master(Axi4(BmbToAxi4Mem.axiConfig(p, burstLog2)))
@@ -225,9 +295,15 @@ case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int) extends Component {
 
   val aligner = BmbAligner(p, burstLog2)
   val fixer = BmbLengthFixer(aligner.op.toBmbParameter(), burstLog2)
-  val bridge = BmbToAxi4SharedBridge(fixer.op.toBmbParameter())
+  val bridge = BmbToAxi4SharedBridge(fixer.op.toBmbParameter(), pendingMax = pendingMax)
 
-  aligner.io.input <> io.input
+  if (splitPages) {
+    val pageSplit = BmbPageSplitter(p)
+    pageSplit.io.input <> io.input
+    aligner.io.input <> pageSplit.io.output
+  } else {
+    aligner.io.input <> io.input
+  }
   fixer.io.input <> aligner.io.output
   bridge.io.input <> fixer.io.output
   io.output << bridge.io.output.toAxi4()
@@ -239,7 +315,7 @@ object CoreArtix {
   /** 256-byte AXI bursts (64 beats of 32 bits). */
   val axiBurstLog2 = 8
 
-  def fbAxiConfig(c: Config) = BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), axiBurstLog2)
+  def fbAxiConfig(c: Config) = BmbToAxi4Mem.axiConfig(Core.fbMemSharedBmbParams(c), axiBurstLog2)
   def texAxiConfig(c: Config) = BmbToAxi4Mem.axiConfig(Core.texMemBmbParams(c), axiBurstLog2)
 }
 
@@ -258,11 +334,11 @@ case class CoreArtix(c: Config) extends Component {
   // Same five-way framebuffer arbitration CoreSim uses; the DE10 backend had one Avalon port per bus.
   val fbArbiter = BmbArbiter(
     inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
-    outputParameter = Core.fbMemBmbParams(c),
+    outputParameter = Core.fbMemSharedBmbParams(c),
     lowerFirstPriority = true
   )
-  val fbAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), CoreArtix.axiBurstLog2)
-  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreArtix.axiBurstLog2)
+  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), CoreArtix.axiBurstLog2)
+  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), CoreArtix.axiBurstLog2, splitPages = false)
 
   io.bar <> barBridge.io.axi
   core.io.cpuBus <> barBridge.io.cpuBus
@@ -278,7 +354,7 @@ case class CoreArtix(c: Config) extends Component {
   io.memFb << fbAxi.io.output
   io.memTex << texAxi.io.output
 
-  core.io.statusInputs.vRetrace := core.io.hdmi.status.newFrame
+  core.io.statusInputs.vRetrace := core.io.hdmi.status.frameDone
   core.io.statusInputs.memFifoFree := 0xffff
   core.io.statusInputs.pciInterrupt := False
   core.io.hdmi.clock := io.hdmi.clock

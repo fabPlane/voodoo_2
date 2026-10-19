@@ -15,4 +15,8 @@ object GowinAddressMap {
 
   val ddrNativeAddrWidth = 29
   val ddrNativeDataWidth = 256
+  // Console 138K only uses the first x16 DDR3 chip. Gowin 1:4 native UI
+  // there is 128-bit / 28-bit address. The Pro Dock stays 256 / 29.
+  val consoleDdrNativeAddrWidth = 28
+  val consoleDdrNativeDataWidth = 128
 }

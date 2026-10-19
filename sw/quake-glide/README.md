@@ -68,6 +68,23 @@ The software clip is tyrquake's native 320×200, scaled up with nearest-neighbor
 A 10 s GLQuake capture is on the order of 2 GB and replays to about 10 s of
 video at the swap rate (~70 fps).
 
+## Live on the board (PCIe)
+
+`./build.sh pcie` builds the same Mesa 3.4.2 + GLQuake natively with the host
+multilib toolchain (no Docker) into `work/native/`, linked against a
+`libglide2x` whose `sim_*` backend is `../glide-homebrew/pcie/sim_pcie_harness.cpp`
+(BAR0 MMIO on the Tang dock). The Glide sources are copied and patched in
+`work/native/glide-src`, so `ext/SpinalVoodoo` and the trace build are untouched.
+
+```bash
+./build.sh pcie
+../../fpga/hw/gowin/board-lock -m "glquake" -- sudo timeout 60 ./run-pcie.sh +timedemo demo1
+```
+
+`run-pcie.sh` sets `GLIDE_X11_ENABLE=0` and runs 640x480 with `-nosound -no8bit`;
+extra arguments go to Quake. `VOODOO_PCI_STATS=1` prints MMIO counts at exit
+(pass it through sudo with `sudo env VOODOO_PCI_STATS=1 ...`).
+
 ## How the build is put together
 
 - **Mesa 3.4.2** is the last Mesa whose `fx` driver targets **Glide2** (our

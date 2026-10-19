@@ -33,8 +33,11 @@ make rtl-console  # rtl/gowin/TangConsole138k.v
 make test         # SpinalSim, including the TLP BAR target
 make artix        # Vivado bitstream (after generating IP)
 make gowin        # Gowin EDA bitstream (after generating IP)
+make gowin-ip     # Pro Dock PLLs via GowinModgen
 make gowin-console # Retro Console 138K Glide-test bitstream
 ```
+
+Host tools for the Pro Dock live in `sw/pcie/` (`pci-bar`, `pci-trace-replay`).
 
 Program the AC701 with Vivado or `openFPGALoader`. Program the dock with the
 Gowin programmer or `openFPGALoader -c ft2232`. The Console demo needs Gowin
@@ -47,7 +50,13 @@ core. See `hardware/tang-console-138k/README.md`.
 ## Gowin / Tang Mega 138K Pro
 
 Device: `GW5AST-LV138FPG676AES` (`GW5AST-138B`). Cold-plug the PCIe finger;
-the Sipeed demo does not hot-plug.
+the Sipeed demo does not hot-plug. Gowin EDA **Education** cannot target
+this 676-pin part (Sipeed: every Tang except Mega 138K Pro). Use
+**Standard** (commercial) IDE V1.9.9+ with a Gowin node-locked license or
+Sipeed's floating server (`106.55.34.119:10559` /
+`gowinlic.sipeed.com`). SRAM-load Sipeed's prebuilt `led` example to
+prove JTAG (six LEDs chase; hold reset if they stay off). That image is
+not in flash and does not enumerate a PCIe function.
 
 Colour, depth and textures all live in the module DDR3 (the dock has no
 HyperRAM): 4 MiB framebuffer at 0, 8 MiB textures at 4 MiB.
@@ -60,6 +69,14 @@ drove DVI RX instead; if the monitor stays dark, swap the TMDS locations in
 `hw/gowin/tang_mega_138k_pro.cst`.
 
 LEDs (active low): heartbeat, PCIe link, DDR calib, host-bridge wedged.
+
+After a cold plug:
+
+```
+make -C ../sw/pcie
+sudo ../sw/pcie/pci-bar status          # BAR0+0x254 never hangs
+sudo ../sw/pcie/pci-trace-replay ../ext/SpinalVoodoo/traces/logo
+```
 
 ## Gowin / Tang Retro Console 138K
 

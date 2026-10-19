@@ -71,6 +71,9 @@ case class TangConsole138k(c: Config) extends Component {
     nativeDataWidth = GowinAddressMap.consoleDdrNativeDataWidth,
     nativeAddrWidth = GowinAddressMap.consoleDdrNativeAddrWidth
   )
+  ddr.io.cmdGap := 8
+  ddr.io.maxReads := 0
+  ddr.io.urgent := False
   val player = DemoAxiLitePlayer(DemoTraceRom.banks(), DemoCatalog.playerLoopAt)
   val ctrlCd = ClockDomain(
     clock = io.ctrlClk,
@@ -172,7 +175,16 @@ case class TangConsole138k(c: Config) extends Component {
     hud.io.de := scan.io.active
     hud.io.calib := BufferCC(io.ddr.initCalibComplete, init = False)
     hud.io.wedge := BufferCC(core.io.hostWedged, init = False)
-    hud.io.usbOnline := BufferCC(io.usbOnline, init = False)
+    hud.io.underflow := BufferCC(core.io.hdmi.underflow, init = False)
+    hud.io.fifoLevel := BufferCC(core.io.hdmi.fifoLevel.resize(16), U(0, 16 bits))
+    hud.io.scanoutPrefetchCount := 0
+    hud.io.scanoutReadReqCount := 0
+    hud.io.scanoutReadRspCount := 0
+    hud.io.readIssueCount := 0
+    hud.io.physicalReadCount := 0
+    hud.io.physicalReadRspCount := 0
+    hud.io.cdcReadRspCount := 0
+    hud.io.ddrStatus := 0
     hud.io.overlay := overlay
     hud.io.playing := BufferCC(ctrl.menu.io.playing, init = False)
     hud.io.debugMode := BufferCC(ctrl.buttons.io.debugMode, init = False)
@@ -181,9 +193,6 @@ case class TangConsole138k(c: Config) extends Component {
     hud.io.cursor := BufferCC(ctrl.cursor4, U(0, 4 bits))
     hud.io.hid := BufferCC(ctrl.hid16, B(0, 16 bits))
     hud.io.pc := BufferCC(player.io.index.resize(32 bits), U(0, 32 bits))
-    hud.io.barAddr := BufferCC(lastBarAddr, U(0, 32 bits))
-    hud.io.barData := BufferCC(lastBarData, B(0, 32 bits))
-    hud.io.barCount := BufferCC(barWrites, U(0, 16 bits))
     hud.io.uartLink := BufferCC(io.uartLink, init = False)
     hud.io.uartLastCmd := BufferCC(io.uartLastCmd, B(0, 8 bits))
     hud.io.uartRxCount := BufferCC(io.uartRxCount, U(0, 16 bits))

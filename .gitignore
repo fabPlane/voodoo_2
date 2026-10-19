@@ -4,8 +4,10 @@ fpga/.bsp/
 fpga/rtl/
 fpga/simWorkspace/
 fpga/hw/gowin/impl/
+fpga/hw/gowin/.ipgen/
 fpga/hw/gowin/ip/**/*.v
 fpga/hw/gowin/ip/**/*.vo
+fpga/hw/gowin/ip/**/*.csr
 __pycache__/
 
 # Official Quake shareware (pak0.pak ~18 MiB) and unpack cache
@@ -38,3 +40,11 @@ node_modules
 *.inspect.ndjson
 *.kicad_prl
 *-backups/
+fpga/hw/gowin-open/vendor-jtag-mailbox/impl/
+fpga/hw/gowin/ddr3_test/impl/
+
+# Gowin scratch build directories (one per parallel build; see hw/gowin/run_detached.sh)
+fpga/hw/gowin-[a-z]*/
+!fpga/hw/gowin-open/
+fpga/hw/gowin/ddr3_test_t*/
+fpga/hw/gowin/.build.lock

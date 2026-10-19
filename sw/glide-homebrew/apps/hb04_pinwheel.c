@@ -14,11 +14,18 @@ int main(int argc, char **argv) {
     int f = 0;
     const float cx = 0.5f * HB_W, cy = 0.5f * HB_H, radius = 0.42f * HB_H;
     if (!hb_open()) return 1;
+#ifdef HB_LIVE
+    hb_live_begin();
+#endif
 
     grColorCombine(GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE,
                    GR_COMBINE_LOCAL_CONSTANT, GR_COMBINE_OTHER_NONE, FXFALSE);
 
+#ifdef HB_LIVE
+    while (frames-- > 0 && !hb_stop) {
+#else
     while (frames-- > 0) {
+#endif
         int k;
         float phase = (float)f * 0.35f;
         grBufferClear(0x00000000, 0, GR_WDEPTHVALUE_FARTHEST);
@@ -36,6 +43,9 @@ int main(int argc, char **argv) {
             grDrawTriangle(&c, &p0, &p1);
         }
         grBufferSwap(1);
+#ifdef HB_LIVE
+        hb_fps_tick();
+#endif
         f++;
     }
     hb_close();

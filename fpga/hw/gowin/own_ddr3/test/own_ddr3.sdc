@@ -1,0 +1,5 @@
+create_clock -name clk50 -period 20 [get_ports {clk50}]
+create_clock -name clk400 -period 2.5 [get_nets {clk400}]
+create_clock -name ddr_clk_out -period 10 [get_pins {u_ddr3/u_clkdiv/CLKOUT}]
+create_clock -name jtag_tck -period 100 [get_nets {jtag_tck}]
+set_clock_groups -asynchronous -group [get_clocks {clk50}] -group [get_clocks {clk400}] -group [get_clocks {ddr_clk_out}] -group [get_clocks {jtag_tck}]
