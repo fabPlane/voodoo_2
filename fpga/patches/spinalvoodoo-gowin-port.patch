@@ -379,7 +379,7 @@ index d163ab7..5ab9b45 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..ca69bb1 100644
+index 1b34fa2..b90e21d 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -392,7 +392,7 @@ index 1b34fa2..ca69bb1 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,34 @@ case class Config(
+@@ -31,6 +34,37 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -401,6 +401,9 @@ index 1b34fa2..ca69bb1 100644
 +    texSmallCacheLines: Int = 0,
 +    // TmuSmallTextureCache line fills in flight (prefetch hints + misses).
 +    texSmallFillSlots: Int = 4,
++    // Rasterizer span queue (spans between the walker, which issues the
++    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
++    spanQueueDepth: Int = 4,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -627,7 +630,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..f0b9e9a 100644
+index 6051025..e4a3f4e 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -10,21 +10,32 @@ object CoreSimGen extends App {
@@ -668,7 +671,7 @@ index 6051025..f0b9e9a 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,10 @@ object CoreSimGen extends App {
+@@ -37,7 +48,11 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -676,7 +679,8 @@ index 6051025..f0b9e9a 100644
 +        argIntValue("--tex-fill-request-window").getOrElse(Config.voodoo1().texFillRequestWindow),
 +      texSmallCacheLines =
 +        argIntValue("--tex-small-cache-lines").getOrElse(if (gowin) 512 else Config.voodoo1().texSmallCacheLines),
-+      texSmallFillSlots = argIntValue("--tex-small-fill-slots").getOrElse(4)
++      texSmallFillSlots = argIntValue("--tex-small-fill-slots").getOrElse(4),
++      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4)
      )
  
    val memTiming = SimMemoryTiming(
@@ -2977,7 +2981,7 @@ index c6b2ec5..739257e 100644
    io.debug(26) := fetched.ready
    io.debug(31 downto 27) := inFlightCount.asBits
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
-index cee86c0..7e7a0bd 100644
+index cee86c0..a762225 100644
 --- a/src/voodoo/raster/Rasterizer.scala
 +++ b/src/voodoo/raster/Rasterizer.scala
 @@ -17,31 +17,133 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
@@ -3005,7 +3009,7 @@ index cee86c0..7e7a0bd 100644
 +  val walkTag = RegInit(False)
 +  val shadowConst = Reg(Rasterizer.SpanConst(c))
 +  val liveConst = Rasterizer.SpanConst.fromSpanWalker(c, spanWalker.o.payload)
-+  val tagCount = Vec.fill(2)(Reg(UInt(3 bits)) init (0))
++  val tagCount = Vec.fill(2)(Reg(UInt(log2Up(c.spanQueueDepth + 2) bits)) init (0))
 +  val shadowBusy = tagCount((!walkTag).asUInt) =/= 0
 +
 +  spanWalker.i << i.haltWhen(shadowBusy)
@@ -3024,7 +3028,7 @@ index cee86c0..7e7a0bd 100644
 +    out := Rasterizer.PrefetchSpan.fromSpanWalker(c, in)
 +  }
 +  val spanVar = walkerFork._1.translateWith(Rasterizer.SpanVar.fromSpanWalker(c, walkerFork._1.payload, walkTag))
-+  val queuedVar = spanVar.queue(4)
++  val queuedVar = spanVar.queue(c.spanQueueDepth)
 +  for (t <- 0 until 2) {
 +    val inc = spanVar.fire && walkTag === Bool(t == 1)
 +    val dec = queuedVar.fire && queuedVar.payload.tag === Bool(t == 1)
@@ -6482,6 +6486,20 @@ index 0000000..22d0579
 +    run(withTriangle = false)
 +  }
 +}
+diff --git a/test/RasterizerTest.scala b/test/RasterizerTest.scala
+index 011d4ff..cd37cc3 100644
+--- a/test/RasterizerTest.scala
++++ b/test/RasterizerTest.scala
+@@ -22,6 +22,9 @@ class RasterizerTest extends AnyFunSuite {
+     dut.clockDomain.forkStimulus(period = 10)
+     dut.i.valid #= false
+     dut.o.ready #= true
++    // The walker issues each span's framebuffer prefetch before queueing it
++    // (B99); nothing consumes prefetches here, so always accept them.
++    dut.prefetchSpan.ready #= true
+     dut.enableClipping #= false
+     dut.clipLeft #= 0
+     dut.clipRight #= 0
 diff --git a/test/ScanoutLineFetcherTest.scala b/test/ScanoutLineFetcherTest.scala
 new file mode 100644
 index 0000000..01ec722

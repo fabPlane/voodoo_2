@@ -74,6 +74,10 @@ object GowinGenSupport {
       // DDR3 round trip. 512 lines (16 KiB per tap lane): with 256, fills
       // still held the texture path ~14% of cycles under GLQuake (B118).
       texSmallCacheLines = 512,
+      // Span queue between the walker (which issues the framebuffer prefetch)
+      // and the span rasterizer: the prefetch's lead. 16 instead of 4 halved
+      // fill waits in trace replay at 120-cycle memory latency.
+      spanQueueDepth = 16,
       // More HDMI scanout FIFO margin: refilling only from 1024 left too
       // little once rendering competed for memory (frames blanked
       // mid-frame, B52). 3072-3840 hung the scanout reader for good (B53).
@@ -103,7 +107,10 @@ object GowinGenSupport {
       new GowinMemStylePhase(
         registersMaxDepth = 4,
         smallMaxDepth = 32,
-        smallMaxBits = 4096
+        // 4096 kept ~14 kbit of FIFOs in flip-flops (TMU sample-request
+        // queues 2 x 146 x 16, ...); with BSRAM at 196/340 after own DDR3,
+        // FIFOs over 1 kbit go to BSRAM to free ~8.6k FFs (CLS was 83%).
+        smallMaxBits = 1024
       )
     )
 }
