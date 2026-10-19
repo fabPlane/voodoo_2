@@ -94,7 +94,10 @@ object GowinGenSupport {
       hdmiRefillLow = 8192,
       hdmiRefillHigh = 14336,
       // debugBusy/writePathDebug readable over PCIe (0x240/0x250) for live hangs.
-      hwDebugRegs = true
+      hwDebugRegs = true,
+      // GOWIN_TMU_COUNT=2: two TMUs (texture combine, TMU1 texture memory 2 MB
+      // above TMU0's); the host shim needs SIM_DUAL_TMU=1 to address TMU1.
+      tmuCount = sys.env.get("GOWIN_TMU_COUNT").map(_.toInt).getOrElse(1)
     )
 
   def verilog(targetDirectory: String = "rtl/gowin"): SpinalConfig =

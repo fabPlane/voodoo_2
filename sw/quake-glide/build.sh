@@ -258,6 +258,15 @@ build_pcie() {
   rm -rf "$N/Quake"; cp -r "$WORK/Quake" "$N/Quake"
   local QSRC="$N/Quake/WinQuake" SRCS="" o
   sed -i "s/^#if defined __i386__.*/#if 0  \/* forced C-only build *\//" "$QSRC/quakedef.h"
+  # -arbmtex: multitexture through GL_ARB_multitexture (Mesa 3.4.2 has no
+  # GL_SGIS_multitexture). With two TMUs on the dock (SIM_DUAL_TMU=1) Mesa
+  # draws GLQuake's lightmaps in the same pass; without the flag nothing
+  # changes (Mesa would otherwise emulate multitexture in two passes).
+  sed -i -e 's/0x835E/0x84C0/' -e 's/0x835F/0x84C1/' "$QSRC/glquake.h"
+  sed -i -e 's/strstr(gl_extensions, "GL_SGIS_multitexture ") \&\& !COM_CheckParm("-nomtex")/COM_CheckParm("-arbmtex") \&\& strstr(gl_extensions, "GL_ARB_multitexture")/' \
+         -e 's/"glMTexCoord2fSGIS"/"glMultiTexCoord2fARB"/' -e 's/"glSelectTextureSGIS"/"glActiveTextureARB"/' \
+         "$QSRC/gl_vidlinux.c"
+  grep -q 'COM_CheckParm("-arbmtex")' "$QSRC/gl_vidlinux.c" || { echo "arbmtex patch failed"; return 1; }
   cp "$HERE/_fpcw_stub.c" "$QSRC/"
   for o in $(awk "/^GLQUAKE_OBJS=/,/^\$/" "$QSRC/Makefile.linuxi386" | grep -oE "[a-zA-Z0-9_]+\.o" | sed "s/\.o\$/.c/" | sort -u); do
     [ -f "$QSRC/$o" ] && SRCS="$SRCS $o"
