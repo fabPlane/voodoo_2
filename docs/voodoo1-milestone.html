@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SpinalVoodoo on the Tang Mega 138K: Voodoo 1 speed in GLQuake</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --fg:#1d1f23; --muted:#5d6470; --accent:#c4361b; --bar:#2f6fb5; --line:#e2e5ea; --bg:#fbfbfc; }
+  body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--fg); background:var(--bg); margin:0; }
+  main { max-width: 880px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; }
+  h2 { font-size: 1.3rem; margin: 40px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  .hero { display:flex; gap:16px; flex-wrap:wrap; margin: 20px 0; }
+  .card { flex:1 1 180px; background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .card .v { font-size:1.9rem; font-weight:700; }
+  .card .k { color:var(--muted); font-size:.9rem; }
+  .card.us .v { color: var(--accent); }
+  table { border-collapse: collapse; width:100%; margin: 8px 0 4px; background:#fff; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align: top; }
+  th { font-size:.85rem; color:var(--muted); font-weight:600; }
+  td.num { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  tr.us td { font-weight:700; }
+  .chart { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .row { display:grid; grid-template-columns: 150px 1fr 70px; align-items:center; gap:10px; margin:6px 0; font-size:.9rem; }
+  .row .b { height:18px; background:var(--bar); border-radius:3px; }
+  .row.real .b { background:#8a8f99; }
+  .row .n { text-align:right; font-variant-numeric: tabular-nums; }
+  .note { color:var(--muted); font-size:.88rem; }
+  code { font-size:.9em; background:#f0f2f5; padding:1px 4px; border-radius:3px; }
+  ul { padding-left: 22px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Voodoo 1 speed, on an FPGA</h1>
+<p class="sub">SpinalVoodoo (a 3dfx Voodoo Graphics re-implementation in SpinalHDL) on the Sipeed Tang Mega 138K Pro PCIe dock, running GLQuake from a PC over PCIe. Milestone reached 2026-10-19 with build B130d.</p>
+
+<div class="hero">
+  <div class="card us"><div class="v">25.3 fps</div><div class="k">GLQuake <code>timedemo demo1</code>, 640×480, our dock</div></div>
+  <div class="card"><div class="v">~26 fps</div><div class="k">Real Voodoo 1 + Pentium 166, same benchmark</div></div>
+  <div class="card"><div class="v">48 MHz</div><div class="k">Core clock (a real Voodoo 1 ran at 50 MHz)</div></div>
+</div>
+
+<h2>The benchmark</h2>
+<table>
+  <tr><th>Hardware</th><th class="num">demo1, 640×480</th><th>Source</th></tr>
+  <tr class="us"><td>SpinalVoodoo, Tang Mega 138K dock (B130d)</td><td class="num">25.3 fps</td><td>969 frames in 38.3 s, measured 2026-10-19</td></tr>
+  <tr><td>Voodoo 1 + Pentium 166</td><td class="num">~26 fps</td><td><a href="https://fabiensanglard.net/3dfx_sst1/">Fabien Sanglard, the story of the 3dfx Voodoo1</a></td></tr>
+  <tr><td>Voodoo 1 + AMD K5 PR166</td><td class="num">26.3 fps</td><td><a href="https://fabiensanglard.net/quake_pc/glquake/index.html">Fabien Sanglard, building a Quake PC</a></td></tr>
+  <tr><td>Voodoo 1 + Pentium MMX 233</td><td class="num">24.6 fps</td><td><a href="https://www.youtube.com/watch?v=a4ePrNTWjL8">YouTube benchmark video</a></td></tr>
+</table>
+<p class="note">The period figures are individual reports from different machines, not a controlled test; they agree on about 25–26 fps, so we are inside that range rather than clearly above it. Sanglard notes that CPU speed made surprisingly little difference: the Voodoo 1 was fill-rate bound in GLQuake, which draws every surface twice (texture pass, then lightmap pass). Our host CPU is much faster, so it feeds commands quicker; that is part of why we match the frame rate while still needing about 1.9 clocks per pixel against the Voodoo 1's ~1. See also <a href="https://www.vogonswiki.com/index.php/3dfx_Benchmarks">Vogons wiki: 3dfx benchmarks</a>.</p>
+
+<h2>How we got here</h2>
+<div class="chart">
+  <div class="row"><span>B67 · 10-14</span><div class="b" style="width:100%"></div><span class="n">~250 ms</span></div>
+  <div class="row"><span>B87 · 10-16</span><div class="b" style="width:36.5%"></div><span class="n">88 ms</span></div>
+  <div class="row"><span>B119 · 10-18</span><div class="b" style="width:14.8%"></div><span class="n">37.0 ms</span></div>
+  <div class="row"><span>B124e · 10-19</span><div class="b" style="width:12.0%"></div><span class="n">30.1 ms</span></div>
+  <div class="row"><span>B128e · 10-19</span><div class="b" style="width:11.0%"></div><span class="n">27.6 ms</span></div>
+  <div class="row"><span>B130d · 10-19</span><div class="b" style="width:11.0%"></div><span class="n">27.5 ms</span></div>
+  <p class="note">Average ms per frame in the GLQuake attract demo (lower is better). B67 was the first build to run GLQuake for 10 hours without a fault.</p>
+</div>
+
+<table>
+  <tr><th>Build</th><th>What changed</th><th class="num">ms/frame</th></tr>
+  <tr><td>B67</td><td>28.57 MHz core; HDMI scanout reads two lines ahead (no more half-blank frames); 10 h clean soak</td><td class="num">~250</td></tr>
+  <tr><td>B68–B69</td><td>Fixed one-frame "blocks" glitches: swap ordering in the PCI FIFO and scanout frame-base latching</td><td class="num"></td></tr>
+  <tr><td>B87</td><td>Scanout on its own memory port, run-time DDR arbitration policy, per-frame perf counters</td><td class="num">88</td></tr>
+  <tr><td>B119</td><td>Depth writes through their own AXI port, 40 MHz core, dither as arithmetic instead of ROMs</td><td class="num">37.0</td></tr>
+  <tr><td>B124e</td><td>48 MHz core (shortened core-clock paths, depth write port driven directly)</td><td class="num">30.1</td></tr>
+  <tr><td>B128e</td><td>Open-source DDR3 controller instead of the Gowin IP (−48 BSRAM); pipelined DDR write engine (write stall 11% → 4%)</td><td class="num">27.6</td></tr>
+  <tr><td>B130d</td><td>Per-port DDR read stagers, 16-span framebuffer prefetch lead</td><td class="num">27.5</td></tr>
+</table>
+
+<h2>The design today</h2>
+<ul>
+  <li><b>Clocks:</b> core 48 MHz, DDR3 UI 100 MHz, PCIe user clock 75 MHz; every build ships only if all three meet timing.</li>
+  <li><b>Memory:</b> 16-bit DDR3 through our own controller; framebuffer colour, depth/aux writes, texture and scanout each get their own AXI path into a DDR adapter with a write collector, a one-line issue buffer and per-port read stagers.</li>
+  <li><b>Host link:</b> PCIe Gen1 BAR into the Voodoo register / FIFO space; Glide runs on the PC and GLQuake plays unmodified.</li>
+  <li><b>Display:</b> 640×480 HDMI scanout from DDR, two lines of read-ahead.</li>
+  <li><b>Verification:</b> Verilator replay of a recorded GLQuake trace with the board's perf counters, unit tests for the DDR adapter and write buffer, and a passive HDMI capture check for visual corruption on every candidate build.</li>
+</ul>
+
+<h3>FPGA usage (GW5AST-138, B130d)</h3>
+<table>
+  <tr><th>Resource</th><th class="num">Used</th><th class="num">Available</th><th class="num">%</th></tr>
+  <tr><td>Logic (LUT + ALU)</td><td class="num">59,130</td><td class="num">138,240</td><td class="num">43%</td></tr>
+  <tr><td>Registers</td><td class="num">61,340</td><td class="num">139,140</td><td class="num">45%</td></tr>
+  <tr><td>CLS (logic slices touched)</td><td class="num">57,215</td><td class="num">69,120</td><td class="num">83%</td></tr>
+  <tr><td>BSRAM</td><td class="num">216</td><td class="num">340</td><td class="num">64%</td></tr>
+  <tr><td>DSP</td><td class="num">80</td><td class="num">298</td><td class="num">27%</td></tr>
+</table>
+<p class="note">CLS is the tight one: placement packs registers and LUTs into slices, and 83% already makes timing at 48 MHz a placement lottery (we run six placements per candidate).</p>
+
+<h2>Next: room for Voodoo 2</h2>
+<p>A Voodoo 2 adds a second TMU (multitexture in one pass, which halves GLQuake's passes), triangle setup on the chip and a 90 MHz clock. Before adding any of that we need space, mainly CLS and registers, so the next step is a resource audit of the current design: what each block costs, and what can move into BSRAM or be shared.</p>
+</main>
+</body>
+</html>
