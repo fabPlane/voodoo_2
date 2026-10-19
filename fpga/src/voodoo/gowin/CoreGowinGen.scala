@@ -101,7 +101,10 @@ object GowinGenSupport {
       // TMU sample queue: 8 costs nothing in GLQuake trace replay at 80-cycle
       // texture latency (16: same cycles, 4: +0.5%, 2: +29%), ~1.2k FFs less
       // per TMU than 16.
-      texSampleQueueDepth = 8
+      texSampleQueueDepth = 8,
+      // Two TMUs: cache hints compare tags only (four 512:1 lineValid reads
+      // less per TMU; same cycles in GLQuake trace replay).
+      texHintValidCheck = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2)
     )
 
   def verilog(targetDirectory: String = "rtl/gowin"): SpinalConfig =
