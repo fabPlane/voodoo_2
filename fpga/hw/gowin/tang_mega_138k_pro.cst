@@ -173,7 +173,8 @@ IO_PORT "IO_ddr_dqs[3]" IO_TYPE=SSTL15D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
 
 // DDR3 PHY placement, as in Sipeed's 138K Pro DDR3 designs. memory_clk
 // comes from the sys PLL, pinned next to the left-side DDR banks.
-INS_LOC "u_ddr3/gw3_top/u_ddr_phy_top/u_dll" DDRDLLM_BL;
-INS_LOC "u_ddr3/gw3_top/u_ddr_phy_top/fclkdiv" LEFTSIDE[4];
+INS_LOC "u_ddr3/u_dll" DDRDLLM_BL;
+INS_LOC "u_ddr3/u_clkdiv" LEFTSIDE[4];
 INS_LOC "u_pll_sys/u_pll/PLL_inst" PLL_L[0];
-SET_PARAM "u_ddr3/gw3_top/u_ddr_phy_top/u_dll" CLKIN_SEL=CLKIN5;
+// (own_ddr3: no CLKIN_SEL for the DLL; the Gowin IP needs
+// SET_PARAM "u_ddr3/gw3_top/u_ddr_phy_top/u_dll" CLKIN_SEL=CLKIN5;)

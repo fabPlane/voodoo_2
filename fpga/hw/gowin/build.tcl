@@ -5,9 +5,14 @@ set_device -name GW5AST-138B GW5AST-LV138FPG676AES
 
 add_file -type verilog [file normalize ../../rtl/gowin/TangMega138kPro.v]
 add_file -type verilog [file normalize src/board_top.v]
+# own DDR3 controller (default in board_top.v; the Gowin DDR3 IP is skipped).
+foreach f {own_ddr3.v own_ddr3_ctrl.v own_ddr3_phy.v} {
+    add_file -type verilog [file normalize own_ddr3/rtl/$f]
+}
 add_file -type verilog [file normalize src/jtag_diag.v]
 add_file -type verilog [file normalize $::env(GOWINHOME)/IDE/data/ipcores/gw_jtag.v]
 foreach f [glob -nocomplain ip/*/*.v] {
+    if {[string match *DDR3_Memory_Interface_Top* $f]} continue
     add_file -type verilog [file normalize $f]
 }
 

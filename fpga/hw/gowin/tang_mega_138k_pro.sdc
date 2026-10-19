@@ -10,7 +10,7 @@ create_clock -name jtag_tck -period 100 [get_nets {u_diag/jtag_tck}]
 create_clock -name clk_hdmi_serial -period 8 [get_nets {clk_hdmi_serial}]
 create_clock -name clk_hdmi_pixel -period 40 [get_nets {clk_hdmi_pixel}]
 # DDR3 UI clock is memory_clk / 4. Name it so PnR can time the fabric.
-create_clock -name ddr_clk_out -period 10 [get_pins {u_ddr3/gw3_top/u_ddr_phy_top/fclkdiv/CLKOUT}]
+create_clock -name ddr_clk_out -period 10 [get_pins {u_ddr3/u_clkdiv/CLKOUT}]
 # Gowin SDC has no line continuations; keep this on one line.
 set_clock_groups -asynchronous -group [get_clocks {clk50}] -group [get_clocks {clk100}] -group [get_clocks {clk400}] -group [get_clocks {ddr_clk_out}] -group [get_clocks {clk_core}] -group [get_clocks {clk_hdmi_serial}] -group [get_clocks {clk_hdmi_pixel}] -group [get_clocks {jtag_tck}]
 # More than the default 25 worst paths, per clock, for timing closure work.
@@ -21,4 +21,4 @@ report_timing -setup -max_paths 100 -max_common_paths 1 -to_clock [get_clocks {c
 
 # The DDR PHY's init-complete flop releases the DDR-domain reset once, after
 # calibration, while nothing is in flight: not a timed path.
-set_false_path -from [get_regs {u_ddr3/gw3_top/u_ddr_phy_top/u_ddr_init/ddr_init_complete_d_3_s0}]
+set_false_path -from [get_regs {u_ddr3/u_ctrl/cal_done_s*}]

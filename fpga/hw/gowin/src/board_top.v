@@ -149,10 +149,11 @@ module board_top #(
     wire ddr_odt_ip;
     assign O_ddr_odt = DDR_ODT_ENABLE ? ddr_odt_ip : 1'b0;
 
-    // USE_OWN_DDR3 swaps the Gowin DDR3 IP for fpga/hw/gowin/own_ddr3 (same
-    // native UI, no BSRAM). The build dir defines it in a wrapper file and
-    // needs the matching CST / SDC (see own_ddr3/INTEGRATION.md).
-`ifdef USE_OWN_DDR3
+    // DDR3 controller: fpga/hw/gowin/own_ddr3 by default (Gowin IP's native
+    // UI, no BSRAM, lower read latency; B128: GLQuake 27.6 ms/frame). Define
+    // USE_GOWIN_DDR3_IP (wrapper file) for the Gowin IP; it also needs the IP's
+    // CST / SDC names and files (see own_ddr3/INTEGRATION.md).
+`ifndef USE_GOWIN_DDR3_IP
     wire [31:0] own_ddr3_dbg;
     own_ddr3 u_ddr3 (
         .dbg_addr            (8'h00),

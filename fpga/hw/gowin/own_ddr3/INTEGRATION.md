@@ -1,5 +1,10 @@
 # own_ddr3 in the Voodoo build
 
+**Default since 2026-10-19:** the tracked `fpga/hw/gowin/build.tcl`,
+`src/board_top.v`, CST and SDC use own_ddr3. For the Gowin IP, define
+`USE_GOWIN_DDR3_IP` in a wrapper and use the left-hand column below. (The
+`USE_OWN_DDR3` define described next is now a no-op.)
+
 `fpga/hw/gowin/src/board_top.v` picks the DDR3 controller at compile time:
 
 - default: the Gowin IP (`DDR3_Memory_Interface_Top u_ddr3`)
