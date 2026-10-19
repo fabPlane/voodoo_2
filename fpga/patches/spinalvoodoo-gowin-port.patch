@@ -622,7 +622,7 @@ index d163ab7..5ab9b45 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..e2c196f 100644
+index 1b34fa2..6703e43 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -635,7 +635,7 @@ index 1b34fa2..e2c196f 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,40 @@ case class Config(
+@@ -31,6 +34,42 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -647,6 +647,8 @@ index 1b34fa2..e2c196f 100644
 +    // Texture units: 1 (Voodoo 1) or 2 (two TREX: TMU1 feeds TMU0's texture
 +    // combine, the multitexture path of 2-TMU boards and the Voodoo 2).
 +    tmuCount: Int = 1,
++    // TMU sample requests queued before the texture path (per TMU).
++    texSampleQueueDepth: Int = 16,
 +    // Rasterizer span queue (spans between the walker, which issues the
 +    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
 +    spanQueueDepth: Int = 4,
@@ -898,7 +900,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..45c6984 100644
+index 6051025..031c998 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -10,21 +10,32 @@ object CoreSimGen extends App {
@@ -939,7 +941,7 @@ index 6051025..45c6984 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,12 @@ object CoreSimGen extends App {
+@@ -37,7 +48,13 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -949,7 +951,8 @@ index 6051025..45c6984 100644
 +        argIntValue("--tex-small-cache-lines").getOrElse(if (gowin) 512 else Config.voodoo1().texSmallCacheLines),
 +      texSmallFillSlots = argIntValue("--tex-small-fill-slots").getOrElse(4),
 +      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4),
-+      tmuCount = argIntValue("--tmu-count").getOrElse(1)
++      tmuCount = argIntValue("--tmu-count").getOrElse(1),
++      texSampleQueueDepth = argIntValue("--tex-sample-queue-depth").getOrElse(16)
      )
  
    val memTiming = SimMemoryTiming(
@@ -6090,7 +6093,7 @@ index f164007..31832d2 100644
              cmd.mask := prep.mask
              cmd
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..1a131f6 100644
+index 8b06179..77d4541 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -6514,7 +6517,7 @@ index 8b06179..1a131f6 100644
      }
      .m2sPipe()
 -    .queue(16)
-+  val sampleRequestBase = Tmu.queueSampleRequests(sampleRequestBasePre, 16, c)
++  val sampleRequestBase = Tmu.queueSampleRequests(sampleRequestBasePre, c.texSampleQueueDepth, c)
  
    val bypassOutput = Stream(Tmu.Output(c))
    val bypassTexture = !stageB.payload.meta.config.textureEnable

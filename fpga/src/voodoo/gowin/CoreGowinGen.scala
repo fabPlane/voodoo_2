@@ -97,7 +97,11 @@ object GowinGenSupport {
       hwDebugRegs = true,
       // GOWIN_TMU_COUNT=2: two TMUs (texture combine, TMU1 texture memory 2 MB
       // above TMU0's); the host shim needs SIM_DUAL_TMU=1 to address TMU1.
-      tmuCount = sys.env.get("GOWIN_TMU_COUNT").map(_.toInt).getOrElse(1)
+      tmuCount = sys.env.get("GOWIN_TMU_COUNT").map(_.toInt).getOrElse(1),
+      // TMU sample queue: 8 costs nothing in GLQuake trace replay at 80-cycle
+      // texture latency (16: same cycles, 4: +0.5%, 2: +29%), ~1.2k FFs less
+      // per TMU than 16.
+      texSampleQueueDepth = 8
     )
 
   def verilog(targetDirectory: String = "rtl/gowin"): SpinalConfig =
