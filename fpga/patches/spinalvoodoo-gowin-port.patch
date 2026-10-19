@@ -648,7 +648,7 @@ index 6051025..3681cdd 100644
  
    val memTiming = SimMemoryTiming(
 diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
-index 1bfe40c..d1e51aa 100644
+index 1bfe40c..06e63fe 100644
 --- a/src/voodoo/SimBmbMemory.scala
 +++ b/src/voodoo/SimBmbMemory.scala
 @@ -11,7 +11,10 @@ case class SimMemoryTiming(
@@ -663,12 +663,28 @@ index 1bfe40c..d1e51aa 100644
    require(fixedReadLatency >= 0)
    require(burstSetupLatency >= 0)
    require(burstBeatLatency >= 0)
+@@ -96,9 +99,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
+     }
+   }
+ 
++  // BMB carries the burst's start address on every beat (the framebuffer
++  // write buffer drains 1 KiB runs that way since the Gowin port): add the
++  // beat index, or a write-buffer drain lands every beat on its first word.
++  private val writeBeat = Reg(UInt(burstCountWidth bits)) init (0)
++  when(doWriteCmd) { writeBeat := Mux(io.bus.cmd.last, U(0, burstCountWidth bits), writeBeat + 1) }
+   for (lane <- 0 until 4) {
+     byteLanes(lane).write(
+-      address = cmdWordAddr,
++      address = cmdWordAddr + writeBeat.resize(wordAddrWidth bits),
+       data = io.bus.cmd.data(8 * lane + 7 downto 8 * lane),
+       enable = doWriteCmd && io.bus.cmd.mask(lane)
+     )
 diff --git a/src/voodoo/SimBmbMultiPortMemory.scala b/src/voodoo/SimBmbMultiPortMemory.scala
 new file mode 100644
-index 0000000..d583d43
+index 0000000..404f420
 --- /dev/null
 +++ b/src/voodoo/SimBmbMultiPortMemory.scala
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,99 @@
 +package voodoo
 +
 +import spinal.core._
@@ -686,8 +702,8 @@ index 0000000..d583d43
 +  *
 +  * The byte-lane arrays keep SimBmbMemory's names (ram_symbol0..3) so the C++
 +  * harness can load and read memory the same way. Writes land when the beat
-+  * is accepted (at the beat's own address) and reads sample memory as each
-+  * word is returned.
++  * is accepted (burst start address + beat index) and reads sample memory as
++  * each word is returned.
 +  */
 +case class SimBmbMultiPortMemory(
 +    ports: Seq[BmbParameter],
@@ -730,6 +746,8 @@ index 0000000..d583d43
 +    val cmdWordAddr = bus.cmd.address(wordAddrWidth + 1 downto 2)
 +    val cmdWords = ((bus.cmd.length.resize(lengthWidth + 1 bits) + 1) >> 2).resize(lengthWidth bits)
 +    val isRead = bus.cmd.opcode === Bmb.Cmd.Opcode.READ
++    // BMB carries the burst's start address on every beat.
++    val writeBeat = Reg(UInt(lengthWidth bits)) init (0)
 +
 +    bus.cmd.ready := queue.io.push.ready
 +    queue.io.push.valid := bus.cmd.valid && (isRead || bus.cmd.last)
@@ -740,11 +758,11 @@ index 0000000..d583d43
 +    queue.io.push.context := (if (p.access.contextWidth > 0) bus.cmd.context else B(0, 0 bits))
 +    queue.io.push.readyAt := cycle + Mux(isRead, U(readLatency, 32 bits), U(writeLatency, 32 bits))
 +
-+    // Write beats carry their own address here (the framebuffer write
-+    // buffer drains with a per-beat address), as SimBmbMemory assumes.
 +    when(bus.cmd.fire && !isRead) {
++      val addr = cmdWordAddr + writeBeat.resize(wordAddrWidth bits)
 +      for (lane <- 0 until 4)
-+        when(bus.cmd.mask(lane)) { byteLanes(lane)(cmdWordAddr) := bus.cmd.data(8 * lane + 7 downto 8 * lane) }
++        when(bus.cmd.mask(lane)) { byteLanes(lane)(addr) := bus.cmd.data(8 * lane + 7 downto 8 * lane) }
++      writeBeat := Mux(bus.cmd.last, U(0, lengthWidth bits), writeBeat + 1)
 +    }
 +
 +    val head = queue.io.pop.payload
@@ -5507,6 +5525,97 @@ index 0000000..9d9e1dc
 +      assert(checked == n, s"only $checked of $n pixels came out")
 +    }
 +  }
++}
+diff --git a/test/FramebufferPlaneBufferRandomTest.scala b/test/FramebufferPlaneBufferRandomTest.scala
+new file mode 100644
+index 0000000..b13b861
+--- /dev/null
++++ b/test/FramebufferPlaneBufferRandomTest.scala
+@@ -0,0 +1,85 @@
++//> using target.scope test
++
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import spinal.lib.bus.bmb.sim._
++import voodoo.framebuffer.FramebufferPlaneBuffer
++
++/** Random span-like 16-bit pixel writes (runs, jumps, revisits, half-word
++  * masks) through the write buffer with memory stalls; after a flush every
++  * byte in memory must hold the last value written to it. Trace replay with
++  * the write buffer on lost whole triangles (Gowin --gowin CoreSim).
++  */
++class FramebufferPlaneBufferRandomTest extends AnyFunSuite {
++  private def run(lineWords: Int, seed: Int): Unit = {
++    val config = Config
++      .voodoo1()
++      .copy(
++        addressWidth = 14 bits,
++        fbWriteBufferLineWords = lineWords,
++        fbWriteBufferCount = 2,
++        useFbWriteBuffer = true,
++        useTexFillCache = false
++      )
++    SimConfig.withIVerilog.compile(FramebufferPlaneBuffer(config)).doSim(seed = seed) { dut =>
++      dut.clockDomain.forkStimulus(10)
++      dut.io.readReq.valid #= false
++      dut.io.readReq.address #= 0
++      dut.io.readRsp.ready #= true
++      dut.io.writeReq.valid #= false
++      dut.io.flush #= false
++      val size = 1 << 14
++      val memory = new BmbMemoryAgent(size)
++      memory.addPort(dut.io.mem, 0, dut.clockDomain, withDriver = true, withStall = true)
++      val model = Array.fill[Int](size)(0)
++      for (i <- 0 until size) memory.setByte(i, 0)
++      dut.clockDomain.waitSampling(2)
++
++      val rnd = new scala.util.Random(seed)
++      var pixel = 0 // 16-bit pixel index
++      for (n <- 0 until 6000) {
++        rnd.nextInt(20) match {
++          case 0 | 1 => pixel = rnd.nextInt(size / 2) // jump
++          case 2 => pixel = (pixel - rnd.nextInt(40)).max(0) // revisit just written
++          case _ => pixel += 1 // along the span
++        }
++        pixel %= size / 2
++        val byteAddr = pixel * 2
++        val word = byteAddr & ~3
++        val hi = (byteAddr & 2) != 0
++        val v = rnd.nextInt(0x10000)
++        val data = if (hi) v.toLong << 16 else v.toLong
++        val mask = if (hi) 0xc else 0x3
++        dut.io.writeReq.valid #= true
++        dut.io.writeReq.address #= word
++        dut.io.writeReq.data #= data
++        dut.io.writeReq.mask #= mask
++        dut.clockDomain.waitSamplingWhere(dut.io.writeReq.ready.toBoolean)
++        model(byteAddr) = v & 0xff
++        model(byteAddr + 1) = (v >> 8) & 0xff
++        if (rnd.nextInt(8) == 0) {
++          dut.io.writeReq.valid #= false
++          dut.clockDomain.waitSampling(rnd.nextInt(4))
++        }
++      }
++      dut.io.writeReq.valid #= false
++      dut.io.flush #= true
++      dut.clockDomain.waitSampling(4)
++      dut.clockDomain.waitSamplingWhere(!dut.io.busy.toBoolean)
++      dut.io.flush #= false
++      dut.clockDomain.waitSampling(50)
++      var bad = 0
++      for (i <- 0 until size if memory.getByte(i) != model(i).toByte) {
++        if (bad < 8) println(f"byte 0x$i%04x: mem ${memory.getByte(i) & 0xff}%02x want ${model(i)}%02x")
++        bad += 1
++      }
++      assert(bad == 0, s"$bad bytes wrong (lineWords $lineWords seed $seed)")
++    }
++  }
++
++  test("random pixel writes land, 4-word lines") { run(4, 1) }
++  test("random pixel writes land, 256-word lines") { run(256, 2) }
 +}
 diff --git a/test/FramebufferPlaneReaderTest.scala b/test/FramebufferPlaneReaderTest.scala
 index 0295f4c..f468360 100644
