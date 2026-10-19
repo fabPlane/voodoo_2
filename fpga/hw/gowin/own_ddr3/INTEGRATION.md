@@ -28,10 +28,16 @@ Constraints that name the IP's internals change:
 | CST | `INS_LOC "u_ddr3/gw3_top/u_ddr_phy_top/fclkdiv" LEFTSIDE[4];` | `INS_LOC "u_ddr3/u_clkdiv" LEFTSIDE[4];` |
 | CST | `SET_PARAM ".../u_dll" CLKIN_SEL=CLKIN5;` | (none) |
 | SDC | `create_clock ... [get_pins {u_ddr3/gw3_top/u_ddr_phy_top/fclkdiv/CLKOUT}]` | `[get_pins {u_ddr3/u_clkdiv/CLKOUT}]` |
-| SDC | `set_false_path -from [get_regs {u_ddr3/.../ddr_init_complete_d_3_s0}]` | `-from [get_regs {u_ddr3/u_ctrl/cal_done_s0}]` |
+| SDC | `set_false_path -from [get_regs {u_ddr3/.../ddr_init_complete_d_3_s0}]` | `-from [get_regs {u_ddr3/u_ctrl/cal_done_s*}]` |
 
 `fpga/hw/gowin-own` (untracked, like the other build dirs) is set up this way
 from `gowin-q2` (B126a: rtl_b125, 48 MHz core).
 
-Board results so far: see `test/` (standalone JTAG BIST, 1 GiB clean at
-command gaps 0..15) and the commit log.
+Board results:
+
+- standalone JTAG BIST (`test/`): 1 GiB clean at command gaps 0..15, 140
+  back-to-back full passes, ~2 GB/s at gap 0
+- B126a + own_ddr3 (`gowin-own`, 48 MHz core, all clocks meet timing):
+  GLQuake 1 h 07 min / 104k frames, no reload, link up, picture correct;
+  29.0 ms/frame median vs 31 ms with the Gowin IP, DDR read latency median
+  50 vs 78 cycles; BSRAM 244 -> 196, registers -2960

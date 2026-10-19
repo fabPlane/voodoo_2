@@ -537,40 +537,235 @@ index 100f1c6..ac0f5b0 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..2e25087 100644
+index 9effb48..2b632af 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
-@@ -31,12 +31,12 @@ case class CoreSim(
+@@ -31,22 +31,39 @@ case class CoreSim(
  
    def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
  
 -  val fbWriteRam = simRam(Core.fbMemBmbParams(c), 4 * 1024 * 1024)
-+  val fbWriteRam = simRam(Core.fbMemSharedBmbParams(c), 4 * 1024 * 1024)
-   val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024)
+-  val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024)
++  if (memTiming.mode == "pipelined") {
++    // Every framebuffer client on its own pipelined port (board-like).
++    require(!c.separateScanoutMem)
++    def multiRam(ps: Seq[BmbParameter], size: Int) = SimBmbMultiPortMemory(
++      ps, size, readLatency = memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency)
++    // The harness reaches the arrays by these instance names.
++    val fbWriteRam = multiRam(Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)), 4 * 1024 * 1024)
++      .setName("fbWriteRam")
++    val texRam = multiRam(Seq(Core.texMemBmbParams(c)), 8 * 1024 * 1024).setName("texRam")
++    fbWriteRam.io.buses(0) <> core.io.fbMemWrite
++    fbWriteRam.io.buses(1) <> core.io.fbColorWriteMem
++    fbWriteRam.io.buses(2) <> core.io.fbAuxWriteMem
++    fbWriteRam.io.buses(3) <> core.io.fbColorReadMem
++    fbWriteRam.io.buses(4) <> core.io.fbAuxReadMem
++    texRam.io.buses(0) <> core.io.texMem
++  } else {
++    val fbWriteRam = simRam(Core.fbMemSharedBmbParams(c), 4 * 1024 * 1024).setName("fbWriteRam")
++    val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024).setName("texRam")
  
-   val fbArbiter = BmbArbiter(
+-  val fbArbiter = BmbArbiter(
 -    inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
 -    outputParameter = Core.fbMemBmbParams(c),
-+    inputsParameter = Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)),
-+    outputParameter = Core.fbMemSharedBmbParams(c),
-     lowerFirstPriority = true
-   )
+-    lowerFirstPriority = true
+-  )
++    val fbArbiter = BmbArbiter(
++      inputsParameter = Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)),
++      outputParameter = Core.fbMemSharedBmbParams(c),
++      lowerFirstPriority = true
++    )
  
+-  fbArbiter.io.inputs(0) <> core.io.fbMemWrite
+-  fbArbiter.io.inputs(1) <> core.io.fbColorWriteMem
+-  fbArbiter.io.inputs(2) <> core.io.fbAuxWriteMem
+-  fbArbiter.io.inputs(3) <> core.io.fbColorReadMem
+-  fbArbiter.io.inputs(4) <> core.io.fbAuxReadMem
+-  fbArbiter.io.output <> fbWriteRam.io.bus
+-  core.io.texMem <> texRam.io.bus
++    fbArbiter.io.inputs(0) <> core.io.fbMemWrite
++    fbArbiter.io.inputs(1) <> core.io.fbColorWriteMem
++    fbArbiter.io.inputs(2) <> core.io.fbAuxWriteMem
++    fbArbiter.io.inputs(3) <> core.io.fbColorReadMem
++    fbArbiter.io.inputs(4) <> core.io.fbAuxReadMem
++    fbArbiter.io.output <> fbWriteRam.io.bus
++    core.io.texMem <> texRam.io.bus
++  }
+ 
+   core.io.statusInputs.vRetrace := io.vRetrace
+   core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..8664556 100644
+index 6051025..3681cdd 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
-@@ -37,7 +37,9 @@ object CoreSimGen extends App {
+@@ -10,21 +10,32 @@ object CoreSimGen extends App {
+   }
+   def argIntValue(name: String): Option[Int] = argValue(name).map(_.toInt)
+ 
++  // --gowin: the Tang Mega 138K Pro dock's core options (CoreGowinGen),
++  // minus the HDMI scanout ports. Later flags still override.
++  val gowin = args.contains("--gowin")
+   val defaultConfig = Config.voodoo1(trace = TraceConfig(enabled = enableTrace))
+   val useFbWriteBuffer =
+     if (args.contains("--no-fb-write-buffer")) false
+-    else defaultConfig.useFbWriteBuffer
++    else gowin || args.contains("--fb-write-buffer") || defaultConfig.useFbWriteBuffer
+   val useFbReadCache =
+     if (args.contains("--fb-fill-cache")) true
+     else if (args.contains("--no-fb-fill-cache")) false
+-    else defaultConfig.useFbReadCache
++    else gowin || defaultConfig.useFbReadCache
+   val useTexFillCache =
+     if (args.contains("--tex-fill-cache")) true
+-    else if (args.contains("--no-tex-fill-cache")) false
++    else if (args.contains("--no-tex-fill-cache") || gowin) false
+     else defaultConfig.useTexFillCache
+ 
+-  val config = Config
+-    .voodoo1(trace = TraceConfig(enabled = enableTrace))
++  val baseConfig = {
++    val b = Config.voodoo1(trace = TraceConfig(enabled = enableTrace))
++    if (!gowin) b
++    else b.copy(
++      fbWriteBufferLineWords = argIntValue("--fb-write-line-words").getOrElse(256),
++      separateAuxWriteMem = !args.contains("--no-separate-aux-write-mem"),
++      hwDebugRegs = true
++    )
++  }
++  val config = baseConfig
+     .copy(
+       texFillLineWords =
+         argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
+@@ -37,7 +48,9 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
 -        argIntValue("--tex-fill-request-window").getOrElse(Config.voodoo1().texFillRequestWindow)
 +        argIntValue("--tex-fill-request-window").getOrElse(Config.voodoo1().texFillRequestWindow),
 +      texSmallCacheLines =
-+        argIntValue("--tex-small-cache-lines").getOrElse(Config.voodoo1().texSmallCacheLines)
++        argIntValue("--tex-small-cache-lines").getOrElse(if (gowin) 512 else Config.voodoo1().texSmallCacheLines)
      )
  
    val memTiming = SimMemoryTiming(
+diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
+index 1bfe40c..d1e51aa 100644
+--- a/src/voodoo/SimBmbMemory.scala
++++ b/src/voodoo/SimBmbMemory.scala
+@@ -11,7 +11,10 @@ case class SimMemoryTiming(
+     burstBeatLatency: Int = 1,
+     writeLatency: Int = 0
+ ) {
+-  require(Set("onchip", "ideal", "fixed", "burst").contains(mode))
++  // "pipelined": one independent port per memory client (SimBmbMultiPortMemory),
++  // reads answered fixedReadLatency cycles after the command, writes
++  // writeLatency cycles after their last beat.
++  require(Set("onchip", "ideal", "fixed", "burst", "pipelined").contains(mode))
+   require(fixedReadLatency >= 0)
+   require(burstSetupLatency >= 0)
+   require(burstBeatLatency >= 0)
+diff --git a/src/voodoo/SimBmbMultiPortMemory.scala b/src/voodoo/SimBmbMultiPortMemory.scala
+new file mode 100644
+index 0000000..d583d43
+--- /dev/null
++++ b/src/voodoo/SimBmbMultiPortMemory.scala
+@@ -0,0 +1,97 @@
++package voodoo
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++
++/** Simulation memory with one independent, pipelined BMB port per client,
++  * like a board where every client has its own AXI path into a mostly idle
++  * DRAM controller (the Tang Mega 138K dock): each port takes a command every
++  * cycle, answers in command order `readLatency` cycles after a read command
++  * (one word per cycle after that) and `writeLatency` cycles after a write
++  * burst's last beat. SimBmbMemory serves one transaction at a time on one
++  * shared bus, so with DRAM-like latency it makes every client wait on every
++  * other's round trip.
++  *
++  * The byte-lane arrays keep SimBmbMemory's names (ram_symbol0..3) so the C++
++  * harness can load and read memory the same way. Writes land when the beat
++  * is accepted (at the beat's own address) and reads sample memory as each
++  * word is returned.
++  */
++case class SimBmbMultiPortMemory(
++    ports: Seq[BmbParameter],
++    size: Int,
++    readLatency: Int,
++    writeLatency: Int,
++    queueDepth: Int = 64
++) extends Component {
++  require(size > 0 && (size % 4) == 0)
++  require(ports.forall(p => p.access.dataWidth == 32))
++
++  val io = new Bundle {
++    val buses = Vec(ports.map(p => slave(Bmb(p))))
++  }
++
++  private val wordCount = size / 4
++  private val wordAddrWidth = log2Up(wordCount)
++
++  val ram_symbol0 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol1 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol2 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol3 = Mem(Bits(8 bits), wordCount)
++  private val byteLanes = Seq(ram_symbol0, ram_symbol1, ram_symbol2, ram_symbol3)
++
++  val cycle = Reg(UInt(32 bits)) init (0)
++  cycle := cycle + 1
++
++  for ((bus, p) <- io.buses.zip(ports)) new Area {
++    val lengthWidth = p.access.lengthWidth
++    case class Entry() extends Bundle {
++      val isWrite = Bool()
++      val wordAddr = UInt(wordAddrWidth bits)
++      val words = UInt(lengthWidth bits)
++      val source = UInt(p.access.sourceWidth bits)
++      val context = Bits(p.access.contextWidth bits)
++      val readyAt = UInt(32 bits)
++    }
++    val queue = StreamFifo(Entry(), queueDepth)
++
++    val cmdWordAddr = bus.cmd.address(wordAddrWidth + 1 downto 2)
++    val cmdWords = ((bus.cmd.length.resize(lengthWidth + 1 bits) + 1) >> 2).resize(lengthWidth bits)
++    val isRead = bus.cmd.opcode === Bmb.Cmd.Opcode.READ
++
++    bus.cmd.ready := queue.io.push.ready
++    queue.io.push.valid := bus.cmd.valid && (isRead || bus.cmd.last)
++    queue.io.push.isWrite := !isRead
++    queue.io.push.wordAddr := cmdWordAddr
++    queue.io.push.words := cmdWords
++    queue.io.push.source := bus.cmd.source
++    queue.io.push.context := (if (p.access.contextWidth > 0) bus.cmd.context else B(0, 0 bits))
++    queue.io.push.readyAt := cycle + Mux(isRead, U(readLatency, 32 bits), U(writeLatency, 32 bits))
++
++    // Write beats carry their own address here (the framebuffer write
++    // buffer drains with a per-beat address), as SimBmbMemory assumes.
++    when(bus.cmd.fire && !isRead) {
++      for (lane <- 0 until 4)
++        when(bus.cmd.mask(lane)) { byteLanes(lane)(cmdWordAddr) := bus.cmd.data(8 * lane + 7 downto 8 * lane) }
++    }
++
++    val head = queue.io.pop.payload
++    val rspIndex = Reg(UInt(lengthWidth bits)) init (0)
++    val due = queue.io.pop.valid && cycle >= head.readyAt
++    val rspAddr = head.wordAddr + rspIndex.resize(wordAddrWidth bits)
++    val readData = Cat(byteLanes.map(_.readAsync(rspAddr))) // Cat: first = LSB
++    val lastBeat = head.isWrite || rspIndex === head.words - 1
++
++    bus.rsp.valid := due
++    bus.rsp.last := lastBeat
++    bus.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
++    bus.rsp.source := head.source
++    if (p.access.contextWidth > 0) bus.rsp.context := head.context
++    bus.rsp.data := Mux(head.isWrite, B(0, 32 bits), readData)
++    queue.io.pop.ready := bus.rsp.fire && lastBeat
++    when(bus.rsp.fire) {
++      rspIndex := Mux(lastBeat, U(0, lengthWidth bits), rspIndex + 1)
++    }
++  }
++}
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
 index 3a197b9..0f33de9 100644
 --- a/src/voodoo/bus/BmbBusInterface.scala
