@@ -63,3 +63,14 @@ detection works, run with `SIM_DUAL_TMU=1 SST_TMUMEM_SIZE=2`.
 One TMU today: ~5.8k FF, ~11k LUT, ~2.3k ALU, ~54 BSRAM. After the space
 work (B130 61.3k FF / CLS 83% -> ~48.7k FF / CLS 78%) a second one lands near
 86% CLS, about where B130 still met timing on half its placements.
+
+## Status (2026-10-20)
+
+First two-TMU bitstream on the board: B158e40, 40 MHz core (two-TMU
+placements at 48 MHz reach 45-47.7 MHz core so far). Glide's own detection
+reads tmuConfig 0xc1; stock GLQuake uses GL_SGIS_multitexture (Mesa patch,
+which also lets GLQuake's REPLACE + BLEND combine run in hardware instead of
+Mesa's software fallback). timedemo demo1: 27.5 fps, against 25.0 fps for the
+single-TMU build at 48 MHz. Getting there took area cuts (per-pixel values
+reduced when formed, no triangleCMD register copy, per-pixel config slots,
+gamma in BSRAM, ...) and three timing rounds driven by the saved PnR reports.
