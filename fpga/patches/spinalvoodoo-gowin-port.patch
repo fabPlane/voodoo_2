@@ -6339,10 +6339,10 @@ index fbf774f..6f372f1 100644
      tables
 diff --git a/src/voodoo/texture/TextureCombine.scala b/src/voodoo/texture/TextureCombine.scala
 new file mode 100644
-index 0000000..57c6f8b
+index 0000000..9afb041
 --- /dev/null
 +++ b/src/voodoo/texture/TextureCombine.scala
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,141 @@
 +package voodoo.texture
 +
 +import voodoo._
@@ -6406,9 +6406,13 @@ index 0000000..57c6f8b
 +  }
 +
 +  // x * (f + 1) >> 8, or x * ((f ^ 0xff) + 1) >> 8 when inverted (C ints).
++  // x is a texel difference (|x| <= 255) and f is at most 255 and at least
++  // the detail factor's -15 << 7, so (f ^ 0xff) + 1 is in [-2047, 256]: a
++  // 10 x 13-bit multiply gives the same product as the full width (the
++  // 24 x 24 one missed timing at 48 MHz, B154).
 +  private def scale(x: SInt, f: SInt, inverted: Bool): SInt = {
 +    val fx = Mux(inverted, f ^ S(0xff, W bits), f)
-+    ((x * (fx + 1)) >> 8).resize(W bits)
++    ((x.resize(10 bits) * (fx + 1).resize(13 bits)) >> 8).resize(W bits)
 +  }
 +
 +  private def factorOf(sel: UInt, local: Texel, otherA: SInt, m: Mode, rgb: Int, alpha: Boolean): SInt = {

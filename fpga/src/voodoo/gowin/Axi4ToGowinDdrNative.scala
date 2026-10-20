@@ -288,20 +288,35 @@ case class Axi4ToGowinDdrNative(
     // registers in one cycle (ddr_clk_out misses, B109). An AXI request
     // stays valid until accepted, so the registered winner is still there.
     val grantReg = RegNext(grant) init (0)
-    val grantValid = RegNext(!active && io.ddr.initCalibComplete && anyValid) init (False)
+    val grantValid1 = RegNext(!active && io.ddr.initCalibComplete && anyValid) init (False)
+    // One more cycle: the granted port's address / length / ID are muxed
+    // into registers before they are taken (grantReg -> 5:1 mux -> addr
+    // missed 100 MHz in crowded placements, B154). The request is still
+    // there: AXI keeps it valid until accepted.
+    val grantValid = RegNext(grantValid1 && !active) init (False)
+    val takePort = RegNext(grantReg) init (0)
+    val takeAddr = Reg(UInt(addr.getWidth bits)) init (0)
+    val takeBeats = Reg(UInt(beatsLeft.getWidth bits)) init (0)
+    val takeId = Reg(UInt(id.getWidth bits)) init (0)
+    switch(grantReg) {
+      for (rp <- readPorts) is(rp.idx) {
+        takeAddr := rp.ar.addr.resized
+        takeBeats := (rp.ar.len.resize(9) + 1).resized
+        if (rp.cfg.useId) takeId := rp.ar.id.resized
+      }
+      default {}
+    }
     when(!active) {
       when(grantValid) {
-        lastGrant := grantReg
+        lastGrant := takePort
         addrSettled := False
         active := True
-        port := grantReg
-        switch(grantReg) {
-          for (rp <- readPorts) is(rp.idx) {
-            rp.ar.ready := True
-            addr := rp.ar.addr.resized
-            beatsLeft := (rp.ar.len.resize(9) + 1).resized
-            if (rp.cfg.useId) id := rp.ar.id.resized
-          }
+        port := takePort
+        addr := takeAddr
+        beatsLeft := takeBeats
+        id := takeId
+        switch(takePort) {
+          for (rp <- readPorts) is(rp.idx) { rp.ar.ready := True }
           default {}
         }
       }

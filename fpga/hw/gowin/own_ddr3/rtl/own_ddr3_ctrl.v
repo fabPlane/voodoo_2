@@ -308,7 +308,7 @@ module own_ddr3_ctrl #(
                      C_PULSE = 4'd8, C_PGAP = 4'd9, C_NEXTG = 4'd10,
                      C_P2 = 4'd11, C_FINISH = 4'd12, C_DONE = 4'd13,
                      C_FAIL = 4'd14, C_HOLD = 4'd15;
-    localparam [4:0] C_SCAN = 5'd16, C_SCAN2 = 5'd17;
+    localparam [4:0] C_SCAN = 5'd16, C_SCAN2 = 5'd17, C_CHECK = 5'd18;
     localparam WIN = 24;
 
     reg [4:0]  cstate;
@@ -941,7 +941,7 @@ module own_ddr3_ctrl #(
                 end
                 C_FINISH: begin
                     // all lanes locked, latencies within one frame
-                    cstate <= C_DONE;
+                    cstate <= C_CHECK;
                     cal_active <= 1'b0;
                     cal_runs <= cal_runs + 1'b1;
                     tmin = 4'hF; tmax = 4'h0;
@@ -950,11 +950,17 @@ module own_ddr3_ctrl #(
                         if (llat[i] < tmin) tmin = llat[i];
                         if (llat[i] > tmax) tmax = llat[i];
                     end
-                    if (tmax - tmin > 4'd1) cal_fail <= 1'b1;
                     lat_min <= tmin;
                     lat_max <= tmax;
                     for (i = 0; i < LANES; i = i + 1)
                         lane_late[i] <= llat[i] == tmax;
+                end
+                C_CHECK: begin
+                    // latency spread checked from the registered min / max:
+                    // in C_FINISH the compare sat behind the min/max chain
+                    // and missed 100 MHz in crowded placements (B154)
+                    if (lat_max - lat_min > 4'd1) cal_fail <= 1'b1;
+                    cstate <= C_DONE;
                 end
                 C_DONE: begin
                     if (!cal_fail) cal_done <= 1'b1;
