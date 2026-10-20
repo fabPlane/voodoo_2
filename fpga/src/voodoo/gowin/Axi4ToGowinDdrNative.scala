@@ -79,7 +79,11 @@ case class Axi4ToGowinDdrNative(
     colConfig: Axi4Config = null,
     // Optional sixth, write-only port (depth write-buffer drains on the Pro
     // Dock): its own W channel next to the fb port's (colour writes, LFB).
-    auxWConfig: Axi4Config = null
+    auxWConfig: Axi4Config = null,
+    // One-line stager per read port (lines for different ports unpack in
+    // parallel); false = one shared unpacker, ~1.3k fewer flip-flops (five
+    // 256-bit lines) for ~0.4% GLQuake speed (B130d).
+    readStagers: Boolean = true
 ) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
   require(scanConfig == null || scanConfig.dataWidth == 32)
@@ -312,8 +316,8 @@ case class Axi4ToGowinDdrNative(
     data.io.push.valid := io.ddr.rdDataValid
     data.io.push.payload := io.ddr.rdData
 
-    // Each read port has a one-line stager that unpacks into its R channel;
-    // the head line moves to its port's stager when that is empty. With one
+    // readStagers: each read port has a one-line stager that unpacks into its
+    // R channel; the head line moves to its port's stager when that is empty. With one
     // shared unpacker (8 DDR cycles per line, one port at a time) returned
     // lines waited ~34 DDR cycles in `data` behind other ports' lines,
     // against ~15 cycles of controller latency (B128 + own DDR3).
@@ -322,41 +326,65 @@ case class Axi4ToGowinDdrNative(
     val ports = Seq(io.fb, io.tex) ++ Option(io.scan) ++ Option(io.aux) ++ Option(io.col)
     val portIdx = Seq(0, 1) ++ (if (hasScan) Seq(2) else Nil) ++ (if (hasAux) Seq(3) else Nil) ++
       (if (hasCol) Seq(4) else Nil)
-    class Stager(val axi: Axi4, val p: Int) extends Area {
-      val valid = RegInit(False)
-      val line = Reg(Bits(nativeDataWidth bits))
-      val id = Reg(UInt(idWidth bits)) init (0)
-      val idx = Reg(UInt(wordIdxBits bits)) init (0)
-      val lastWordIdx = Reg(UInt(wordIdxBits bits)) init (0)
-      val last = Reg(Bool()) init (False)
-      val endOfLine = idx === lastWordIdx
-      when(valid) {
-        axi.r.valid := True
-        axi.r.data := line.subdivideIn(32 bits)(idx)
-        axi.r.last := last && endOfLine
-      }
-      when(axi.r.fire) {
-        idx := idx + 1
-        when(endOfLine) { valid := False }
-      }
-    }
-    val stagers = ports.zip(portIdx).map { case (a, p) => new Stager(a, p) }
-    // rReady: the head's stager is empty (registered state only).
+    val lineDone = Bool()
     val rReady = Bool()
     rReady := False
-    for (st <- stagers) when(head.port === st.p) { rReady := !st.valid }
-    val lineDone = headValid && rReady
     meta.io.pop.ready := lineDone
     data.io.pop.ready := lineDone
-    for (st <- stagers) when(lineDone && head.port === st.p) {
-      st.valid := True
-      st.line := data.io.pop.payload
-      st.id := head.id
-      st.idx := head.firstIdx
-      st.lastWordIdx := head.lastWordIdx
-      st.last := head.last
+    val stagedId: Int => UInt = if (readStagers) {
+      class Stager(val axi: Axi4, val p: Int) extends Area {
+        val valid = RegInit(False)
+        val line = Reg(Bits(nativeDataWidth bits))
+        val id = Reg(UInt(idWidth bits)) init (0)
+        val idx = Reg(UInt(wordIdxBits bits)) init (0)
+        val lastWordIdx = Reg(UInt(wordIdxBits bits)) init (0)
+        val last = Reg(Bool()) init (False)
+        val endOfLine = idx === lastWordIdx
+        when(valid) {
+          axi.r.valid := True
+          axi.r.data := line.subdivideIn(32 bits)(idx)
+          axi.r.last := last && endOfLine
+        }
+        when(axi.r.fire) {
+          idx := idx + 1
+          when(endOfLine) { valid := False }
+        }
+      }
+      val stagers = ports.zip(portIdx).map { case (a, p) => new Stager(a, p) }
+      // rReady: the head's stager is empty (registered state only).
+      for (st <- stagers) when(head.port === st.p) { rReady := !st.valid }
+      lineDone := headValid && rReady
+      for (st <- stagers) when(lineDone && head.port === st.p) {
+        st.valid := True
+        st.line := data.io.pop.payload
+        st.id := head.id
+        st.idx := head.firstIdx
+        st.lastWordIdx := head.lastWordIdx
+        st.last := head.last
+      }
+      p => stagers.find(_.p == p).get.id
+    } else {
+      // Unpack the head line straight into its port's R channel.
+      val started = RegInit(False)
+      val idxReg = Reg(UInt(wordIdxBits bits)) init (0)
+      val idx = Mux(started, idxReg, head.firstIdx)
+      val words = data.io.pop.payload.subdivideIn(32 bits)
+      val endOfLine = idx === head.lastWordIdx
+      for ((axi, p) <- ports.zip(portIdx)) {
+        when(head.port === p) { rReady := axi.r.ready }
+        when(headValid && head.port === p) {
+          axi.r.valid := True
+          axi.r.data := words(idx)
+          axi.r.last := head.last && endOfLine
+        }
+      }
+      lineDone := headValid && rReady && endOfLine
+      when(headValid && rReady) {
+        started := !endOfLine
+        idxReg := idx + 1
+      }
+      _ => head.id
     }
-    def stagedId(p: Int): UInt = stagers.find(_.p == p).get.id
 
     val inFlightNext = UInt(inFlight.getWidth bits)
     inFlightNext := inFlight

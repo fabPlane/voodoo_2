@@ -696,7 +696,7 @@ index 1b34fa2..d794b13 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..fe1716a 100644
+index 100f1c6..4e0b6b5 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -769,6 +769,15 @@ index 100f1c6..fe1716a 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
+@@ -149,7 +182,7 @@ case class Core(c: Config) extends Component {
+     hdmiScanout.io.regs.displayHeight := 480
+     hdmiScanout.io.regs.framebufferEnable := True
+     hdmiScanout.io.regs.testPatternEnable := False
+-    hdmiScanout.io.regs.gammaLut := regBank.io.gammaLut
++    hdmiScanout.io.regs.gammaWrite := regBank.io.gammaWrite
+ 
+     pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
+       c,
 @@ -158,13 +191,16 @@ case class Core(c: Config) extends Component {
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
@@ -2913,10 +2922,18 @@ index aeba713..082556f 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..15788a5 100644
+index c5a4cd8..88c583c 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
-@@ -72,15 +72,29 @@ case class RegisterBank(config: Config) extends Component {
+@@ -65,35 +65,46 @@ case class RegisterBank(config: Config) extends Component {
+     val floatShadow = in(Flow(FloatShadowWrite(RegisterBank.bmbParams(config).access.addressWidth)))
+     val drawRouting = in(FbRouting(config))
+     val paletteWrite = master(Flow(RegisterBank.PaletteWrite()))
+-    val gammaLut = out Vec (Bits(24 bits), 33)
++    val gammaWrite = master(Flow(voodoo.hdmi.GammaWrite()))
+   }
+ 
+   io.paletteWrite.valid := False
    io.paletteWrite.payload.address := 0
    io.paletteWrite.payload.data := 0
  
@@ -2949,7 +2966,24 @@ index c5a4cd8..15788a5 100644
    import busif.FieldFloatAlias // Bring .withFloatAlias() implicit into scope
  
    private val triangleDrawTraceId = if (config.trace.enabled) Reg(UInt(32 bits)) init (0) else null
-@@ -109,7 +123,7 @@ case class RegisterBank(config: Config) extends Component {
+   private val trianglePrimitiveTraceId =
+     if (config.trace.enabled) Reg(UInt(32 bits)) init (0) else null
+ 
+-  private val gammaLut = Vec(Reg(Bits(24 bits)), 33)
+-  for (i <- 0 until 32) {
+-    val value = i * 8
+-    gammaLut(i) init B((value << 16) | (value << 8) | value, 24 bits)
+-  }
+-  gammaLut(32) init B(0xffffff, 24 bits)
+-  io.gammaLut := gammaLut
++  // clutData writes go to the scanout's gamma table.
++  io.gammaWrite.valid := False
++  io.gammaWrite.payload.index := regBus.cmd.data(29 downto 24).asUInt
++  io.gammaWrite.payload.rgb := regBus.cmd.data(23 downto 0)
+ 
+   private val floatShadowStartS = Reg(SInt(texCoordsHiWidth bits)) init (0)
+   private val floatShadowStartT = Reg(SInt(texCoordsHiWidth bits)) init (0)
+@@ -109,7 +120,7 @@ case class RegisterBank(config: Config) extends Component {
    private val floatShadowDAdY = Reg(SInt(texCoordsHiWidth bits)) init (0)
  
    private def setFloatShadowRaw(address: UInt, raw: SInt): Unit = {
@@ -2958,20 +2992,19 @@ index c5a4cd8..15788a5 100644
        is(U(0x030, 12 bits)) { floatShadowStartA := raw.resize(texCoordsHiWidth bits) }
        is(U(0x034, 12 bits)) { floatShadowStartS := raw.resize(texCoordsHiWidth bits) }
        is(U(0x038, 12 bits)) { floatShadowStartT := raw.resize(texCoordsHiWidth bits) }
-@@ -127,15 +141,15 @@ case class RegisterBank(config: Config) extends Component {
+@@ -127,15 +138,12 @@ case class RegisterBank(config: Config) extends Component {
  
    when(io.floatShadow.valid) {
      setFloatShadowRaw(io.floatShadow.address, io.floatShadow.raw)
 -  }.elsewhen(io.bus.cmd.fire && io.bus.cmd.opcode === Bmb.Cmd.Opcode.WRITE) {
 -    when(io.bus.cmd.address === U(0x228, 12 bits)) {
 -      val clutIndex = io.bus.cmd.data(29 downto 24).asUInt
+-      when(clutIndex <= 32) {
+-        gammaLut(clutIndex.resized) := io.bus.cmd.data(23 downto 0)
+-      }
 +  }.elsewhen(regBus.cmd.fire && regBus.cmd.opcode === Bmb.Cmd.Opcode.WRITE) {
 +    when(regBus.cmd.address === U(0x228, 12 bits)) {
-+      val clutIndex = regBus.cmd.data(29 downto 24).asUInt
-       when(clutIndex <= 32) {
--        gammaLut(clutIndex.resized) := io.bus.cmd.data(23 downto 0)
-+        gammaLut(clutIndex.resized) := regBus.cmd.data(23 downto 0)
-       }
++      io.gammaWrite.valid := regBus.cmd.data(29 downto 24).asUInt <= 32
      }
  
 -    val paletteRegHit = io.bus.cmd.address.mux(
@@ -2979,7 +3012,7 @@ index c5a4cd8..15788a5 100644
        U(0x334, 12 bits) -> True,
        U(0x338, 12 bits) -> True,
        U(0x33c, 12 bits) -> True,
-@@ -146,47 +160,47 @@ case class RegisterBank(config: Config) extends Component {
+@@ -146,47 +154,47 @@ case class RegisterBank(config: Config) extends Component {
        U(0x350, 12 bits) -> True,
        default -> False
      )
@@ -3047,7 +3080,7 @@ index c5a4cd8..15788a5 100644
      }
    }
  
-@@ -575,9 +589,20 @@ case class RegisterBank(config: Config) extends Component {
+@@ -575,9 +583,20 @@ case class RegisterBank(config: Config) extends Component {
      cfg.tmudTdX.raw := g.dTdX.asBits
      cfg.tmudSdY.raw := g.dSdY.asBits
      cfg.tmudTdY.raw := g.dTdY.asBits
@@ -3071,7 +3104,7 @@ index c5a4cd8..15788a5 100644
      }
  
      cfg
-@@ -601,10 +626,22 @@ case class RegisterBank(config: Config) extends Component {
+@@ -601,10 +620,22 @@ case class RegisterBank(config: Config) extends Component {
        captureTriangleHiTexCoords(useFloatShadow),
        triangleConfigReg,
        triangleDrawTraceId,
@@ -3095,7 +3128,7 @@ index c5a4cd8..15788a5 100644
    private def fifoRegBits(addr: Int, name: String, category: RegisterCategory, doc: String): Bits =
      busif
        .newRegAtWithCategory(addr, name, category)
-@@ -649,28 +686,26 @@ case class RegisterBank(config: Config) extends Component {
+@@ -649,28 +680,26 @@ case class RegisterBank(config: Config) extends Component {
    // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
    // ========================================================================
    val commands = new Area {
@@ -3135,7 +3168,7 @@ index c5a4cd8..15788a5 100644
      val (nopCmdReg, nopCmdStream) =
        busif.newCommandRegWithPayload(
          0x120,
-@@ -679,7 +714,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -679,7 +708,7 @@ case class RegisterBank(config: Config) extends Component {
          HardType(Bits(32 bits))
        ) { (_, payload) =>
          Component.current.addPrePopTask { () =>
@@ -3144,7 +3177,7 @@ index c5a4cd8..15788a5 100644
          }
        }
      val (fastfillCmdReg, fastfillCmdStream) =
-@@ -691,7 +726,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -691,7 +720,7 @@ case class RegisterBank(config: Config) extends Component {
          when(swapbufferCmdStream.fire) {
            triangleDrawTraceId := triangleDrawTraceId + 1
          }
@@ -3153,7 +3186,7 @@ index c5a4cd8..15788a5 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1130,33 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1124,33 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -3188,7 +3221,7 @@ index c5a4cd8..15788a5 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1175,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1169,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -3197,7 +3230,7 @@ index c5a4cd8..15788a5 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1187,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1181,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -3206,7 +3239,7 @@ index c5a4cd8..15788a5 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1247,55 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1241,55 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -3277,7 +3310,7 @@ index c5a4cd8..15788a5 100644
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
-@@ -1250,6 +1341,25 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1250,6 +1335,25 @@ case class RegisterBank(config: Config) extends Component {
  }
  
  object RegisterBank {
@@ -3304,10 +3337,61 @@ index c5a4cd8..15788a5 100644
      val address = UInt(8 bits)
      val data = Bits(24 bits)
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
-index de14d02..3b650aa 100644
+index de14d02..e21ba5f 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
 +++ b/src/voodoo/hdmi/HdmiScanout.scala
-@@ -107,12 +107,15 @@ case class HdmiScanoutStatus(c: Config) extends Bundle {
+@@ -64,15 +64,19 @@ object Rgb888 {
+     rgb
+   }
+ 
++  /** Interpolate between gamma entries a (index) and b (index + 1). */
++  def gammaLerp(a: UInt, b: UInt, fraction: UInt, full: Bool): UInt = {
++    val invFraction = U(8, 4 bits) - fraction.resize(4)
++    val weighted = (a.resize(12) * invFraction) + (b.resize(12) * fraction.resize(4))
++    Mux(full, b, (weighted >> 3).resize(8))
++  }
++
+   def applyGamma(rgb: Rgb888, lut: Vec[Bits]): Rgb888 = {
+     def interpolate(channel: UInt, high: Int, low: Int): UInt = {
+       val index = channel(7 downto 3).resize(log2Up(33))
+-      val fraction = channel(2 downto 0)
+       val a = lut(index)(high downto low).asUInt
+       val b = lut(index + 1)(high downto low).asUInt
+-      val invFraction = U(8, 4 bits) - fraction.resize(4)
+-      val weighted = (a.resize(12) * invFraction) + (b.resize(12) * fraction.resize(4))
+-      Mux(channel === 255, b, (weighted >> 3).resize(8))
++      gammaLerp(a, b, channel(2 downto 0), channel === 255)
+     }
+ 
+     val out = Rgb888()
+@@ -98,7 +102,25 @@ case class HdmiScanoutRegs(c: Config) extends Bundle {
+   val displayHeight = UInt(10 bits)
+   val framebufferEnable = Bool()
+   val testPatternEnable = Bool()
+-  val gammaLut = Vec(Bits(24 bits), 33)
++  val gammaWrite = Flow(GammaWrite())
++}
++
++/** One clutData write: entry 0-32 of the 33-entry gamma table, RGB888. */
++case class GammaWrite() extends Bundle {
++  val index = UInt(6 bits)
++  val rgb = Bits(24 bits)
++}
++
++object GammaTable {
++  def initEntry(i: Int): Int = if (i == 32) 255 else i * 8
++
++  /** The table as registers, written from `write` (single-clock scanout). */
++  def regs(write: Flow[GammaWrite]): Vec[Bits] = {
++    val lut = Vec(Reg(Bits(24 bits)), 33)
++    for (i <- 0 until 33) lut(i) init B(initEntry(i) * 0x010101, 24 bits)
++    when(write.valid && write.index <= 32) { lut(write.index.resized) := write.rgb }
++    lut
++  }
+ }
+ 
+ case class HdmiScanoutStatus(c: Config) extends Bundle {
+@@ -107,12 +129,15 @@ case class HdmiScanoutStatus(c: Config) extends Bundle {
    val swapPending = Bool()
    val swapCount = UInt(2 bits)
    val newFrame = Bool()
@@ -3324,7 +3408,16 @@ index de14d02..3b650aa 100644
    val clock = Bool()
    val reset = Bool()
    val video = ParallelRgbVideo()
-@@ -304,6 +307,7 @@ case class HdmiFramebufferScanout(c: Config, timing: VideoTiming = VideoTiming.c
+@@ -291,7 +316,7 @@ case class HdmiFramebufferScanout(c: Config, timing: VideoTiming = VideoTiming.c
+     selectedRgb := pattern.io.rgb
+   }
+ 
+-  io.video.rgb := Rgb888.applyGamma(selectedRgb, io.regs.gammaLut)
++  io.video.rgb := Rgb888.applyGamma(selectedRgb, GammaTable.regs(io.regs.gammaWrite))
+   when(!contentActive) {
+     io.video.rgb := Rgb888.black()
+   }
+@@ -304,6 +329,7 @@ case class HdmiFramebufferScanout(c: Config, timing: VideoTiming = VideoTiming.c
    io.status.swapPending := swapPending
    io.status.swapCount := swapCount
    io.status.newFrame := scan.io.newFrame
@@ -3332,7 +3425,7 @@ index de14d02..3b650aa 100644
    io.status.active := contentActive
    io.status.x := scan.io.x.resize(10 bits)
    io.status.y := scan.io.y.resize(10 bits)
-@@ -315,9 +319,15 @@ case class HdmiCdcFramebufferScanout(
+@@ -315,9 +341,15 @@ case class HdmiCdcFramebufferScanout(
      fifoDepth: Int = 4096,
      prefillLevel: Int = 2048,
      refillLowLevel: Int = 1024,
@@ -3349,7 +3442,7 @@ index de14d02..3b650aa 100644
    require(prefillLevel > 0 && prefillLevel < fifoDepth)
    require(refillLowLevel > 0 && refillLowLevel < refillHighLevel)
    require(refillHighLevel < fifoDepth)
-@@ -346,7 +356,10 @@ case class HdmiCdcFramebufferScanout(
+@@ -346,7 +378,10 @@ case class HdmiCdcFramebufferScanout(
      config = ClockDomain.current.config
    )
  
@@ -3361,7 +3454,7 @@ index de14d02..3b650aa 100644
  
    val prefetchX = Reg(UInt(hWidth bits)) init (0)
    val prefetchY = Reg(UInt(vWidth bits)) init (0)
-@@ -354,7 +367,22 @@ case class HdmiCdcFramebufferScanout(
+@@ -354,7 +389,22 @@ case class HdmiCdcFramebufferScanout(
    val outstanding = Reg(UInt(log2Up(fifoDepth + 1) bits)) init (0)
    val scanoutRun = RegInit(False)
    val refillActive = RegInit(True)
@@ -3385,7 +3478,7 @@ index de14d02..3b650aa 100644
  
    val projected = UInt((log2Up(fifoDepth + 1) + 1) bits)
    projected := (pixelFifo.io.pushOccupancy.resize(projected.getWidth) + outstanding.resize(
-@@ -370,15 +398,15 @@ case class HdmiCdcFramebufferScanout(
+@@ -370,15 +420,15 @@ case class HdmiCdcFramebufferScanout(
    val atEndOfDisplayLine = prefetchX === (displayWidth - 1).resized
    val atEndOfDisplayFrame = atEndOfDisplayLine && prefetchY === (displayHeight - 1).resized
    val lineStartAddress = FramebufferAddressMath.planeAddress(
@@ -3405,7 +3498,7 @@ index de14d02..3b650aa 100644
      io.regs.pixelStride
    )
  
-@@ -386,12 +414,16 @@ case class HdmiCdcFramebufferScanout(
+@@ -386,12 +436,16 @@ case class HdmiCdcFramebufferScanout(
      prefetchX := 0
      prefetchY := 0
      prefetchBase := io.regs.frontBase
@@ -3423,7 +3516,7 @@ index de14d02..3b650aa 100644
        refillActive := True
        when(pixelFifo.io.pushOccupancy >= prefillLevel) {
          scanoutRun := True
-@@ -409,7 +441,8 @@ case class HdmiCdcFramebufferScanout(
+@@ -409,7 +463,8 @@ case class HdmiCdcFramebufferScanout(
      }
    }
  
@@ -3433,7 +3526,7 @@ index de14d02..3b650aa 100644
    io.prefetchReq.startAddress := lineStartAddress
    io.prefetchReq.endAddress := lineEndAddress
  
-@@ -422,7 +455,33 @@ case class HdmiCdcFramebufferScanout(
+@@ -422,7 +477,33 @@ case class HdmiCdcFramebufferScanout(
    )
  
    when(io.prefetchReq.fire) {
@@ -3468,7 +3561,7 @@ index de14d02..3b650aa 100644
    }
  
    when(io.readReq.fire) {
-@@ -430,22 +489,44 @@ case class HdmiCdcFramebufferScanout(
+@@ -430,33 +511,74 @@ case class HdmiCdcFramebufferScanout(
        prefetchX := 0
        when(atEndOfDisplayFrame) {
          prefetchY := 0
@@ -3518,23 +3611,41 @@ index de14d02..3b650aa 100644
      is(B"10") { outstanding := outstanding + 1 }
      is(B"01") { outstanding := outstanding - 1 }
      default {}
-@@ -453,10 +534,11 @@ case class HdmiCdcFramebufferScanout(
+   }
  
++  // Gamma table in BSRAM (as registers it was ~800 flip-flops plus six 33:1
++  // read muxes): one memory per channel, word k = entry k + 1 : entry k, so
++  // one read gives both interpolation points. A clutData write of entry k
++  // sets the low byte of word k, then the high byte of word k - 1 the next
++  // cycle; clutData comes from the CPU front door, never two cycles running.
++  // A write lands in the HDMI domain without a handshake: an update during
++  // scanout just tints part of one frame.
++  val gamma = new Area {
++    val mems = Seq.fill(3)(Mem(Bits(16 bits), 32) init Seq.tabulate(32)(k =>
++      B((GammaTable.initEntry(k + 1) << 8) | GammaTable.initEntry(k), 16 bits)))
++    val w = io.regs.gammaWrite
++    val hiPending = RegNext(w.valid && w.index =/= 0 && w.index <= 32) init (False)
++    val hiIndex = RegNext(w.payload.index - 1)
++    val hiRgb = RegNext(w.payload.rgb)
++    val writeLo = w.valid && w.index <= 31
++    val addr = Mux(writeLo, w.payload.index, hiIndex).resize(5)
++    val rgb = Mux(writeLo, w.payload.rgb, hiRgb)
++    for ((m, ch) <- mems.zipWithIndex) {
++      val byte = rgb(23 - 8 * ch downto 16 - 8 * ch)
++      m.write(addr, byte ## byte, enable = writeLo || hiPending, mask = Mux(writeLo, B"01", B"10"))
++    }
++  }
++
    val hdmi = new ClockingArea(hdmiClockDomain) {
      val testPatternEnable = BufferCC(io.regs.testPatternEnable, False)
 -    val gammaLut = Vec(Bits(24 bits), 33)
 -    for (i <- 0 until 33) {
 -      gammaLut(i) := BufferCC(io.regs.gammaLut(i), B(0, 24 bits))
 -    }
-+    // The gamma table only changes when software writes clutData, so read the
-+    // register bank's copy directly: a two-flop synchronizer per bit was ~1.6k
-+    // flip-flops, and a torn update just tints part of one frame.
-+    io.regs.gammaLut.foreach(_.addTag(crossClockDomain))
-+    val gammaLut = io.regs.gammaLut
      val contentWidth = BufferCC(io.regs.displayWidth, U(0, 10 bits)).resize(hWidth)
      val contentHeight = BufferCC(io.regs.displayHeight, U(0, 10 bits)).resize(vWidth)
      val scan = VideoScanout(timing)
-@@ -470,23 +552,35 @@ case class HdmiCdcFramebufferScanout(
+@@ -470,37 +592,61 @@ case class HdmiCdcFramebufferScanout(
  
      val useFramebuffer = !testPatternEnable
      val startArmed = BufferCC(scanoutRun, False)
@@ -3566,19 +3677,37 @@ index de14d02..3b650aa 100644
      }
  
 -    val rgb = Rgb888.applyGamma(Rgb888.fromRgb565(pixelFifo.io.pop.payload), gammaLut)
+-    io.video.rgb := rgb
+-    when(testPatternEnable) {
+-      io.video.rgb := pattern.io.rgb
+-    } elsewhen (!frameAligned || !contentActive || !pixelFifo.io.pop.valid) {
 +    pixelFifo.io.pop.ready := useFramebuffer && startArmed &&
 +      Mux(alignedNow, contentActive, headValid && !headSof)
 +
-+    val rgb = Rgb888.applyGamma(Rgb888.fromRgb565(pixelFifo.io.pop.payload(15 downto 0)), gammaLut)
-     io.video.rgb := rgb
-     when(testPatternEnable) {
-       io.video.rgb := pattern.io.rgb
--    } elsewhen (!frameAligned || !contentActive || !pixelFifo.io.pop.valid) {
-+    } elsewhen (!alignedNow || !contentActive || !headValid) {
++    // The gamma read takes a cycle, so the video outputs come a cycle later.
++    val px = Rgb888.fromRgb565(pixelFifo.io.pop.payload(15 downto 0))
++    val channels = Seq(px.r, px.g, px.b)
++    val words = gamma.mems.zip(channels).map { case (m, ch) => m.readSync(ch(7 downto 3), clockCrossing = true) }
++    val gammaRgb = Rgb888()
++    for (((dst, ch), word) <- Seq(gammaRgb.r, gammaRgb.g, gammaRgb.b).zip(channels).zip(words))
++      dst := Rgb888.gammaLerp(word(7 downto 0).asUInt, word(15 downto 8).asUInt,
++        RegNext(ch(2 downto 0)), RegNext(ch === 255))
++    val showPattern = RegNext(testPatternEnable)
++    val showBlack = RegNext(!alignedNow || !contentActive || !headValid)
++    val patternRgb = RegNext(pattern.io.rgb)
++    io.video.rgb := gammaRgb
++    when(showPattern) {
++      io.video.rgb := patternRgb
++    } elsewhen (showBlack) {
        io.video.rgb := Rgb888.black()
      }
-     io.video.de := scan.io.active
-@@ -496,11 +590,13 @@ case class HdmiCdcFramebufferScanout(
+-    io.video.de := scan.io.active
+-    io.video.hSync := scan.io.hSync
+-    io.video.vSync := scan.io.vSync
++    io.video.de := RegNext(scan.io.active) init (False)
++    io.video.hSync := RegNext(scan.io.hSync) init (False)
++    io.video.vSync := RegNext(scan.io.vSync) init (False)
+   }
  
    val newFrameCore = PulseCCByToggle(hdmi.scan.io.newFrame, hdmiClockDomain, coreClockDomain)
  
@@ -4549,7 +4678,7 @@ index cee86c0..0cd009e 100644
          val isLast = toPixelCoord(state.x) >= toPixelCoord(state.xEnd)
          (next, isLast)
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..23a0285 100644
+index 59df4ba..4cc017c 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -5,6 +5,20 @@ import spinal.core.formal._
@@ -4607,7 +4736,7 @@ index 59df4ba..23a0285 100644
  
    private val lowGradFormats = Seq(
      c.vColorFormat,
-@@ -67,318 +57,270 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -67,318 +57,267 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
      dst.texDy(0) := input.texHi.dSdY
      dst.texDy(1) := input.texHi.dTdY
      dst.alphaDx := input.hiAlpha.dAdX
@@ -4780,12 +4909,6 @@ index 59df4ba..23a0285 100644
 -    dst.hiAlpha := (src.hiAlpha + triangleConst.alphaDy - triangleConst.alphaDx).fixTo(
 -      c.texCoordsHiFormat
 -    )
--  }
--
--  def prepareNextRow(base: SpanWalker.Cursor, leftBiasedGuess: Boolean): Unit = {
--    nextRowBase := base
--    nextRowLeftBiased := (if (leftBiasedGuess) True else False)
--    state := WalkerState.AdvanceRow
 +  // Visible x / y range; depends only on triangleConst, registered in the
 +  // cycle after a triangle is taken (before its first row).
 +  val pixW = 18
@@ -4817,13 +4940,25 @@ index 59df4ba..23a0285 100644
 +  val setupCycle = RegInit(False)
 +  val rowY = Reg(AFix(c.vertexFormat))
 +  val rowScanX = Reg(Vec(SInt(32 bits), 3))
++  // Row values of the token at the end of the pipeline: tokens leave in
++  // order, one per row, so this steps by dy as each one leaves instead of
++  // every stage carrying its row's values (three ~0.5k-bit copies).
 +  val rowVals = Reg(RowValues())
 +  val firstPending = RegInit(False)
 +
 +  case class RowTok() extends Bundle {
 +    val y = AFix(c.vertexFormat)
 +    val scanX = Vec(SInt(32 bits), 3)
-+    val vals = RowValues()
+   }
+-
+-  def prepareNextRow(base: SpanWalker.Cursor, leftBiasedGuess: Boolean): Unit = {
+-    nextRowBase := base
+-    nextRowLeftBiased := (if (leftBiasedGuess) True else False)
+-    state := WalkerState.AdvanceRow
++  case class BoundsTok() extends Bundle {
++    val y = AFix(c.vertexFormat)
++    val xi = SInt(16 bits)
++    val x2i = SInt(16 bits)
    }
 -
 -  def captureVisibleLeftEdgeFromProbe(): Unit = {
@@ -4834,11 +4969,13 @@ index 59df4ba..23a0285 100644
 -    }.otherwise {
 -      leftEdge := probe
 -    }
-+  case class BoundsTok() extends Bundle {
++  case class ClipTok() extends Bundle {
 +    val y = AFix(c.vertexFormat)
-+    val vals = RowValues()
-+    val xi = SInt(16 bits)
-+    val x2i = SInt(16 bits)
++    val start = SInt(pixW bits)
++    val end = SInt(pixW bits)
++    val k = SInt(14 bits)
++    val nonEmpty = Bool()
++    val firstSpan = Bool()
    }
 -
 -  o.payload.xStart := leftEdge.coords(0)
@@ -4856,26 +4993,8 @@ index 59df4ba..23a0285 100644
 -  o.payload.firstSpan := emitFirstSpan
 -  if (c.trace.enabled) {
 -    o.payload.trace := triangleConst.trace
-+  case class ClipTok() extends Bundle {
-+    val y = AFix(c.vertexFormat)
-+    val vals = RowValues()
-+    val start = SInt(pixW bits)
-+    val end = SInt(pixW bits)
-+    val k = SInt(14 bits)
-+    val nonEmpty = Bool()
-+    val firstSpan = Bool()
-   }
--
--  when(state === WalkerState.Idle && i.fire) {
--    initTriangleConst(triangleConst, i.payload)
--    initCursor(rowGuess, i.payload)
--    initCursor(probe, i.payload)
--    initCursor(bookmark, i.payload)
--    firstSpanPending := True
--    state := WalkerState.Decide
 +  case class MulTok() extends Bundle {
 +    val y = AFix(c.vertexFormat)
-+    val vals = RowValues()
 +    val start = SInt(pixW bits)
 +    val end = SInt(pixW bits)
 +    val k = SInt(14 bits)
@@ -4884,18 +5003,17 @@ index 59df4ba..23a0285 100644
 +    val prod = Vec(formats.map(f => Bits(f.width bits)))
    }
  
--  when(state === WalkerState.Decide) {
--    when(insideTriangle(probe)) {
--      bookmark := probe
--      state := WalkerState.SearchLeftToExit
--    }.otherwise {
--      state := WalkerState.SearchRightToEnter
--    }
+-  when(state === WalkerState.Idle && i.fire) {
+-    initTriangleConst(triangleConst, i.payload)
+-    initCursor(rowGuess, i.payload)
+-    initCursor(probe, i.payload)
+-    initCursor(bookmark, i.payload)
+-    firstSpanPending := True
+-    state := WalkerState.Decide
 +  val rows = Stream(RowTok())
 +  rows.valid := genActive && !setupCycle
 +  rows.payload.y := rowY
 +  rows.payload.scanX := rowScanX
-+  rows.payload.vals := rowVals
 +
 +  when(setupCycle) {
 +    triangleXStartPix := triangleXStartPixComb
@@ -4906,6 +5024,21 @@ index 59df4ba..23a0285 100644
 +    effClipLowY := effClipLowYComb
 +    effClipHighY := effClipHighYComb
 +    setupCycle := False
+   }
+ 
+-  when(state === WalkerState.Decide) {
+-    when(insideTriangle(probe)) {
+-      bookmark := probe
+-      state := WalkerState.SearchLeftToExit
+-    }.otherwise {
+-      state := WalkerState.SearchRightToEnter
++  when(rows.fire) {
++    val nextY = (rowY + one).fixTo(c.vertexFormat)
++    when(nextY >= triangleConst.yrange(1)) {
++      genActive := False
+     }
++    rowY := nextY
++    rowScanX := Vec(rowScanX.zip(triangleConst.scanDx).map { case (x, dx) => (x + dx).resize(32 bits) })
    }
  
 -  when(state === WalkerState.RecoverLeft) {
@@ -4934,35 +5067,11 @@ index 59df4ba..23a0285 100644
 -      }.otherwise {
 -        stepHorizontal(probe, probe, moveRight = false)
 -      }
-+  when(rows.fire) {
-+    val nextY = (rowY + one).fixTo(c.vertexFormat)
-+    when(nextY >= triangleConst.yrange(1)) {
-+      genActive := False
-     }
-+    rowY := nextY
-+    rowScanX := Vec(rowScanX.zip(triangleConst.scanDx).map { case (x, dx) => (x + dx).resize(32 bits) })
-+    rowVals.all.zip(dyAll).zip(formats).foreach { case ((v, dy), f) => v := (v + dy).fixTo(f) }
-   }
- 
--  when(state === WalkerState.SearchRightToEnter) {
--    when(insideTriangle(probe) && xPix(probe) >= visibleStartPix) {
--      leftEdge := probe
--      bookmark := probe
--      state := WalkerState.SearchRightToExit
--    }.elsewhen(xPix(probe) >= visibleEndPix) {
--      when(firstSpanPending) {
--        prepareNextRow(rowGuess, leftBiasedGuess = false)
--      }.otherwise {
--        prepareNextRow(bookmark, leftBiasedGuess = true)
--      }
--    }.otherwise {
--      stepHorizontal(probe, probe, moveRight = true)
 +  val bounds = rows
 +    .translateWith {
 +      val t = BoundsTok()
 +      val (xi, x2i) = rowEdgeBounds(rows.payload.y, rows.payload.scanX)
 +      t.y := rows.payload.y
-+      t.vals := rows.payload.vals
 +      t.xi := xi
 +      t.x2i := x2i
 +      t
@@ -4978,7 +5087,6 @@ index 59df4ba..23a0285 100644
 +    val start = Mux(lo > visibleStartPix, lo, visibleStartPix)
 +    val end = Mux(hi < visibleLast, hi, visibleLast)
 +    t.y := b.y
-+    t.vals := b.vals
 +    t.start := start
 +    t.end := end
 +    t.k := (start - triangleXStartPix).resize(14 bits)
@@ -4987,6 +5095,39 @@ index 59df4ba..23a0285 100644
 +    t
    }
 -
+-  when(state === WalkerState.SearchRightToEnter) {
+-    when(insideTriangle(probe) && xPix(probe) >= visibleStartPix) {
+-      leftEdge := probe
+-      bookmark := probe
+-      state := WalkerState.SearchRightToExit
+-    }.elsewhen(xPix(probe) >= visibleEndPix) {
+-      when(firstSpanPending) {
+-        prepareNextRow(rowGuess, leftBiasedGuess = false)
+-      }.otherwise {
+-        prepareNextRow(bookmark, leftBiasedGuess = true)
+-      }
+-    }.otherwise {
+-      stepHorizontal(probe, probe, moveRight = true)
++  when(clipped.fire && clipped.payload.nonEmpty) { firstPending := False }
++  val clippedReg = clipped.m2sPipe()
++
++  val multiplied = clippedReg
++    .translateWith {
++      val t = MulTok()
++      val p = clippedReg.payload
++      t.y := p.y
++      t.start := p.start
++      t.end := p.end
++      t.k := p.k
++      t.nonEmpty := p.nonEmpty
++      t.firstSpan := p.firstSpan
++      for ((dx, idx) <- dxAll.zipWithIndex)
++        t.prod(idx) := (dx.raw.asSInt * p.k).resize(formats(idx).width bits).asBits
++      t
+     }
+-  }
++    .m2sPipe()
+ 
 -  when(state === WalkerState.SearchLeftToExit) {
 -    when(insideTriangle(probe)) {
 -      when(xPix(probe) <= visibleStartPix) {
@@ -5000,25 +5141,11 @@ index 59df4ba..23a0285 100644
 -      stepHorizontal(leftEdge, probe, moveRight = true)
 -      probe := bookmark
 -      state := WalkerState.SearchRightToExit
-+  when(clipped.fire && clipped.payload.nonEmpty) { firstPending := False }
-+  val clippedReg = clipped.m2sPipe()
-+
-+  val multiplied = clippedReg
-+    .translateWith {
-+      val t = MulTok()
-+      val p = clippedReg.payload
-+      t.y := p.y
-+      t.vals := p.vals
-+      t.start := p.start
-+      t.end := p.end
-+      t.k := p.k
-+      t.nonEmpty := p.nonEmpty
-+      t.firstSpan := p.firstSpan
-+      for ((dx, idx) <- dxAll.zipWithIndex)
-+        t.prod(idx) := (dx.raw.asSInt * p.k).resize(formats(idx).width bits).asBits
-+      t
-     }
--  }
+-    }
++  val m = multiplied.payload
++  when(multiplied.fire) {
++    rowVals.all.zip(dyAll).zip(formats).foreach { case ((v, dy), f) => v := (v + dy).fixTo(f) }
+   }
 -
 -  when(state === WalkerState.SearchRightToExit) {
 -    when(insideTriangle(probe)) {
@@ -5028,9 +5155,6 @@ index 59df4ba..23a0285 100644
 -        state := WalkerState.EmitSpan
 -      }.otherwise {
 -        stepHorizontal(probe, probe, moveRight = true)
-+    .m2sPipe()
-+
-+  val m = multiplied.payload
 +  val emitYPix = wide(m.y.floor(0).asSInt)
 +  val emit = m.nonEmpty && m.end >= effClipLeft && m.start < effClipRight &&
 +    emitYPix >= effClipLowY && emitYPix < effClipHighY
@@ -5043,7 +5167,7 @@ index 59df4ba..23a0285 100644
 +      out.xEnd := pixelToVertex(m.end)
 +      out.y := m.y
 +      val starts = out.linear.all ++ Seq(out.hiS, out.hiT, out.hiAlpha) ++ tex1(out.hiTex1)
-+      for (((dst, v), idx) <- starts.zip(m.vals.all).zipWithIndex)
++      for (((dst, v), idx) <- starts.zip(rowVals.all).zipWithIndex)
 +        dst.raw := (v.raw.asSInt + m.prod(idx).asSInt).resize(formats(idx).width bits).asBits
 +      out.stepX.linear := triangleConst.linearDx
 +      out.stepX.tex := triangleConst.texDx
@@ -5145,7 +5269,7 @@ index 59df4ba..23a0285 100644
  }
  
  object SpanWalker {
-@@ -397,6 +339,7 @@ object SpanWalker {
+@@ -397,6 +336,7 @@ object SpanWalker {
      val linear = LinearState(c)
      val tex = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alpha = AFix(c.texCoordsHiFormat)
@@ -5153,7 +5277,7 @@ index 59df4ba..23a0285 100644
    }
  
    case class TriangleConst(c: Config) extends Bundle {
-@@ -409,6 +352,8 @@ object SpanWalker {
+@@ -409,6 +349,8 @@ object SpanWalker {
      val texDy = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alphaDx = AFix(c.texCoordsHiFormat)
      val alphaDy = AFix(c.texCoordsHiFormat)
@@ -5162,7 +5286,7 @@ index 59df4ba..23a0285 100644
      val tmuConfig = TriangleSetup.TmuConfig(c)
      val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
      val enableClipping = Bool()
-@@ -416,6 +361,9 @@ object SpanWalker {
+@@ -416,6 +358,9 @@ object SpanWalker {
      val clipRight = UInt(10 bits)
      val clipLowY = UInt(10 bits)
      val clipHighY = UInt(10 bits)
@@ -5172,7 +5296,7 @@ index 59df4ba..23a0285 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,6 +374,7 @@ object SpanWalker {
+@@ -426,6 +371,7 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -5180,7 +5304,7 @@ index 59df4ba..23a0285 100644
    }
  
    case class Output(c: Config) extends Bundle {
-@@ -436,6 +385,7 @@ object SpanWalker {
+@@ -436,6 +382,7 @@ object SpanWalker {
      val hiS = AFix(c.texCoordsHiFormat)
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
@@ -8075,10 +8199,223 @@ index 0295f4c..f468360 100644
 +  }
  }
 diff --git a/test/HdmiScanoutTest.scala b/test/HdmiScanoutTest.scala
-index 10a5655..58d59ee 100644
+index 10a5655..87d4b6f 100644
 --- a/test/HdmiScanoutTest.scala
 +++ b/test/HdmiScanoutTest.scala
-@@ -617,6 +617,259 @@ class HdmiScanoutTest extends AnyFunSuite {
+@@ -10,11 +10,6 @@ import scala.collection.mutable
+ import scala.language.reflectiveCalls
+ 
+ class HdmiScanoutTest extends AnyFunSuite {
+-  private def identityGammaEntry(index: Int): Int = {
+-    val value = if (index == 32) 255 else index * 8
+-    (value << 16) | (value << 8) | value
+-  }
+-
+   test("scanout produces expected active-area count and line/frame cadence") {
+     val timing = VideoTiming(
+       activeWidth = 8,
+@@ -180,7 +175,7 @@ class HdmiScanoutTest extends AnyFunSuite {
+       dut.io.regs.displayHeight #= timing.activeHeight
+       dut.io.regs.framebufferEnable #= true
+       dut.io.regs.testPatternEnable #= false
+-      for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++      dut.io.regs.gammaWrite.valid #= false // reset table = identity
+       dut.io.swap.valid #= false
+       dut.io.readReq.ready #= true
+       dut.io.readRsp.valid #= false
+@@ -250,7 +245,7 @@ class HdmiScanoutTest extends AnyFunSuite {
+       dut.io.regs.displayHeight #= timing.activeHeight
+       dut.io.regs.framebufferEnable #= true
+       dut.io.regs.testPatternEnable #= false
+-      for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++      dut.io.regs.gammaWrite.valid #= false // reset table = identity
+       dut.io.swap.valid #= false
+       dut.io.readReq.ready #= true
+       dut.io.readRsp.valid #= true
+@@ -277,15 +272,21 @@ class HdmiScanoutTest extends AnyFunSuite {
+       dut.io.regs.displayHeight #= timing.activeHeight
+       dut.io.regs.framebufferEnable #= true
+       dut.io.regs.testPatternEnable #= false
+-      for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= 0
+-      dut.io.regs.gammaLut(31) #= 0x100000
+-      dut.io.regs.gammaLut(32) #= 0x180000
++      dut.io.regs.gammaWrite.valid #= false
+       dut.io.swap.valid #= false
+       dut.io.readReq.ready #= true
+       dut.io.readRsp.valid #= true
+       dut.io.readRsp.payload.data #= 0xf800
+ 
+-      dut.clockDomain.waitSampling(2)
++      dut.clockDomain.waitSampling()
++      for ((i, v) <- Seq(31 -> 0x100000, 32 -> 0x180000)) {
++        dut.io.regs.gammaWrite.valid #= true
++        dut.io.regs.gammaWrite.payload.index #= i
++        dut.io.regs.gammaWrite.payload.rgb #= v
++        dut.clockDomain.waitSampling()
++      }
++      dut.io.regs.gammaWrite.valid #= false
++      dut.clockDomain.waitSamplingWhere(dut.io.video.de.toBoolean)
+       assert(dut.io.video.rgb.r.toInt == 24)
+       assert(dut.io.video.rgb.g.toInt == 0)
+       assert(dut.io.video.rgb.b.toInt == 0)
+@@ -337,7 +338,7 @@ class HdmiScanoutTest extends AnyFunSuite {
+         dut.io.regs.displayHeight #= timing.activeHeight
+         dut.io.regs.framebufferEnable #= true
+         dut.io.regs.testPatternEnable #= false
+-        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
+         dut.io.prefetchReq.ready #= true
+         dut.io.readReq.ready #= true
+         dut.io.readRsp.valid #= false
+@@ -414,6 +415,129 @@ class HdmiScanoutTest extends AnyFunSuite {
+       }
+   }
+ 
++  test("CDC scanout applies gamma entries written through clutData") {
++    val c = Config.voodoo1()
++    val timing = VideoTiming(
++      activeWidth = 4,
++      activeHeight = 2,
++      hFrontPorch = 1,
++      hSync = 1,
++      hBackPorch = 1,
++      vFrontPorch = 1,
++      vSync = 1,
++      vBackPorch = 1
++    )
++
++    SimConfig.withIVerilog
++      .compile(
++        HdmiCdcFramebufferScanout(
++          c,
++          timing,
++          fifoDepth = 16,
++          prefillLevel = 4,
++          refillLowLevel = 4,
++          refillHighLevel = 12
++        )
++      )
++      .doSim { dut =>
++        dut.io.hdmiClock #= false
++        dut.io.hdmiReset #= true
++        dut.clockDomain.forkStimulus(10)
++
++        fork {
++          while (true) {
++            dut.io.hdmiClock #= false
++            sleep(5)
++            dut.io.hdmiClock #= true
++            sleep(5)
++          }
++        }
++
++        dut.io.regs.frontBase #= 0x1000
++        dut.io.regs.backBase #= 0x2000
++        dut.io.regs.pixelStride #= 64
++        dut.io.regs.displayWidth #= timing.activeWidth
++        dut.io.regs.displayHeight #= timing.activeHeight
++        dut.io.regs.framebufferEnable #= true
++        dut.io.regs.testPatternEnable #= false
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
++        dut.io.prefetchReq.ready #= true
++        dut.io.readReq.ready #= true
++        dut.io.readRsp.valid #= false
++        dut.io.readRsp.payload.data #= 0
++
++        val pending = mutable.Queue[Int]()
++        val seenAddresses = mutable.ArrayBuffer[Long]()
++        def pixelFor(address: Long): Int = ((address - 0x1000L) / 2).toInt & 3 match {
++          case 0 => 0xf800 // red
++          case 1 => 0x07e0 // green
++          case 2 => 0x001f // blue
++          case _ => 0x8410 // mid grey: interpolates entries 16 and 17
++        }
++
++        fork {
++          while (true) {
++            dut.clockDomain.waitSampling()
++            if (dut.io.readRsp.valid.toBoolean && dut.io.readRsp.ready.toBoolean) {
++              dut.io.readRsp.valid #= false
++            }
++            if (!dut.io.readRsp.valid.toBoolean && pending.nonEmpty) {
++              dut.io.readRsp.payload.data #= pending.dequeue()
++              dut.io.readRsp.valid #= true
++            }
++            if (dut.io.readReq.valid.toBoolean && dut.io.readReq.ready.toBoolean) {
++              val address = dut.io.readReq.payload.address.toLong
++              if (address >= 0x1000L) seenAddresses += address
++              pending.enqueue(pixelFor(address))
++            }
++          }
++        }
++
++        // Each write fills two table words over two cycles; leave a gap.
++        for ((i, v) <- Seq(0 -> 0x050607, 16 -> 0x100000, 17 -> 0x300000, 31 -> 0x102030, 32 -> 0x405060)) {
++          dut.io.regs.gammaWrite.valid #= true
++          dut.io.regs.gammaWrite.payload.index #= i
++          dut.io.regs.gammaWrite.payload.rgb #= v
++          dut.clockDomain.waitSampling()
++          dut.io.regs.gammaWrite.valid #= false
++          dut.clockDomain.waitSampling()
++        }
++        dut.clockDomain.waitSampling(4)
++        dut.io.hdmiReset #= false
++        dut.clockDomain.waitSampling(2)
++        dut.io.regs.framebufferEnable #= true
++
++        var addressWait = 0
++        while (seenAddresses.size < 4 && addressWait < 200) {
++          dut.clockDomain.waitSampling()
++          addressWait += 1
++        }
++        assert(seenAddresses.size >= 4)
++
++        var cycles = 0
++        while (dut.io.status.active.toBoolean == false && cycles < 400) {
++          dut.clockDomain.waitSampling()
++          cycles += 1
++        }
++
++        assert(cycles < 400)
++        assert(seenAddresses.take(4) == Seq(0x1000L, 0x1002L, 0x1004L, 0x1006L))
++        assert(dut.io.fifoPushOccupancy.toInt > 0)
++        assert(!dut.io.underflow.toBoolean)
++
++        val want = Set((0x40, 6, 7), (5, 0x50, 7), (5, 6, 0x60), (32, 0, 0))
++        val seen = mutable.Set[(Int, Int, Int)]()
++        var sampleCycles = 0
++        while (!want.subsetOf(seen) && sampleCycles < 200) {
++          if (dut.io.video.de.toBoolean)
++            seen += ((dut.io.video.rgb.r.toInt, dut.io.video.rgb.g.toInt, dut.io.video.rgb.b.toInt))
++          dut.clockDomain.waitSampling()
++          sampleCycles += 1
++        }
++        assert(want.subsetOf(seen), s"saw $seen")
++      }
++  }
++
+   test("CDC scanout test-pattern mode drives pattern pixels without FIFO data") {
+     val c = Config.voodoo1()
+     val timing = VideoTiming(
+@@ -459,7 +583,7 @@ class HdmiScanoutTest extends AnyFunSuite {
+         dut.io.regs.displayHeight #= timing.activeHeight
+         dut.io.regs.framebufferEnable #= true
+         dut.io.regs.testPatternEnable #= true
+-        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
+         dut.io.prefetchReq.ready #= false
+         dut.io.readReq.ready #= false
+         dut.io.readRsp.valid #= false
+@@ -541,7 +665,7 @@ class HdmiScanoutTest extends AnyFunSuite {
+         dut.io.regs.displayHeight #= timing.activeHeight
+         dut.io.regs.framebufferEnable #= true
+         dut.io.regs.testPatternEnable #= false
+-        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
+         dut.io.prefetchReq.ready #= true
+         dut.io.readReq.ready #= true
+         dut.io.readRsp.valid #= false
+@@ -617,6 +741,259 @@ class HdmiScanoutTest extends AnyFunSuite {
        }
    }
  
@@ -8127,7 +8464,7 @@ index 10a5655..58d59ee 100644
 +        dut.io.regs.displayHeight #= timing.activeHeight
 +        dut.io.regs.framebufferEnable #= true
 +        dut.io.regs.testPatternEnable #= false
-+        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
 +        dut.io.prefetchReq.ready #= true
 +        dut.io.readReq.ready #= true
 +        dut.io.readRsp.valid #= false
@@ -8252,7 +8589,7 @@ index 10a5655..58d59ee 100644
 +        dut.io.regs.displayHeight #= timing.activeHeight
 +        dut.io.regs.framebufferEnable #= true
 +        dut.io.regs.testPatternEnable #= false
-+        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
 +        dut.io.prefetchReq.ready #= true
 +        dut.io.readReq.ready #= true
 +        dut.io.readRsp.valid #= false
@@ -8338,7 +8675,16 @@ index 10a5655..58d59ee 100644
    test("CDC scanout pads HDMI pixels outside logical framebuffer width") {
      val c = Config.voodoo1()
      val timing = VideoTiming(
-@@ -702,4 +955,119 @@ class HdmiScanoutTest extends AnyFunSuite {
+@@ -662,7 +1039,7 @@ class HdmiScanoutTest extends AnyFunSuite {
+         dut.io.regs.displayHeight #= 2
+         dut.io.regs.framebufferEnable #= true
+         dut.io.regs.testPatternEnable #= false
+-        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
+         dut.io.prefetchReq.ready #= true
+         dut.io.readReq.ready #= true
+         dut.io.readRsp.valid #= false
+@@ -702,4 +1079,119 @@ class HdmiScanoutTest extends AnyFunSuite {
          assert(!seenAddresses.contains(0x1006L))
        }
    }
@@ -8398,7 +8744,7 @@ index 10a5655..58d59ee 100644
 +        dut.io.regs.displayHeight #= timing.activeHeight
 +        dut.io.regs.framebufferEnable #= true
 +        dut.io.regs.testPatternEnable #= false
-+        for (i <- 0 until 33) dut.io.regs.gammaLut(i) #= identityGammaEntry(i)
++        dut.io.regs.gammaWrite.valid #= false // reset table = identity
 +        dut.io.prefetchReq.ready #= true
 +        dut.io.readReq.ready #= true
 +        dut.io.readRsp.valid #= false
@@ -8751,10 +9097,10 @@ index 011d4ff..cd37cc3 100644
      dut.clipRight #= 0
 diff --git a/test/ScanoutLineFetcherTest.scala b/test/ScanoutLineFetcherTest.scala
 new file mode 100644
-index 0000000..01ec722
+index 0000000..79c430a
 --- /dev/null
 +++ b/test/ScanoutLineFetcherTest.scala
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,150 @@
 +//> using target.scope test
 +
 +package voodoo
@@ -8798,10 +9144,7 @@ index 0000000..01ec722
 +    scan.io.regs.displayHeight := timing.activeHeight
 +    scan.io.regs.framebufferEnable := True
 +    scan.io.regs.testPatternEnable := False
-+    for (i <- 0 until 33) {
-+      val v = if (i == 32) 255 else i * 8
-+      scan.io.regs.gammaLut(i) := B((v << 16) | (v << 8) | v, 24 bits)
-+    }
++    scan.io.regs.gammaWrite.setIdle() // reset table = identity
 +    scan.io.prefetchReq >> fetch.io.prefetchReq
 +    scan.io.readReq >> fetch.io.readReq
 +    fetch.io.readRsp >> scan.io.readRsp

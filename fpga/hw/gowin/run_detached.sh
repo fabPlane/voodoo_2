@@ -25,4 +25,8 @@ for i in $(seq 1 200); do
   fi
   echo "license retry $i" >> "$OUT/$2.status"; sleep 30
 done
+# Keep the reports and bitstream: the next build in this dir wipes impl/.
+mkdir -p "$OUT/reports/$2"
+cp impl/pnr/*.tr* impl/pnr/*.rpt* impl/pnr/*.html impl/gwsynthesis/*_syn_rsc.xml "$OUT/reports/$2/" 2>/dev/null
+cp impl/pnr/*.fs "$OUT/reports/$2/" 2>/dev/null
 echo "DONE $(date)" >> "$OUT/$2.status"

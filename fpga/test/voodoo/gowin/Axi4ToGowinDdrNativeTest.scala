@@ -17,7 +17,9 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
     addressWidth = 32, dataWidth = 32, idWidth = 4,
     useRegion = false, useLock = false, useCache = false, useQos = false, useProt = false
   )
-  private lazy val compiled = SimConfig.withVerilator.compile(Axi4ToGowinDdrNative(cfg, cfg))
+  // DDR_READ_STAGERS=0: the shared-unpacker variant (two-TMU builds).
+  private val stagers = !sys.env.get("DDR_READ_STAGERS").contains("0")
+  private lazy val compiled = SimConfig.withVerilator.compile(Axi4ToGowinDdrNative(cfg, cfg, readStagers = stagers))
 
   test("64-beat write bursts then 64-beat read bursts round-trip at many addresses") {
     compiled.doSim("bursts", seed = 1) { dut =>
@@ -341,7 +343,7 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
     }
   }
 
-  private lazy val compiledScan = SimConfig.withVerilator.compile(Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg, auxConfig = cfg, colConfig = cfg))
+  private lazy val compiledScan = SimConfig.withVerilator.compile(Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg, auxConfig = cfg, colConfig = cfg, readStagers = stagers))
 
   test("five read ports (fb, tex, scan, aux, col) in flight together; each gets its own words in order") {
     compiledScan.doSim("scan", seed = 4) { dut =>
@@ -509,7 +511,7 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
   }
 
   private lazy val compiledAuxW = SimConfig.withVerilator.compile(
-    Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg, auxConfig = cfg, colConfig = cfg, auxWConfig = cfg))
+    Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg, auxConfig = cfg, colConfig = cfg, auxWConfig = cfg, readStagers = stagers))
 
   test("fb and auxW write bursts in flight together both land; read back through aux") {
     compiledAuxW.doSim("auxw", seed = 7) { dut =>
