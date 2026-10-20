@@ -1972,7 +1972,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..742fb74 100644
+index 7797711..3c186bf 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -2008,7 +2008,7 @@ index 7797711..742fb74 100644
    rasterizer.enableClipping := io.controls.fastfill.fbzMode.enableClipping
    rasterizer.clipLeft := io.controls.clip.left
    rasterizer.clipRight := io.controls.clip.right
-@@ -280,15 +286,29 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -280,15 +286,27 @@ case class PixelPipeline(c: Config) extends Component {
  
    val rasterYPipe = rasterYTransformed.stage()
    val rasterFork = StreamFork2(rasterYPipe, synchronous = true)
@@ -2016,16 +2016,15 @@ index 7797711..742fb74 100644
 -    .translateWith(Rasterizer.PostTmu.fromOutput(c, rasterFork._2.payload))
 -    .queue(64)
 -    .stage()
+-    .stage()
 +  val slots = rasterizer.slotConfig // pixelConfigSlots, else null
 +  require(!c.pixelConfigSlots || c.enableTmu)
-+  val postTmuFifo = StreamFifo(Rasterizer.PostTmuSlim(c), 64)
++  val postTmuFifo = StreamFifo(Rasterizer.PostTmu(c), 64)
 +  postTmuFifo.io.push << rasterFork._2
-+    .translateWith(Rasterizer.PostTmuSlim.fromOutput(c, rasterFork._2.payload,
++    .translateWith(Rasterizer.PostTmu.fromOutput(c, rasterFork._2.payload,
 +      Rasterizer.configsOf(c, rasterFork._2.payload, slots)))
 +  val postTmuQueued = postTmuFifo.io.pop
-+  val postTmuStage = postTmuQueued
-+    .translateWith(Rasterizer.PostTmuSlim.toPostTmu(c, postTmuQueued.payload))
-     .stage()
++  val postTmuStage = postTmuQueued.stage()
 +  val postTmuQueue = postTmuStage.stage()
 +  // Every pixel in a TMU has its post-TMU entry here (FIFO or the two stages)
 +  // from the fork until it rejoins after the TMU.
@@ -2042,7 +2041,7 @@ index 7797711..742fb74 100644
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -305,15 +325,50 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -305,15 +323,50 @@ case class PixelPipeline(c: Config) extends Component {
      tmu.io.invalidate := io.tmuInvalidate
      io.texRead <> tmu.io.texRead
  
@@ -2099,7 +2098,7 @@ index 7797711..742fb74 100644
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
        out.texture.r := 0
        out.texture.g := 0
-@@ -334,23 +389,105 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,23 +387,105 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -2214,7 +2213,7 @@ index 7797711..742fb74 100644
  
    val spanPrefetchFork = StreamFork2(rasterizer.prefetchSpan, synchronous = true)
    val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
-@@ -367,17 +504,19 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,17 +502,19 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -2238,9 +2237,14 @@ index 7797711..742fb74 100644
        ccColor.g === ckG && ccColor.b === ckB
      else False
  
-@@ -400,11 +539,8 @@ case class PixelPipeline(c: Config) extends Component {
-     dst.depth := src.depth
-     dst.wDepth := 0
+@@ -397,14 +534,11 @@ case class PixelPipeline(c: Config) extends Component {
+     dst.coords := src.coords
+     dst.color := src.color
+     dst.alpha := src.alpha
+-    dst.depth := src.depth
+-    dst.wDepth := 0
++    dst.zDepth := src.zDepth
++    dst.wDepth := src.wDepth
      dst.colorBeforeFog := src.color
 -    dst.chromaKey := src.chromaKey
 -    dst.zaColor := src.zaColor
@@ -2251,7 +2255,7 @@ index 7797711..742fb74 100644
      if (c.trace.enabled) dst.trace := src.trace
    }
  
-@@ -413,6 +549,7 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -413,6 +547,7 @@ case class PixelPipeline(c: Config) extends Component {
      fog.io.input.simPublic()
      fog.io.output.simPublic()
      fog.io.fogTable := io.controls.fogTable
@@ -2259,7 +2263,7 @@ index 7797711..742fb74 100644
      fogArbiterInput >/-> fog.io.input
      fogOutput << fog.io.output
      fogBusy := fog.io.busy
-@@ -439,6 +576,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -439,6 +574,11 @@ case class PixelPipeline(c: Config) extends Component {
    val alphaKill = if (c.enableAlphaTest) alphaTestEnable && !alphaPassed else False
  
    fogOutput >/-> fbAccess.io.input
@@ -2271,7 +2275,7 @@ index 7797711..742fb74 100644
    fbAccess.io.fbReadColorRsp << io.colorReadRsp
    fbAccess.io.fbReadAuxRsp << io.auxReadRsp
    io.colorReadReq << fbAccess.io.fbReadColorReq.s2mPipe()
-@@ -653,10 +795,18 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,10 +793,18 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -2293,7 +2297,7 @@ index 7797711..742fb74 100644
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
        fastfillWriter.io.running || fastfillWriter.io.wordValid ||
-@@ -666,12 +816,81 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +814,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -2376,7 +2380,7 @@ index 7797711..742fb74 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +926,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +924,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -2904,13 +2908,20 @@ index df282f3..50f0c61 100644
  
    // Pass response back unchanged
 diff --git a/src/voodoo/frontend/Lfb.scala b/src/voodoo/frontend/Lfb.scala
-index aeba713..082556f 100644
+index aeba713..eaf55e1 100644
 --- a/src/voodoo/frontend/Lfb.scala
 +++ b/src/voodoo/frontend/Lfb.scala
-@@ -71,13 +71,9 @@ case class Lfb(c: Config) extends Component {
-     out.depth.raw := (decodedDepth.asUInt.resize(32 bits) |<< 12).asBits
+@@ -68,16 +68,14 @@ case class Lfb(c: Config) extends Component {
+     out.color.g := decodedG
+     out.color.b := decodedB
+     out.alpha := decodedAlpha
+-    out.depth.raw := (decodedDepth.asUInt.resize(32 bits) |<< 12).asBits
++    // As a 20.12 Z of decodedDepth << 12 and a W of 0 would reduce.
++    out.zDepth := decodedDepth.asUInt.resize(16 bits)
++    out.zFog := decodedDepth.asUInt.resize(16 bits)(15 downto 8)
++    out.wDepth := U(0xf001, 16 bits)
      out.iteratedAlpha := decodedAlpha
-     out.rawW := S(0, 32 bits)
+-    out.rawW := S(0, 32 bits)
 -    out.fogColor := io.regs.fogColor
 -    out.chromaKey := B(0, 32 bits)
 -    out.zaColor := io.regs.zaColor
@@ -2922,7 +2933,7 @@ index aeba713..082556f 100644
      if (c.trace.enabled) out.trace := Trace.originPixelKey(Trace.Origin.lfb)
      out
    }
-@@ -86,6 +82,11 @@ case class Lfb(c: Config) extends Component {
+@@ -86,6 +84,11 @@ case class Lfb(c: Config) extends Component {
    val capturedAddr = Reg(UInt(22 bits))
    val capturedData = Reg(Bits(32 bits))
    val capturedMask = Reg(Bits(4 bits)) init (0)
@@ -2934,7 +2945,7 @@ index aeba713..082556f 100644
    val capturedIsRead = Reg(Bool()) init (False)
    val rspPending = Reg(Bool()) init (False)
  
-@@ -98,8 +99,8 @@ case class Lfb(c: Config) extends Component {
+@@ -98,8 +101,8 @@ case class Lfb(c: Config) extends Component {
  
    // Is this a dual-pixel format?
    val isDualPixel =
@@ -2945,7 +2956,7 @@ index aeba713..082556f 100644
  
    // State machine: 3 bits to hold 6 states
    val state = RegInit(U(0, 3 bits))
-@@ -111,8 +112,10 @@ case class Lfb(c: Config) extends Component {
+@@ -111,8 +114,10 @@ case class Lfb(c: Config) extends Component {
    val stateRresp = U(5, 3 bits)
    val stateRwait = U(6, 3 bits)
  
@@ -2958,7 +2969,7 @@ index aeba713..082556f 100644
  
    // Apply word swap and byte swizzle to incoming write data
    val afterByteSwizzle =
-@@ -138,7 +141,7 @@ case class Lfb(c: Config) extends Component {
+@@ -138,7 +143,7 @@ case class Lfb(c: Config) extends Component {
    }
  
    // Address decode: depends on format stride (for writes)
@@ -2967,7 +2978,7 @@ index aeba713..082556f 100644
    val pixelX = UInt(10 bits)
    val pixelY = UInt(10 bits)
    when(is32bitStride) {
-@@ -231,7 +234,7 @@ case class Lfb(c: Config) extends Component {
+@@ -231,7 +236,7 @@ case class Lfb(c: Config) extends Component {
    }
  
    // Format decode logic
@@ -2976,7 +2987,7 @@ index aeba713..082556f 100644
      is(0) { // RGB565 - dual pixel
        val rgb = expandRgb565(pixelData16)
        decodedR := rgb.r; decodedG := rgb.g; decodedB := rgb.b
-@@ -248,12 +251,12 @@ case class Lfb(c: Config) extends Component {
+@@ -248,12 +253,12 @@ case class Lfb(c: Config) extends Component {
        decodedRgbWrite := True; decodedAuxWrite := io.regs.fbzMode.enableAlphaPlanes
      }
      is(4) { // XRGB8888 - single pixel
@@ -2991,7 +3002,7 @@ index aeba713..082556f 100644
        decodedR := r; decodedG := g; decodedB := b
        decodedRgbWrite := True; decodedAuxWrite := io.regs.fbzMode.enableAlphaPlanes
      }
-@@ -284,9 +287,9 @@ case class Lfb(c: Config) extends Component {
+@@ -284,9 +289,9 @@ case class Lfb(c: Config) extends Component {
    // Decode alpha for pipeline mode
    val decodedAlpha = UInt(8 bits)
    decodedAlpha := U(0xff, 8 bits) // Default: fully opaque
@@ -3003,7 +3014,7 @@ index aeba713..082556f 100644
      }
      is(2) { // ARGB1555 dual pixel: bit 15
        decodedAlpha := pixelData16(15) ? U(0xff, 8 bits) | U(0, 8 bits)
-@@ -303,19 +306,19 @@ case class Lfb(c: Config) extends Component {
+@@ -303,19 +308,19 @@ case class Lfb(c: Config) extends Component {
    val pixel1X = (isHalfWordWrite && useHiHalfForPixel1) ? pixel2X | pixelX
    val currentX = (state === statePixel2) ? pixel2X | pixel1X
  
@@ -3027,7 +3038,7 @@ index aeba713..082556f 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..966372a 100644
+index c5a4cd8..62894ea 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -65,35 +65,46 @@ case class RegisterBank(config: Config) extends Component {
@@ -3142,7 +3153,7 @@ index c5a4cd8..966372a 100644
 +    switch(regBus.cmd.address) {
        is(U(0x030, 12 bits)) {
 -        floatShadowStartA := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
-+        floatShadowStartA := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
++        floatShadowStartA := (regBus.cmd.data(23 downto 0).asSInt.resize(texCoordsHiWidth bits) |<< 18)
        }
        is(U(0x034, 12 bits)) {
 -        floatShadowStartS := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
@@ -3156,7 +3167,7 @@ index c5a4cd8..966372a 100644
 +      is(U(0x03c, 12 bits)) { floatShadowStartW := regBus.cmd.data.asSInt.resize(60 bits) }
        is(U(0x050, 12 bits)) {
 -        floatShadowDAdX := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
-+        floatShadowDAdX := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
++        floatShadowDAdX := (regBus.cmd.data(23 downto 0).asSInt.resize(texCoordsHiWidth bits) |<< 18)
        }
        is(U(0x054, 12 bits)) {
 -        floatShadowDSdX := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
@@ -3170,7 +3181,7 @@ index c5a4cd8..966372a 100644
 +      is(U(0x05c, 12 bits)) { floatShadowDWdX := regBus.cmd.data.asSInt.resize(60 bits) }
        is(U(0x070, 12 bits)) {
 -        floatShadowDAdY := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
-+        floatShadowDAdY := (regBus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 18)
++        floatShadowDAdY := (regBus.cmd.data(23 downto 0).asSInt.resize(texCoordsHiWidth bits) |<< 18)
        }
        is(U(0x074, 12 bits)) {
 -        floatShadowDSdY := (io.bus.cmd.data.asSInt.resize(texCoordsHiWidth bits) |<< 12)
@@ -3185,7 +3196,98 @@ index c5a4cd8..966372a 100644
      }
    }
  
-@@ -575,9 +583,20 @@ case class RegisterBank(config: Config) extends Component {
+@@ -476,45 +484,26 @@ case class RegisterBank(config: Config) extends Component {
+     grads
+   }
+ 
++  // S / T / alpha / W: the wide shadows hold every write, fixed (shifted in,
++  // as the fixed register field reads it) or float, like the Voodoo's single
++  // internal register per parameter (and 86Box's). The fixed fields are then
++  // unread and drop out in synthesis.
+   private def captureTriangleHiTexCoords(useFloatShadow: Bool): TriangleSetup.HiTexCoords = {
+     val hi = TriangleSetup.HiTexCoords(config)
+-    val startSInt = triangleGeometry.startS.raw.asSInt.resize(texCoordsHiWidth) |<< 12
+-    val startTInt = triangleGeometry.startT.raw.asSInt.resize(texCoordsHiWidth) |<< 12
+-    val dSdXInt = triangleGeometry.dSdX.raw.asSInt.resize(texCoordsHiWidth) |<< 12
+-    val dTdXInt = triangleGeometry.dTdX.raw.asSInt.resize(texCoordsHiWidth) |<< 12
+-    val dSdYInt = triangleGeometry.dSdY.raw.asSInt.resize(texCoordsHiWidth) |<< 12
+-    val dTdYInt = triangleGeometry.dTdY.raw.asSInt.resize(texCoordsHiWidth) |<< 12
+-
+-    hi.sStart.raw := Mux(
+-      useFloatShadow,
+-      floatShadowStartS.asBits,
+-      startSInt.asBits
+-    )
+-    hi.tStart.raw := Mux(
+-      useFloatShadow,
+-      floatShadowStartT.asBits,
+-      startTInt.asBits
+-    )
+-    hi.dSdX.raw := Mux(useFloatShadow, floatShadowDSdX.asBits, dSdXInt.asBits)
+-    hi.dTdX.raw := Mux(useFloatShadow, floatShadowDTdX.asBits, dTdXInt.asBits)
+-    hi.dSdY.raw := Mux(useFloatShadow, floatShadowDSdY.asBits, dSdYInt.asBits)
+-    hi.dTdY.raw := Mux(useFloatShadow, floatShadowDTdY.asBits, dTdYInt.asBits)
++    hi.sStart.raw := floatShadowStartS.asBits
++    hi.tStart.raw := floatShadowStartT.asBits
++    hi.dSdX.raw := floatShadowDSdX.asBits
++    hi.dTdX.raw := floatShadowDTdX.asBits
++    hi.dSdY.raw := floatShadowDSdY.asBits
++    hi.dTdY.raw := floatShadowDTdY.asBits
+     hi
+   }
+ 
+   private def captureTriangleHiAlpha(useFloatShadow: Bool): TriangleSetup.HiAlpha = {
+     val hi = TriangleSetup.HiAlpha(config)
+-    val startAInt = triangleGeometry.startA.raw.asSInt.resize(texCoordsHiWidth) |<< 18
+-    val dAdXInt = triangleGeometry.dAdX.raw.asSInt.resize(texCoordsHiWidth) |<< 18
+-    val dAdYInt = triangleGeometry.dAdY.raw.asSInt.resize(texCoordsHiWidth) |<< 18
+-
+-    hi.start.raw := Mux(
+-      useFloatShadow,
+-      floatShadowStartA.asBits,
+-      startAInt.asBits
+-    )
+-    hi.dAdX.raw := Mux(useFloatShadow, floatShadowDAdX.asBits, dAdXInt.asBits)
+-    hi.dAdY.raw := Mux(useFloatShadow, floatShadowDAdY.asBits, dAdYInt.asBits)
++    hi.start.raw := floatShadowStartA.asBits
++    hi.dAdX.raw := floatShadowDAdX.asBits
++    hi.dAdY.raw := floatShadowDAdY.asBits
+     hi
+   }
+ 
+@@ -528,26 +517,11 @@ case class RegisterBank(config: Config) extends Component {
+         (g.startG.asBits, g.dGdX.asBits, g.dGdY.asBits),
+         (g.startB.asBits, g.dBdX.asBits, g.dBdY.asBits),
+         (g.startZ.asBits, g.dZdX.asBits, g.dZdY.asBits),
+-        (g.startA.asBits, g.dAdX.asBits, g.dAdY.asBits),
+-        (
+-          Mux(
+-            useFloatShadow,
+-            floatShadowStartW.asBits,
+-            g.startW.raw.asSInt.resize(60).asBits
+-          ),
+-          Mux(
+-            useFloatShadow,
+-            floatShadowDWdX.asBits,
+-            g.dWdX.raw.asSInt.resize(60).asBits
+-          ),
+-          Mux(
+-            useFloatShadow,
+-            floatShadowDWdY.asBits,
+-            g.dWdY.raw.asSInt.resize(60).asBits
+-          )
+-        ),
+-        (g.startS.asBits, g.dSdX.asBits, g.dSdY.asBits),
+-        (g.startT.asBits, g.dTdX.asBits, g.dTdY.asBits)
++        // Low-precision alpha / S / T are not iterated (hiAlpha, texHi are).
++        (B(0, 24 bits), B(0, 24 bits), B(0, 24 bits)),
++        (floatShadowStartW.asBits, floatShadowDWdX.asBits, floatShadowDWdY.asBits),
++        (B(0, 32 bits), B(0, 32 bits), B(0, 32 bits)),
++        (B(0, 32 bits), B(0, 32 bits), B(0, 32 bits))
+       )
+     )
+   }
+@@ -575,9 +549,20 @@ case class RegisterBank(config: Config) extends Component {
      cfg.tmudTdX.raw := g.dTdX.asBits
      cfg.tmudSdY.raw := g.dSdY.asBits
      cfg.tmudTdY.raw := g.dTdY.asBits
@@ -3209,7 +3311,7 @@ index c5a4cd8..966372a 100644
      }
  
      cfg
-@@ -601,10 +620,22 @@ case class RegisterBank(config: Config) extends Component {
+@@ -601,10 +586,22 @@ case class RegisterBank(config: Config) extends Component {
        captureTriangleHiTexCoords(useFloatShadow),
        triangleConfigReg,
        triangleDrawTraceId,
@@ -3233,7 +3335,7 @@ index c5a4cd8..966372a 100644
    private def fifoRegBits(addr: Int, name: String, category: RegisterCategory, doc: String): Bits =
      busif
        .newRegAtWithCategory(addr, name, category)
-@@ -649,28 +680,27 @@ case class RegisterBank(config: Config) extends Component {
+@@ -649,28 +646,27 @@ case class RegisterBank(config: Config) extends Component {
    // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
    // ========================================================================
    val commands = new Area {
@@ -3275,7 +3377,7 @@ index c5a4cd8..966372a 100644
      val (nopCmdReg, nopCmdStream) =
        busif.newCommandRegWithPayload(
          0x120,
-@@ -679,7 +709,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -679,7 +675,7 @@ case class RegisterBank(config: Config) extends Component {
          HardType(Bits(32 bits))
        ) { (_, payload) =>
          Component.current.addPrePopTask { () =>
@@ -3284,7 +3386,7 @@ index c5a4cd8..966372a 100644
          }
        }
      val (fastfillCmdReg, fastfillCmdStream) =
-@@ -691,7 +721,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -691,7 +687,7 @@ case class RegisterBank(config: Config) extends Component {
          when(swapbufferCmdStream.fire) {
            triangleDrawTraceId := triangleDrawTraceId + 1
          }
@@ -3293,7 +3395,7 @@ index c5a4cd8..966372a 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1125,33 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1091,33 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -3328,7 +3430,7 @@ index c5a4cd8..966372a 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1170,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1136,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -3337,7 +3439,7 @@ index c5a4cd8..966372a 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1182,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1148,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -3346,7 +3448,7 @@ index c5a4cd8..966372a 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1242,55 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1208,55 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -3417,7 +3519,7 @@ index c5a4cd8..966372a 100644
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
-@@ -1250,6 +1336,25 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1250,6 +1302,25 @@ case class RegisterBank(config: Config) extends Component {
  }
  
  object RegisterBank {
@@ -3836,10 +3938,22 @@ index de14d02..4b945ff 100644
    io.status.x := BufferCC(hdmi.scan.io.x.resize(10 bits), U(0, 10 bits))
    io.status.y := BufferCC(hdmi.scan.io.y.resize(10 bits), U(0, 10 bits))
 diff --git a/src/voodoo/pixel/ColorCombine.scala b/src/voodoo/pixel/ColorCombine.scala
-index 049fbed..0f289c4 100644
+index 049fbed..9d1fe06 100644
 --- a/src/voodoo/pixel/ColorCombine.scala
 +++ b/src/voodoo/pixel/ColorCombine.scala
-@@ -72,24 +72,15 @@ object ColorCombine {
+@@ -59,8 +59,9 @@ object ColorCombine {
+     val iterated = Color.u8() // Iterated (Gouraud) colors, 0-255
+     val iteratedAlpha = UInt(8 bits) // Iterated alpha, 0-255
+     val iteratedZ = UInt(8 bits) // Upper bits of Z for alpha local select
+-    val depth = AFix(c.vDepthFormat)
+-    val rawW = SInt(32 bits) // Raw W value for fog wDepth calculation
++    val zDepth = UInt(16 bits) // pass-through: Z-buffer depth
++    val zFog = UInt(8 bits) // pass-through: Z fog factor
++    val wDepth = UInt(16 bits) // pass-through: W-buffer / W fog depth
+ 
+     // Texture colors from TMU chain
+     val texture = Color.u8()
+@@ -72,28 +73,18 @@ object ColorCombine {
      val color0Alpha = UInt(8 bits) // Alpha byte from color0 register (bits 31:24)
      val color1Alpha = UInt(8 bits) // Alpha byte from color1 register (bits 31:24)
  
@@ -3867,7 +3981,40 @@ index 049fbed..0f289c4 100644
    }
  
    object Input {
-@@ -122,14 +113,9 @@ object ColorCombine {
+-    private def u8FromSat(v: AFix): UInt = (v.asBits >> 12).asUInt.resize(8 bits)
+ 
+     def fromTmuAndRaster(
+         c: voodoo.Config,
+@@ -102,34 +93,25 @@ object ColorCombine {
+         sync: PixelPipeline.SyncRender
+     ): Input = {
+       val out = Input(c)
+-      val redSat = rasterOut.grads.redGrad.sat(satMax = 255, satMin = 0, exp = 0 exp)
+-      val greenSat = rasterOut.grads.greenGrad.sat(satMax = 255, satMin = 0, exp = 0 exp)
+-      val blueSat = rasterOut.grads.blueGrad.sat(satMax = 255, satMin = 0, exp = 0 exp)
+-      val alphaSat = rasterOut.alphaGradHi.sat(satMax = 255, satMin = 0, exp = 0 exp)
+-      val depthSat = rasterOut.grads.depthGrad.sat(satMax = 255, satMin = 0, exp = 12 exp)
+-
++      val v = rasterOut.vals
+       out.coords.assignFromVec(rasterOut.coords)
+-      out.iterated.r := u8FromSat(redSat)
+-      out.iterated.g := u8FromSat(greenSat)
+-      out.iterated.b := u8FromSat(blueSat)
+-      out.iteratedAlpha := (alphaSat.asBits >> 30).asUInt.resize(8 bits)
+-      out.iteratedZ := u8FromSat(depthSat)
+-      out.depth := rasterOut.grads.depthGrad
+-      out.rawW := rasterOut.grads.wGrad.asSInt.resize(32 bits)
++      out.iterated.r := v.r
++      out.iterated.g := v.g
++      out.iterated.b := v.b
++      out.iteratedAlpha := v.a
++      out.iteratedZ := v.z
++      out.zDepth := v.zDepth
++      out.zFog := v.zFog
++      out.wDepth := v.wDepth
+       out.texture := tmuOut.texture
+       out.textureAlpha := tmuOut.textureAlpha
+       assignRgb888(out.color0, sync.color0)
        out.color0Alpha := sync.color0(31 downto 24).asUInt
        assignRgb888(out.color1, sync.color1)
        out.color1Alpha := sync.color1(31 downto 24).asUInt
@@ -3882,15 +4029,22 @@ index 049fbed..0f289c4 100644
        if (c.trace.enabled) out.trace := rasterOut.trace
        out
      }
-@@ -144,21 +130,15 @@ object ColorCombine {
+@@ -140,25 +122,20 @@ object ColorCombine {
+     val coords = PixelCoords(c)
+     val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
+     val alpha = UInt(8 bits)
+-    val depth = AFix(c.vDepthFormat)
++    val zDepth = UInt(16 bits)
++    val zFog = UInt(8 bits) // Pass-through for Z fog
++    val wDepth = UInt(16 bits) // Pass-through for W fog / W buffer
      val iteratedAlpha = UInt(8 bits) // Pass-through for fog alpha mode
-     val rawW = SInt(32 bits) // Pass-through for fog wDepth calculation
- 
+-    val rawW = SInt(32 bits) // Pass-through for fog wDepth calculation
+-
 -    // Fog color (per-triangle, pass-through for Fog stage)
 -    val fogColor = Bits(32 bits)
 -    val chromaKey = Bits(32 bits)
 -    val zaColor = Bits(32 bits)
--
+ 
      // Per-triangle FIFO registers (pass-through for downstream stages)
      val alphaMode = AlphaMode()
      val fogMode = FogMode()
@@ -3909,7 +4063,7 @@ index 049fbed..0f289c4 100644
    }
  }
  
-@@ -167,6 +147,10 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+@@ -167,29 +144,25 @@ case class ColorCombine(c: voodoo.Config) extends Component {
    val io = new Bundle {
      val input = slave Stream (ColorCombine.Input(c))
      val output = master Stream (ColorCombine.Output(c))
@@ -3920,8 +4074,15 @@ index 049fbed..0f289c4 100644
    }
  
    import ColorCombine._
-@@ -178,18 +162,9 @@ case class ColorCombine(c: voodoo.Config) extends Component {
-   val RAW_W = Payload(SInt(32 bits))
+ 
+   // Define pipeline payloads (Stageables)
+   val COORDS = Payload(PixelCoords(c))
+-  val DEPTH = Payload(AFix(c.vDepthFormat))
++  val ZDEPTH = Payload(UInt(16 bits))
++  val ZFOG = Payload(UInt(8 bits))
+   val ITERATED_ALPHA_PT = Payload(UInt(8 bits))
+-  val RAW_W = Payload(SInt(32 bits))
++  val WDEPTH = Payload(UInt(16 bits))
    val CONFIG = Payload(ColorCombine.Config())
  
 -  // Fog color pass-through (per-triangle, must travel with pixels through pipeline)
@@ -3939,9 +4100,16 @@ index 049fbed..0f289c4 100644
    val TRACE = if (c.trace.enabled) Payload(Trace.PixelKey()) else null
  
    // Color payloads at various precisions
-@@ -250,15 +225,8 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+@@ -246,19 +219,13 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+ 
+   def loadPassThrough(self: NodeBaseApi, payload: Input): Unit = {
+     self(COORDS) := payload.coords
+-    self(DEPTH) := payload.depth
++    self(ZDEPTH) := payload.zDepth
++    self(ZFOG) := payload.zFog
      self(ITERATED_ALPHA_PT) := payload.iteratedAlpha
-     self(RAW_W) := payload.rawW
+-    self(RAW_W) := payload.rawW
++    self(WDEPTH) := payload.wDepth
      self(CONFIG) := payload.config
 -    self(FOG_COLOR) := payload.fogColor
 -    self(CHROMA_KEY) := payload.chromaKey
@@ -3955,13 +4123,19 @@ index 049fbed..0f289c4 100644
      if (c.trace.enabled) {
        self(TRACE) := payload.trace
      }
-@@ -332,15 +300,9 @@ case class ColorCombine(c: voodoo.Config) extends Component {
-     payload.depth := self(DEPTH)
+@@ -329,18 +296,13 @@ case class ColorCombine(c: voodoo.Config) extends Component {
+ 
+   def storePassThrough(payload: Output, self: NodeBaseApi): Unit = {
+     payload.coords := self(COORDS)
+-    payload.depth := self(DEPTH)
++    payload.zDepth := self(ZDEPTH)
++    payload.zFog := self(ZFOG)
      payload.iteratedAlpha := self(ITERATED_ALPHA_PT)
-     payload.rawW := self(RAW_W)
+-    payload.rawW := self(RAW_W)
 -    payload.fogColor := self(FOG_COLOR)
 -    payload.chromaKey := self(CHROMA_KEY)
 -    payload.zaColor := self(ZA_COLOR)
++    payload.wDepth := self(WDEPTH)
 +    payload.isLfb := False
      payload.alphaMode := self(ALPHA_MODE)
      payload.fogMode := self(FOG_MODE)
@@ -4129,10 +4303,81 @@ index 604a5c3..50f65bb 100644
 -  }
  }
 diff --git a/src/voodoo/pixel/Fog.scala b/src/voodoo/pixel/Fog.scala
-index 1a3a34c..7e6fde3 100644
+index 1a3a34c..d462d02 100644
 --- a/src/voodoo/pixel/Fog.scala
 +++ b/src/voodoo/pixel/Fog.scala
-@@ -39,18 +39,10 @@ object Fog {
+@@ -4,8 +4,60 @@ import voodoo._
+ import spinal.core._
+ import spinal.lib._
+ 
+-/** Fog output bundle — same as CC Output but without rawW/iteratedAlpha (consumed by fog) */
+ object Fog {
++  /** 16-bit Z-buffer depth: the 20.12 Z >> 12, clamped (86Box CLAMP16). */
++  def zDepthOf(depthRaw: SInt): UInt = {
++    val shifted = (depthRaw >> 12).resize(20 bits)
++    val out = UInt(16 bits)
++    when(shifted < 0) { out := 0 }
++      .elsewhen(shifted > 0xffff) { out := U(0xffff, 16 bits) }
++      .otherwise { out := shifted.asUInt.resize(16 bits) }
++    out
++  }
++
++  /** Z fog factor: bits 27:20 of the 20.12 Z. */
++  def zFogOf(depthRaw: SInt): UInt = (depthRaw >> 20).asUInt.resize(8 bits)
++
++  /** 16-bit W depth (W buffer, W fog) from W's raw 2.30 bits (hw_w; 86Box's
++    * w is hw_w << 2), as VoodooReference.depthCalc. */
++  def wDepthOf(hwW: SInt): UInt = {
++    // voodooFls: count leading zeros in 16-bit value (binary search, no loops)
++    def voodooFls(v: UInt): UInt = {
++      val v0 = v.resize(16 bits)
++      val test0 = (v0(15 downto 8) === 0)
++      val n0 = test0 ? U(8, 5 bits) | U(0, 5 bits)
++      val s0 = test0 ? (v0 |<< 8) | v0
++      val test1 = (s0(15 downto 12) === 0)
++      val n1 = n0 + (test1 ? U(4, 5 bits) | U(0, 5 bits))
++      val s1 = test1 ? (s0 |<< 4) | s0
++      val test2 = (s1(15 downto 14) === 0)
++      val n2 = n1 + (test2 ? U(2, 5 bits) | U(0, 5 bits))
++      val s2 = test2 ? (s1 |<< 2) | s1
++      val test3 = !s2(15)
++      (n2 + (test3 ? U(1, 5 bits) | U(0, 5 bits))).resize(5 bits)
++    }
++    // (86box_w >> 16) & 0xffff = hw_w(29 downto 14) when the top 2 bits are 0
++    val wUpper = hwW(29 downto 14).asUInt
++    val wExp = voodooFls(wUpper)
++    // mant = ((~86box_w) >>> (19 - exp)) & 0xfff; shift 4-19
++    val notW = ~(hwW << 2).resize(32 bits)
++    val shiftAmount = U(19, 5 bits) - wExp.resize(5 bits)
++    val mantissa = (notW.asUInt >> shiftAmount)(11 downto 0)
++    // (exp << 12) | mant + 1, at most 0xffff + 1
++    val expShifted = UInt(17 bits)
++    expShifted := (wExp.resize(17 bits) |<< 12)
++    val wDepthRaw = (expShifted | mantissa.resize(17 bits)) + 1
++    val wDepthClamped = UInt(16 bits)
++    when(wDepthRaw > 0xffff) { wDepthClamped := U(0xffff, 16 bits) }
++      .otherwise { wDepthClamped := wDepthRaw.resize(16 bits) }
++    // hw_w negative or bits 31:30 set -> 0; wUpper == 0 -> 0xF001
++    val wDepth = UInt(16 bits)
++    when(hwW.msb || hwW(30)) { wDepth := 0 }
++      .elsewhen(wUpper === 0) { wDepth := U(0xf001, 16 bits) }
++      .otherwise { wDepth := wDepthClamped }
++    wDepth
++  }
++
+   case class WStage(c: Config) extends Bundle {
+     val payload = Output(c)
+     val fogRgb = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
+@@ -32,25 +84,17 @@ object Fog {
+     val coords = PixelCoords(c)
+     val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
+     val alpha = UInt(8 bits)
+-    val depth = AFix(c.vDepthFormat)
+-    val wDepth = UInt(16 bits) // precomputed wDepth for W-buffer depth mode
++    val zDepth = UInt(16 bits) // Z-buffer depth
++    val wDepth = UInt(16 bits) // W-buffer depth
+     val colorBeforeFog = Color(
+       UInt(8 bits),
        UInt(8 bits),
        UInt(8 bits)
      ) // pre-fog color for ACOLORBEFOREFOG blend factor
@@ -4152,7 +4397,7 @@ index 1a3a34c..7e6fde3 100644
    }
  }
  
-@@ -64,6 +56,8 @@ case class Fog(c: Config) extends Component {
+@@ -64,6 +108,8 @@ case class Fog(c: Config) extends Component {
      val input = slave Stream (ColorCombine.Output(c))
      val output = master Stream (Fog.Output(c))
      val fogTable = in Vec (Bits(16 bits), 64)
@@ -4161,8 +4406,12 @@ index 1a3a34c..7e6fde3 100644
      val busy = out Bool ()
    }
  
-@@ -75,11 +69,8 @@ case class Fog(c: Config) extends Component {
-     dst.depth := src.depth
+@@ -72,14 +118,11 @@ case class Fog(c: Config) extends Component {
+   def assignFogOutputPayload(dst: Fog.Output, src: Fog.Output): Unit = {
+     dst.coords := src.coords
+     dst.alpha := src.alpha
+-    dst.depth := src.depth
++    dst.zDepth := src.zDepth
      dst.wDepth := src.wDepth
      dst.colorBeforeFog := src.colorBeforeFog
 -    dst.chromaKey := src.chromaKey
@@ -4174,7 +4423,7 @@ index 1a3a34c..7e6fde3 100644
      if (c.trace.enabled) dst.trace := src.trace
    }
  
-@@ -91,7 +82,7 @@ case class Fog(c: Config) extends Component {
+@@ -91,80 +134,14 @@ case class Fog(c: Config) extends Component {
    val fogModeSelect = payload.fogMode.fogModeSelect
  
    // Fog color as Color bundle (from per-triangle captured config)
@@ -4182,9 +4431,90 @@ index 1a3a34c..7e6fde3 100644
 +  val fogRgb = rgb888Color(io.fogColor)
  
    // --- Fog factor (fogA) selection ---
-   // Depth value for Z-based fog: bits [27:20] of the 20.12 depth
-@@ -175,11 +166,8 @@ case class Fog(c: Config) extends Component {
-       out.payload.depth := payload.depth
+-  // Depth value for Z-based fog: bits [27:20] of the 20.12 depth
+-  // depth is AFix SQ(32,12), raw is 32 bits signed
+-  // We want (z >> 20) & 0xFF — z is the raw 32-bit depth value
+-  val depthRaw = payload.depth.raw.asSInt
+-  val zFogFactor = (depthRaw >> 20).asUInt.resize(8 bits)
+-
+-  // Alpha-based fog factor
++  // Z, alpha and W fog factors; the per-pixel depth values were reduced when
++  // the pixel was formed (Rasterizer.PixelValues).
++  val zFogFactor = payload.zFog
+   val alphaFogFactor = payload.iteratedAlpha
+-
+-  // W-based wDepth calculation for table lookup
+-  // hw_w is raw 32-bit SInt from wGrad (SQ(32,30) = 2.30 format)
+-  // 86Box relationship: 86box_w = hw_w << 2
+-  val hwW = payload.rawW
+-
+-  // voodooFls: count leading zeros in 16-bit value (binary search, no loops)
+-  def voodooFls(v: UInt): UInt = {
+-    val v0 = v.resize(16 bits)
+-
+-    val test0 = (v0(15 downto 8) === 0)
+-    val n0 = test0 ? U(8, 5 bits) | U(0, 5 bits)
+-    val s0 = test0 ? (v0 |<< 8) | v0
+-
+-    val test1 = (s0(15 downto 12) === 0)
+-    val n1 = n0 + (test1 ? U(4, 5 bits) | U(0, 5 bits))
+-    val s1 = test1 ? (s0 |<< 4) | s0
+-
+-    val test2 = (s1(15 downto 14) === 0)
+-    val n2 = n1 + (test2 ? U(2, 5 bits) | U(0, 5 bits))
+-    val s2 = test2 ? (s1 |<< 2) | s1
+-
+-    val test3 = !s2(15)
+-    (n2 + (test3 ? U(1, 5 bits) | U(0, 5 bits))).resize(5 bits)
+-  }
+-
+-  // Compute wDepth (matching VoodooReference.depthCalc)
+-  // 86box_w = hw_w << 2, so:
+-  //   (86box_w >> 16) & 0xffff = (hw_w << 2)(31 downto 16) = hw_w(29 downto 14) (when top 2 bits are 0)
+-  //   ~86box_w.toInt = ~(hw_w << 2).toInt
+-  val wUpper = hwW(29 downto 14).asUInt // (86box_w >> 16) & 0xffff
+-  val wExp = voodooFls(wUpper)
+-
+-  // mant = ((~86box_w) >>> (19 - exp)) & 0xfff
+-  // ~86box_w = ~(hw_w << 2) — we compute this as ~hwW shifted left by 2, but since
+-  // we only need bits, we can compute ~(hwW << 2) = ~hwW_shifted
+-  val hwWShifted = (hwW << 2).resize(32 bits)
+-  val notW = ~hwWShifted
+-
+-  // Variable right shift by (19 - exp): exp ranges 0-15, so shift ranges 4-19
+-  val shiftAmount = U(19, 5 bits) - wExp.resize(5 bits)
+-  val mantissa = (notW.asUInt >> shiftAmount)(11 downto 0)
+-
+-  // wDepthRaw = (exp << 12) | mant + 1; max value = (15 << 12) | 0xfff + 1 = 0xffff + 1
+-  val expShifted = UInt(17 bits)
+-  expShifted := (wExp.resize(17 bits) |<< 12)
+-  val wDepthRaw = (expShifted | mantissa.resize(17 bits)) + 1
+-  val wDepthClamped = UInt(16 bits)
+-  when(wDepthRaw > 0xffff) {
+-    wDepthClamped := U(0xffff, 16 bits)
+-  }.otherwise {
+-    wDepthClamped := wDepthRaw.resize(16 bits)
+-  }
+-
+-  // Edge cases: if hw_w negative or bits [31:30] nonzero → wDepth = 0; if wUpper == 0 → wDepth = 0xF001
+-  val wDepth = UInt(16 bits)
+-  when(hwW.msb || hwW(30)) {
+-    wDepth := 0
+-  }.elsewhen(wUpper === 0) {
+-    wDepth := U(0xf001, 16 bits)
+-  }.otherwise {
+-    wDepth := wDepthClamped.resize(16 bits)
+-  }
++  val wDepth = payload.wDepth
+ 
+   val wStage = io.input
+     .translateWith {
+@@ -172,14 +149,11 @@ case class Fog(c: Config) extends Component {
+       out.payload.coords := payload.coords
+       out.payload.color := payload.color
+       out.payload.alpha := payload.alpha
+-      out.payload.depth := payload.depth
++      out.payload.zDepth := payload.zDepth
        out.payload.wDepth := wDepth
        out.payload.colorBeforeFog := payload.color
 -      out.payload.chromaKey := payload.chromaKey
@@ -4196,7 +4526,7 @@ index 1a3a34c..7e6fde3 100644
        if (c.trace.enabled) {
          out.payload.trace := payload.trace
        }
-@@ -203,10 +191,12 @@ case class Fog(c: Config) extends Component {
+@@ -203,10 +177,12 @@ case class Fog(c: Config) extends Component {
        val tableIdx = wStage.payload.payload.wDepth(15 downto 10)
        val tableEntry = io.fogTable(tableIdx)
        val fogBase = tableEntry(7 downto 0).asUInt
@@ -4214,7 +4544,7 @@ index 1a3a34c..7e6fde3 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..15756b4 100644
+index c6b2ec5..f92c6c7 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
 @@ -26,9 +26,16 @@ case class FramebufferAccess(c: Config) extends Component {
@@ -4234,7 +4564,7 @@ index c6b2ec5..15756b4 100644
      val zFuncFail = out Bool ()
      val debug = out Bits (32 bits)
    }
-@@ -47,14 +54,15 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -47,26 +54,18 @@ case class FramebufferAccess(c: Config) extends Component {
    inFlightCount.simPublic()
  
    val payload = io.input.payload
@@ -4248,11 +4578,26 @@ index c6b2ec5..15756b4 100644
  
    // Depth source selection
 -  val zaDepth = payload.zaColor(15 downto 0).asUInt
+-
+-  // Z-buffer depth: clamp SQ(32,12) >> 12 to 16 bits
+-  val depthRaw = payload.depth.raw.asSInt
+-  val zDepthShifted = (depthRaw >> 12).resize(20 bits)
+-  val zDepth = UInt(16 bits)
+-  when(zDepthShifted < 0) {
+-    zDepth := 0
+-  }.elsewhen(zDepthShifted > 0xffff) {
+-    zDepth := U(0xffff, 16 bits)
+-  }.otherwise {
+-    zDepth := zDepthShifted.asUInt.resize(16 bits)
+-  }
 +  val zaDepth = io.live.zaColor(15 downto 0).asUInt
++
++  // Z-buffer depth (clamped when the pixel was formed)
++  val zDepth = payload.zDepth
  
-   // Z-buffer depth: clamp SQ(32,12) >> 12 to 16 bits
-   val depthRaw = payload.depth.raw.asSInt
-@@ -75,7 +83,7 @@ case class FramebufferAccess(c: Config) extends Component {
+   // Select base depth: Z or W buffer
+   val baseDepth = fbzMode.wBufferSelect ? payload.wDepth | zDepth
+@@ -75,7 +74,7 @@ case class FramebufferAccess(c: Config) extends Component {
    val compDepthPreBias = fbzMode.depthSourceSelect ? zaDepth | baseDepth
  
    // Depth bias: signed add of zaColor[15:0]
@@ -4261,7 +4606,7 @@ index c6b2ec5..15756b4 100644
    val biasedDepthRaw = (compDepthPreBias.resize(17 bits).asSInt + zaColorSigned.resize(17 bits))
    val biasedDepth = UInt(16 bits)
    when(biasedDepthRaw < 0) {
-@@ -97,16 +105,10 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -97,16 +96,10 @@ case class FramebufferAccess(c: Config) extends Component {
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
      val alpha = UInt(8 bits)
      val colorBeforeFog = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
@@ -4279,7 +4624,7 @@ index c6b2ec5..15756b4 100644
    }
  
    // Create internal stream with computed address and passthrough data
-@@ -123,31 +125,33 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -123,31 +116,33 @@ case class FramebufferAccess(c: Config) extends Component {
    val pixelY = payload.coords(1).asUInt
    val colorPlaneAddress =
      FramebufferAddressMath.planeAddress(
@@ -4321,7 +4666,7 @@ index c6b2ec5..15756b4 100644
    if (c.trace.enabled) {
      request.passthrough.trace := payload.trace
    }
-@@ -165,7 +169,8 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -165,7 +160,8 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -4331,7 +4676,7 @@ index c6b2ec5..15756b4 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
-@@ -199,45 +204,23 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -199,45 +195,23 @@ case class FramebufferAccess(c: Config) extends Component {
    val colorRspBuf = io.fbReadColorRsp.queue(4)
    val auxRspBuf = io.fbReadAuxRsp.queue(4)
  
@@ -4393,7 +4738,7 @@ index c6b2ec5..15756b4 100644
  
    val fetchedRaw = StreamJoin(StreamJoin(colorRsp, auxRsp), passMeta).translateWith {
      val out = FetchResult()
-@@ -266,7 +249,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -266,7 +240,7 @@ case class FramebufferAccess(c: Config) extends Component {
    val pdata = fetched.payload.passthrough
    val oldDepth = auxData.asUInt
  
@@ -4402,7 +4747,7 @@ index c6b2ec5..15756b4 100644
      U(0) -> False,
      U(1) -> (pdata.newDepth < oldDepth),
      U(2) -> (pdata.newDepth === oldDepth),
-@@ -277,10 +260,13 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -277,10 +251,13 @@ case class FramebufferAccess(c: Config) extends Component {
      U(7) -> True
    )
  
@@ -4417,7 +4762,7 @@ index c6b2ec5..15756b4 100644
  
    // ========================================================================
    // Step 4: Alpha blend
-@@ -291,28 +277,18 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -291,28 +268,18 @@ case class FramebufferAccess(c: Config) extends Component {
  
    val oldColor565 = afterColorData.asUInt
    val destColor = expandRgb565(oldColor565)
@@ -4455,7 +4800,7 @@ index c6b2ec5..15756b4 100644
    val destA = U(0xff, 8 bits)
  
    val srcColor = afterPdata.color
-@@ -395,6 +371,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -395,6 +362,7 @@ case class FramebufferAccess(c: Config) extends Component {
      }
      .m2sPipe()
  
@@ -4463,7 +4808,7 @@ index c6b2ec5..15756b4 100644
    io.debug := 0
    io.debug(0) := io.input.valid
    io.debug(1) := io.input.ready
-@@ -417,10 +394,10 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -417,10 +385,10 @@ case class FramebufferAccess(c: Config) extends Component {
    io.debug(18) := auxCtlBase.ready
    io.debug(19) := passMeta.valid
    io.debug(20) := passMeta.ready
@@ -4478,7 +4823,7 @@ index c6b2ec5..15756b4 100644
    io.debug(25) := fetched.valid
    io.debug(26) := fetched.ready
    io.debug(31 downto 27) := inFlightCount.asBits
-@@ -454,14 +431,14 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -454,14 +422,14 @@ case class FramebufferAccess(c: Config) extends Component {
      out.colorBeforeFog := pd.colorBeforeFog
      out.newDepth := pd.newDepth
      out.alphaMode := pd.alphaMode
@@ -4501,7 +4846,7 @@ index c6b2ec5..15756b4 100644
      if (c.trace.enabled) {
        out.trace := pd.trace
      }
-@@ -469,6 +446,15 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -469,6 +437,15 @@ case class FramebufferAccess(c: Config) extends Component {
  }
  
  object FramebufferAccess {
@@ -4518,7 +4863,7 @@ index c6b2ec5..15756b4 100644
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
-index cee86c0..f852cb3 100644
+index cee86c0..f0b6f7f 100644
 --- a/src/voodoo/raster/Rasterizer.scala
 +++ b/src/voodoo/raster/Rasterizer.scala
 @@ -17,31 +17,151 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
@@ -4711,8 +5056,48 @@ index cee86c0..f852cb3 100644
    case class PrefetchSpan(c: Config) extends Bundle {
      val xStart = AFix(c.vertexFormat)
      val xEnd = AFix(c.vertexFormat)
-@@ -95,16 +226,90 @@ object Rasterizer {
-     val alphaGradHi = AFix(c.texCoordsHiFormat)
+@@ -90,24 +221,78 @@ object Rasterizer {
+     }
+   }
+ 
++  /** What the pipeline after the TMUs uses of a pixel's iterated values,
++    * reduced when the pixel is formed (as the Voodoo does) instead of carrying
++    * 12.12 colours, 46-bit alpha, 20.12 Z and 48-bit W through the post-TMU
++    * queue, colour combine and fog. */
++  case class PixelValues() extends Bundle {
++    val r, g, b, a = UInt(8 bits) // iterated colour / alpha, clamped
++    val z = UInt(8 bits) // iterated Z, clamped (alpha local select)
++    val zDepth = UInt(16 bits) // Z-buffer depth
++    val zFog = UInt(8 bits) // Z fog factor
++    val wDepth = UInt(16 bits) // W-buffer / W fog depth
++  }
++
++  object PixelValues {
++    def fromOutput(c: Config, in: Output): PixelValues = {
++      def u8FromSat(v: AFix): UInt = (v.asBits >> 12).asUInt.resize(8 bits)
++      val out = PixelValues()
++      out.r := u8FromSat(in.grads.redGrad.sat(satMax = 255, satMin = 0, exp = 0 exp))
++      out.g := u8FromSat(in.grads.greenGrad.sat(satMax = 255, satMin = 0, exp = 0 exp))
++      out.b := u8FromSat(in.grads.blueGrad.sat(satMax = 255, satMin = 0, exp = 0 exp))
++      out.a := (in.alphaGradHi.sat(satMax = 255, satMin = 0, exp = 0 exp).asBits >> 30).asUInt.resize(8 bits)
++      out.z := u8FromSat(in.grads.depthGrad.sat(satMax = 255, satMin = 0, exp = 12 exp))
++      val depthRaw = in.grads.depthGrad.raw.asSInt
++      out.zDepth := voodoo.pixel.Fog.zDepthOf(depthRaw)
++      out.zFog := voodoo.pixel.Fog.zFogOf(depthRaw)
++      // W's low 32 bits, as the queue carried them before
++      val w = AFix(c.wAccumFormat)
++      w.raw := in.grads.wGrad.raw(31 downto 0).asSInt.resize(widthOf(w.raw)).asBits
++      out.wDepth := voodoo.pixel.Fog.wDepthOf(w.asSInt.resize(32 bits))
++      out
++    }
++  }
++
++  /** A pixel after the rasterizer as the post-TMU queue and colour combine
++    * see it (S / T went to the TMUs). */
+   case class PostTmu(c: Config) extends Bundle {
+-    val grads = GradientBundle(AFix(_), c)
+-    val alphaGradHi = AFix(c.texCoordsHiFormat)
++    val vals = PixelValues()
      val coords = Vec.fill(2)(SInt(c.vertexFormat.nonFraction bits))
      val config = TriangleSetup.PixelPipelineConfig(c)
 +    // Two TMUs: texture combine modes of TMU0 (index 0) and TMU1.
@@ -4720,22 +5105,6 @@ index cee86c0..f852cb3 100644
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
-+  /** What ColorCombine reads of PostTmu, for the 64-deep post-TMU queue: no
-+    * S / T (the TMU has used them) or low-precision alpha (alphaGradHi is
-+    * used), and W's low 32 bits only (ColorCombine takes rawW as 32 bits). */
-+  case class PostTmuSlim(c: Config) extends Bundle {
-+    val red = AFix(c.vColorFormat)
-+    val green = AFix(c.vColorFormat)
-+    val blue = AFix(c.vColorFormat)
-+    val depth = AFix(c.vDepthFormat)
-+    val wLow = Bits(32 bits)
-+    val alphaGradHi = AFix(c.texCoordsHiFormat)
-+    val coords = Vec.fill(2)(SInt(c.vertexFormat.nonFraction bits))
-+    val config = TriangleSetup.PixelPipelineConfig(c)
-+    val texCombine = if (c.tmuCount > 1) Vec.fill(2)(voodoo.texture.TextureCombine.Mode()) else null
-+    val trace = if (c.trace.enabled) Trace.PixelKey() else null
-+  }
-+
 +  /** TMU0 / TMU1 texture combine modes of a pixel (two-TMU builds). */
 +  def texCombineOf(c: Config, cfg: TriangleSetup.TmuConfig): Vec[voodoo.texture.TextureCombine.Mode] = {
 +    val m = Vec.fill(2)(voodoo.texture.TextureCombine.Mode())
@@ -4757,54 +5126,25 @@ index cee86c0..f852cb3 100644
 +    out
 +  }
 +
-+  object PostTmuSlim {
-+    def fromOutput(c: Config, in: Output, cfg: PixelConfigs): PostTmuSlim = {
-+      val out = PostTmuSlim(c)
-+      out.red := in.grads.redGrad
-+      out.green := in.grads.greenGrad
-+      out.blue := in.grads.blueGrad
-+      out.depth := in.grads.depthGrad
-+      out.wLow := in.grads.wGrad.raw(31 downto 0)
-+      out.alphaGradHi := in.alphaGradHi
-+      out.coords := in.coords
-+      out.config := cfg.pixel
-+      if (c.tmuCount > 1) out.texCombine := texCombineOf(c, cfg.tmu)
-+      if (c.trace.enabled) out.trace := in.trace
-+      out
-+    }
-+    def toPostTmu(c: Config, in: PostTmuSlim): PostTmu = {
-+      val out = PostTmu(c)
-+      out.grads.redGrad := in.red
-+      out.grads.greenGrad := in.green
-+      out.grads.blueGrad := in.blue
-+      out.grads.depthGrad := in.depth
-+      out.grads.wGrad.raw := in.wLow.asSInt.resize(widthOf(out.grads.wGrad.raw)).asBits
-+      out.grads.alphaGrad.raw := 0
-+      out.grads.sGrad.raw := 0
-+      out.grads.tGrad.raw := 0
-+      out.alphaGradHi := in.alphaGradHi
-+      out.coords := in.coords
-+      out.config := in.config
-+      if (c.tmuCount > 1) out.texCombine := in.texCombine
-+      if (c.trace.enabled) out.trace := in.trace
-+      out
-+    }
-+  }
-+
    object PostTmu {
 -    def fromOutput(c: Config, in: Output): PostTmu = {
 +    def fromOutput(c: Config, in: Output, cfg: PixelConfigs): PostTmu = {
        val out = PostTmu(c)
-       out.grads := in.grads
-       out.alphaGradHi := in.alphaGradHi
+-      out.grads := in.grads
+-      out.alphaGradHi := in.alphaGradHi
++      out.vals := PixelValues.fromOutput(c, in)
        out.coords := in.coords
 -      out.config := in.pixelConfig
+-      if (c.trace.enabled) {
+-        out.trace := in.trace
+-      }
 +      out.config := cfg.pixel
 +      if (c.tmuCount > 1) out.texCombine := texCombineOf(c, cfg.tmu)
-       if (c.trace.enabled) {
-         out.trace := in.trace
-       }
-@@ -119,15 +324,17 @@ object Rasterizer {
++      if (c.trace.enabled) out.trace := in.trace
+       out
+     }
+   }
+@@ -119,15 +304,17 @@ object Rasterizer {
      val hiS = AFix(c.texCoordsHiFormat)
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
@@ -4825,7 +5165,7 @@ index cee86c0..f852cb3 100644
      val o = master Stream (Output(c))
      val running = out(Bool())
  
-@@ -146,6 +353,7 @@ object Rasterizer {
+@@ -146,6 +333,7 @@ object Rasterizer {
        outputType = HardType(Output(c)),
        maxIterations = c.maxFbDims._1,
        init = (input: SpanWalker.Output) => {
@@ -4833,7 +5173,7 @@ index cee86c0..f852cb3 100644
          val state = cloneOf(SpanState(c))
          state.x := input.xStart
          state.y := input.y
-@@ -153,10 +361,14 @@ object Rasterizer {
+@@ -153,10 +341,14 @@ object Rasterizer {
          state.hiS := input.hiS
          state.hiT := input.hiT
          state.hiAlpha := input.hiAlpha
@@ -4850,7 +5190,7 @@ index cee86c0..f852cb3 100644
          if (c.trace.enabled) {
            state.trace := input.trace
          }
-@@ -174,8 +386,15 @@ object Rasterizer {
+@@ -174,8 +366,15 @@ object Rasterizer {
          output.grads.sGrad := state.hiS.fixTo(c.texCoordsAccumFormat)
          output.grads.tGrad := state.hiT.fixTo(c.texCoordsAccumFormat)
          output.alphaGradHi := state.hiAlpha
@@ -4868,7 +5208,7 @@ index cee86c0..f852cb3 100644
          if (c.trace.enabled) {
            output.trace.primitive := state.trace
            output.trace.pixelSeq := currentPixelSeq
-@@ -185,8 +404,11 @@ object Rasterizer {
+@@ -185,8 +384,11 @@ object Rasterizer {
          next.y := state.y
          next.xEnd := state.xEnd
          next.stepX := state.stepX
@@ -4882,7 +5222,7 @@ index cee86c0..f852cb3 100644
          if (c.trace.enabled) {
            next.trace := state.trace
          }
-@@ -212,8 +434,9 @@ object Rasterizer {
+@@ -212,8 +414,9 @@ object Rasterizer {
          next.hiS := (state.hiS + state.stepX.tex(0)).fixTo(c.texCoordsHiFormat)
          next.hiT := (state.hiT + state.stepX.tex(1)).fixTo(c.texCoordsHiFormat)
          next.hiAlpha := (state.hiAlpha + state.stepX.alpha).fixTo(c.texCoordsHiFormat)
@@ -5541,10 +5881,10 @@ index 59df4ba..e6e7185 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
 diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
-index fb95365..51cd92d 100644
+index fb95365..5c8aa46 100644
 --- a/src/voodoo/raster/TriangleSetup.scala
 +++ b/src/voodoo/raster/TriangleSetup.scala
-@@ -8,216 +8,284 @@ import spinal.lib._
+@@ -8,216 +8,283 @@ import spinal.lib._
  case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Component {
    val i = slave(Stream(TriangleSetup.Input(c)))
    val o = master(Stream(TriangleSetup.Output(c)))
@@ -5629,10 +5969,9 @@ index fb95365..51cd92d 100644
 +    new Channel(pending.grads.greenGrad.start, pending.grads.greenGrad.d(0), pending.grads.greenGrad.d(1)),
 +    new Channel(pending.grads.blueGrad.start, pending.grads.blueGrad.d(0), pending.grads.blueGrad.d(1)),
 +    new Channel(pending.grads.depthGrad.start, pending.grads.depthGrad.d(0), pending.grads.depthGrad.d(1)),
-+    new Channel(pending.grads.alphaGrad.start, pending.grads.alphaGrad.d(0), pending.grads.alphaGrad.d(1)),
++    // No low-precision alpha / S / T: the pipeline iterates hiAlpha and
++    // texHi (one register per parameter, as the Voodoo has).
 +    new Channel(pending.grads.wGrad.start, pending.grads.wGrad.d(0), pending.grads.wGrad.d(1)),
-+    new Channel(pending.grads.sGrad.start, pending.grads.sGrad.d(0), pending.grads.sGrad.d(1)),
-+    new Channel(pending.grads.tGrad.start, pending.grads.tGrad.d(0), pending.grads.tGrad.d(1)),
 +    new Channel(pending.texHi.sStart, pending.texHi.dSdX, pending.texHi.dSdY),
 +    new Channel(pending.texHi.tStart, pending.texHi.dTdX, pending.texHi.dTdY),
 +    new Channel(pending.hiAlpha.start, pending.hiAlpha.dAdX, pending.hiAlpha.dAdY)
@@ -5921,15 +6260,15 @@ index fb95365..51cd92d 100644
 +    o.payload.grads.greenGrad.start,
 +    o.payload.grads.blueGrad.start,
 +    o.payload.grads.depthGrad.start,
-+    o.payload.grads.alphaGrad.start,
 +    o.payload.grads.wGrad.start,
-+    o.payload.grads.sGrad.start,
-+    o.payload.grads.tGrad.start,
 +    o.payload.texHi.sStart,
 +    o.payload.texHi.tStart,
 +    o.payload.hiAlpha.start
 +  ) ++ (if (c.tmuCount > 1) Seq(o.payload.texHi1.sStart, o.payload.texHi1.tStart) else Nil)
 +  outStarts.zip(channels).foreach { case (dst, ch) => dst.raw := ch.result }
++  // Not iterated (see channels): passed through uncorrected.
++  for (g <- Seq(o.payload.grads.alphaGrad, o.payload.grads.sGrad, o.payload.grads.tGrad))
++    g.start := pending.grads.all(o.payload.grads.all.indexOf(g)).start
 +
 +  when(state === SetupState.Idle && i.valid) {
      state := SetupState.Prep
@@ -6013,7 +6352,7 @@ index fb95365..51cd92d 100644
    when(state === SetupState.Prep) {
      val input = pending
      val tri = input.triWithSign.tri
-@@ -282,47 +350,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+@@ -282,47 +349,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
      val dxPix = (startXPix - aXPix).resize(16 bits)
      val dyPix = (startYPix - aYPix).resize(16 bits)
  
@@ -6102,7 +6441,7 @@ index fb95365..51cd92d 100644
    GenerationFlags.formal {
      when(o.valid) {
        val tri = pending.triWithSign.tri
-@@ -351,7 +427,8 @@ object TriangleSetup {
+@@ -351,7 +426,8 @@ object TriangleSetup {
        texHi: HiTexCoords,
        config: PerTriangleConfig,
        traceDrawId: UInt,
@@ -6112,7 +6451,7 @@ index fb95365..51cd92d 100644
    ): Input = {
      val out = Input(c)
      out.triWithSign.tri(0)(0).raw := ax.asBits
-@@ -364,6 +441,7 @@ object TriangleSetup {
+@@ -364,6 +440,7 @@ object TriangleSetup {
      out.grads := grads
      out.hiAlpha := hiAlpha
      out.texHi := texHi
@@ -6120,7 +6459,7 @@ index fb95365..51cd92d 100644
      out.config := config
      if (c.trace.enabled) {
        out.trace.valid := True
-@@ -407,6 +485,19 @@ object TriangleSetup {
+@@ -407,6 +484,19 @@ object TriangleSetup {
      }
    }
  
@@ -6140,7 +6479,7 @@ index fb95365..51cd92d 100644
    case class TmuConfig(c: Config) extends Bundle {
      val textureEnable = Bool()
      val textureMode = Bits(12 bits)
-@@ -415,15 +506,18 @@ object TriangleSetup {
+@@ -415,15 +505,18 @@ object TriangleSetup {
      val texBaseAddr2 = UInt(24 bits)
      val texBaseAddr38 = UInt(24 bits)
      val tLOD = Bits(27 bits)
@@ -6165,7 +6504,7 @@ index fb95365..51cd92d 100644
        val out = TmuConfig(c)
        out.textureEnable := src.fbzColorPath.textureEnable
        out.textureMode := src.tmuTextureMode
-@@ -432,11 +526,13 @@ object TriangleSetup {
+@@ -432,11 +525,13 @@ object TriangleSetup {
        out.texBaseAddr2 := src.tmuTexBaseAddr2
        out.texBaseAddr38 := src.tmuTexBaseAddr38
        out.tLOD := src.tmuTLOD
@@ -6184,7 +6523,7 @@ index fb95365..51cd92d 100644
        out
      }
    }
-@@ -468,9 +564,11 @@ object TriangleSetup {
+@@ -468,9 +563,11 @@ object TriangleSetup {
      val tmudTdX = AFix(c.texCoordsFormat)
      val tmudSdY = AFix(c.texCoordsFormat)
      val tmudTdY = AFix(c.texCoordsFormat)
@@ -6199,7 +6538,7 @@ index fb95365..51cd92d 100644
    }
  
    /** Input bundle - triangle with gradients and render config captured at command time */
-@@ -479,6 +577,7 @@ object TriangleSetup {
+@@ -479,6 +576,7 @@ object TriangleSetup {
      val grads = Rasterizer.GradientBundle(Rasterizer.InputGradient(_), c)
      val hiAlpha = HiAlpha(c)
      val texHi = HiTexCoords(c)
@@ -6207,7 +6546,7 @@ index fb95365..51cd92d 100644
      val config = PerTriangleConfig(c)
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
-@@ -489,10 +588,17 @@ object TriangleSetup {
+@@ -489,10 +587,17 @@ object TriangleSetup {
      val xrange = vertex2d(c.vertexFormat)
      val yrange = vertex2d(c.vertexFormat)
      val edgeStart = Vec.fill(3)(AFix(c.coefficientFormat))

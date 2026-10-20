@@ -83,7 +83,9 @@ case class Axi4ToGowinDdrNative(
     // One-line stager per read port (lines for different ports unpack in
     // parallel); false = one shared unpacker, ~1.3k fewer flip-flops (five
     // 256-bit lines) for ~0.4% GLQuake speed (B130d).
-    readStagers: Boolean = true
+    readStagers: Boolean = true,
+    // io.stats counters (window 31 0x78-0x94 on the Pro Dock); false = 0.
+    withStats: Boolean = true
 ) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
   require(scanConfig == null || scanConfig.dataWidth == 32)
@@ -596,14 +598,17 @@ case class Axi4ToGowinDdrNative(
     r
   }
   private def cnt(cond: Bool): UInt = counter(cond.asUInt)
-  io.stats(0) := cnt(True)
-  io.stats(1) := cnt(grantRead)
-  io.stats(2) := cnt(grantWrite)
-  io.stats(3) := counter(rd.data.io.occupancy)
-  io.stats(4) := cnt(io.fb.ar.valid && !io.fb.ar.ready)
-  io.stats(5) := cnt(rd.headValid && !rd.rReady && rd.head.port === 3)
-  io.stats(6) := counter(rd.inFlight)
-  io.stats(7) := cnt(rd.headValid && !rd.rReady && rd.head.port === 4)
+  if (!withStats) io.stats.foreach(_ := 0)
+  else {
+    io.stats(0) := cnt(True)
+    io.stats(1) := cnt(grantRead)
+    io.stats(2) := cnt(grantWrite)
+    io.stats(3) := counter(rd.data.io.occupancy)
+    io.stats(4) := cnt(io.fb.ar.valid && !io.fb.ar.ready)
+    io.stats(5) := cnt(rd.headValid && !rd.rReady && rd.head.port === 3)
+    io.stats(6) := counter(rd.inFlight)
+    io.stats(7) := cnt(rd.headValid && !rd.rReady && rd.head.port === 4)
+  }
 
   io.ddr.cmdEn := grantWrite || grantRead
   io.ddr.cmd := Mux(grantWrite, U(GowinDdrNative.cmdWrite, 3 bits), U(GowinDdrNative.cmdRead, 3 bits))

@@ -228,7 +228,9 @@ case class TangMega138kPro(c: Config) extends Component {
     colConfig = CoreGowin.colAxiConfig(c),
     auxWConfig = CoreGowin.auxWAxiConfig(c),
     // Two-TMU builds need the DDR-domain area more than the stagers' ~0.4%.
-    readStagers = c.tmuCount == 1)
+    readStagers = c.tmuCount == 1,
+    // and its debug counters (~770 FFs with the snapshot and PCIe copy).
+    withStats = c.tmuCount == 1)
   // W / R buffering per direction: 32 words, four 32-byte bursts.
   private val burstBeats = 32
   val fbCc = Axi4ClockCrossing(fbDdrConfig, coreCd, ClockDomain.current,
