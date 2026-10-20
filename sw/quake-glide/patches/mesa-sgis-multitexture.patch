@@ -1,0 +1,46 @@
+diff -ru a/src/extensions.c b/src/extensions.c
+--- a/src/extensions.c
++++ b/src/extensions.c
+@@ -90,6 +90,7 @@
+    { DEFAULT_ON,     "GL_PGI_misc_hints" },
+    { DEFAULT_ON,     "GL_SGI_color_matrix" },
+    { DEFAULT_ON,     "GL_SGI_color_table" },
++   { DEFAULT_OFF,    "GL_SGIS_multitexture" },  /* fx driver: two real TMUs */
+    { DEFAULT_ON,     "GL_SGIS_pixel_texture" },
+    { DEFAULT_ON,     "GL_SGIS_texture_edge_clamp" },
+    { DEFAULT_ON,     "GL_SGIX_pixel_texture" },
+diff -ru a/src/FX/fxdd.c b/src/FX/fxdd.c
+--- a/src/FX/fxdd.c
++++ b/src/FX/fxdd.c
+@@ -911,6 +911,12 @@
+    if (!fxMesa->emulateTwoTMUs) 
+       gl_extensions_disable(ctx, "GL_ARB_multitexture");
+ 
++   /* GLQuake (and other 1997 MiniGL titles) only know SGIS multitexture.
++    * Offer it with two real TMUs, so single-TMU boards keep the game's own
++    * two-pass path instead of Mesa's multipass emulation. */
++   if (fxMesa->haveTwoTMUs)
++      gl_extensions_enable(ctx, "GL_SGIS_multitexture");
++
+ 
+    /* Example of hooking in an extension function.
+     * For DRI-based drivers, also see __driRegisterExtensions in the
+@@ -1187,3 +1193,18 @@
+ 
+ #endif  /* FX */
+ 
++
++
++/* GL_SGIS_multitexture entry points (looked up with dlsym by GLQuake):
++ * TEXTURE0_SGIS (0x835E) and up map onto the ARB units. */
++#define FX_TEXTURE0_SGIS 0x835E
++
++void GLAPIENTRY glSelectTextureSGIS(GLenum target)
++{
++   glActiveTextureARB(GL_TEXTURE0_ARB + (target - FX_TEXTURE0_SGIS));
++}
++
++void GLAPIENTRY glMTexCoord2fSGIS(GLenum target, GLfloat s, GLfloat t)
++{
++   glMultiTexCoord2fARB(GL_TEXTURE0_ARB + (target - FX_TEXTURE0_SGIS), s, t);
++}

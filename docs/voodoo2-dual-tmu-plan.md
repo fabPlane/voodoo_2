@@ -41,6 +41,16 @@ registers, CMDFIFO, the CVG Glide) come after.
 5. **Detection.** tmuConfig bit 6 (TMU1 present) in the TMU "send config"
    output, so Glide counts two TMUs.
 
+## Host side
+
+Stock id GLQuake looks for `GL_SGIS_multitexture` (the 3dfx MiniGL
+extension); Mesa 3.4.2 only had the ARB one.
+`sw/quake-glide/patches/mesa-sgis-multitexture.patch` adds
+`glSelectTextureSGIS` / `glMTexCoord2fSGIS` (aliases of the ARB calls) and
+lists the extension only when Glide reports two TMUs, so single-TMU boards
+keep GLQuake's own two-pass path. GLQuake itself is unpatched. Until real
+detection works, run with `SIM_DUAL_TMU=1 SST_TMUMEM_SIZE=2`.
+
 ## Checks
 
 - mtex00 replay matches the dual-TMU reference.

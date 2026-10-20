@@ -250,6 +250,12 @@ build_pcie() {
     sed -i 's/^gcc -shared/gcc -m32 -shared/' "$N/Mesa-3.4.2/bin/mklib.linux"
     touch "$N/Mesa-3.4.2/.patched"
   fi
+  # GL_SGIS_multitexture (glSelectTextureSGIS / glMTexCoord2fSGIS over the ARB
+  # units) when Glide reports two TMUs, so stock GLQuake draws lightmaps in
+  # the same pass as the texture. Single-TMU boards are unchanged.
+  if ! grep -q glSelectTextureSGIS "$N/Mesa-3.4.2/src/FX/fxdd.c"; then
+    patch -d "$N/Mesa-3.4.2" -p1 <"$HERE/patches/mesa-sgis-multitexture.patch" >/dev/null
+  fi
   # libGL + libGLU (the widgets-sgi Motif target failing afterwards is fine).
   make -C "$N/Mesa-3.4.2" -j"$(nproc)" linux-glide >"$N/mesa.log" 2>&1 || true
   [ -f "$N/Mesa-3.4.2/lib/libGL.so" ] || { tail -20 "$N/mesa.log"; return 1; }
@@ -258,15 +264,6 @@ build_pcie() {
   rm -rf "$N/Quake"; cp -r "$WORK/Quake" "$N/Quake"
   local QSRC="$N/Quake/WinQuake" SRCS="" o
   sed -i "s/^#if defined __i386__.*/#if 0  \/* forced C-only build *\//" "$QSRC/quakedef.h"
-  # -arbmtex: multitexture through GL_ARB_multitexture (Mesa 3.4.2 has no
-  # GL_SGIS_multitexture). With two TMUs on the dock (SIM_DUAL_TMU=1) Mesa
-  # draws GLQuake's lightmaps in the same pass; without the flag nothing
-  # changes (Mesa would otherwise emulate multitexture in two passes).
-  sed -i -e 's/0x835E/0x84C0/' -e 's/0x835F/0x84C1/' "$QSRC/glquake.h"
-  sed -i -e 's/strstr(gl_extensions, "GL_SGIS_multitexture ") \&\& !COM_CheckParm("-nomtex")/COM_CheckParm("-arbmtex") \&\& strstr(gl_extensions, "GL_ARB_multitexture")/' \
-         -e 's/"glMTexCoord2fSGIS"/"glMultiTexCoord2fARB"/' -e 's/"glSelectTextureSGIS"/"glActiveTextureARB"/' \
-         "$QSRC/gl_vidlinux.c"
-  grep -q 'COM_CheckParm("-arbmtex")' "$QSRC/gl_vidlinux.c" || { echo "arbmtex patch failed"; return 1; }
   cp "$HERE/_fpcw_stub.c" "$QSRC/"
   for o in $(awk "/^GLQUAKE_OBJS=/,/^\$/" "$QSRC/Makefile.linuxi386" | grep -oE "[a-zA-Z0-9_]+\.o" | sed "s/\.o\$/.c/" | sort -u); do
     [ -f "$QSRC/$o" ] && SRCS="$SRCS $o"
