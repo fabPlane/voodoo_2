@@ -439,7 +439,10 @@ case class Axi4ToGowinDdrNative(
 
     // ---- collector
     val collecting = RegInit(False)
-    val port = Reg(UInt(2 bits)) init (0)
+    // Collecting / issuing port, one-hot (indexed by position in writePorts):
+    // a port-number compare in front of the W-valid mux and the B-ready mux
+    // fed the line-register enables too late for 100 MHz (B156).
+    val portOh = Reg(Bits(3 bits)) init (0)
     // fb and auxW take turns; texture downloads go when neither waits.
     val auxWNext = RegInit(False)
     val cAddr = Reg(UInt(32 bits)) init (0)
@@ -457,7 +460,7 @@ case class Axi4ToGowinDdrNative(
     // ---- issue buffer
     val iValid = RegInit(False)
     val iResp = RegInit(False) // command done, B being returned
-    val iPort = Reg(UInt(2 bits)) init (0)
+    val iPortOh = Reg(Bits(3 bits)) init (0)
     val iLast = Reg(Bool()) init (False)
     val addr = Reg(UInt(32 bits)) init (0)
     val id = Reg(UInt(idWidth bits)) init (0)
@@ -469,7 +472,7 @@ case class Axi4ToGowinDdrNative(
 
     def start(wp: WritePort): Unit = {
       wp.axi.aw.ready := True
-      port := wp.idx
+      portOh := B(1 << wp.idx, 3 bits)
       cAddr := wp.axi.aw.addr.resized
       beatsLeft := (wp.axi.aw.len.resize(9) + 1).resized
       if (wp.cfg.useId) cId := wp.axi.aw.id.resized
@@ -484,13 +487,13 @@ case class Axi4ToGowinDdrNative(
     val wLast = Bool()
     val bReady = Bool()
     wValid := False; wData := 0; wStrb := 0; wLast := False; bReady := False
-    for (wp <- writePorts) when(port === wp.idx) {
+    for (wp <- writePorts) when(portOh(wp.idx)) {
       wValid := wp.axi.w.valid
       wData := wp.axi.w.data
       wStrb := wp.axi.w.strb
       wLast := wp.axi.w.last
     }
-    for (wp <- writePorts) when(iPort === wp.idx) { bReady := wp.axi.b.ready }
+    for (wp <- writePorts) when(iPortOh(wp.idx)) { bReady := wp.axi.b.ready }
 
     // Issue buffer: free once its line is issued (or was all padding) and,
     // for a burst's last line, its B has been taken.
@@ -500,7 +503,7 @@ case class Axi4ToGowinDdrNative(
       when(iLast) { iResp := True } otherwise { iDone := True }
     }
     when(iResp) {
-      for (wp <- writePorts) when(iPort === wp.idx) { wp.axi.b.valid := True }
+      for (wp <- writePorts) when(iPortOh(wp.idx)) { wp.axi.b.valid := True }
       when(bReady) { iDone := True }
     }
 
@@ -535,7 +538,7 @@ case class Axi4ToGowinDdrNative(
       (io.fb.aw.valid || io.tex.aw.valid || (if (hasAuxW) io.auxW.aw.valid else False))) init (False)
     val completes = groupIdx === lastIdx || wLast || beatsLeft === 1
     val wReady = collecting && (!completes || (!iValid && !justStarted))
-    for (wp <- writePorts) when(port === wp.idx) { wp.axi.w.ready := wReady }
+    for (wp <- writePorts) when(portOh(wp.idx)) { wp.axi.w.ready := wReady }
     val beat = wValid && wReady
     when(iDone) { iValid := False; iResp := False }
     when(beat) {
@@ -551,7 +554,7 @@ case class Axi4ToGowinDdrNative(
         // Hand the line (with this beat) to the issue buffer.
         iValid := True
         iResp := False
-        iPort := port
+        iPortOh := portOh
         id := cId
         addr := cAddr
         for (k <- 0 until nativeWords) {

@@ -80,6 +80,10 @@ case class PcieTlpBarTarget(
 
   val state = RegInit(State.idle)
   val window = Reg(UInt(windowBits bits)) init (0)
+  // Decoded when the window is written (window -> compare -> tlpAddr /
+  // writeData enables missed 75 MHz in the TLP's decode cycle, B156).
+  val windowInRegisterSpace = RegInit(True) // window 0 at reset
+  val windowIsLocal = RegInit(False)
   val reqId = Reg(Bits(16 bits)) init (0)
   val reqTag = Reg(Bits(8 bits)) init (0)
   val firstBe = Reg(Bits(4 bits)) init (0)
@@ -161,13 +165,13 @@ case class PcieTlpBarTarget(
 
   val offset20 = capturedAddr(windowAddressWidth - 1 downto 0)
   val headerFirstBe = header1(3 downto 0)
-  val inRegisterSpace = window < 4
+  val inRegisterSpace = windowInRegisterSpace
   val isWindowReg = offset20 === windowAddress &&
     (inRegisterSpace || (hasData && headerFirstBe === B"0001"))
   val mappedAddr = (window @@ offset20).resized
 
   io.window := window
-  val isLocal = window === localWindow && !isWindowReg
+  val isLocal = windowIsLocal && !isWindowReg
   val isWedgeReg = isLocal && offset20(7 downto 0) === 0x40
   io.localWrite := False
   // Local reads take a cycle: the address is latched, then the read mux is
@@ -253,7 +257,10 @@ case class PcieTlpBarTarget(
         lowerAddr := capturedAddr.asBits(6 downto 0)
         when(isWindowReg) {
           when(hasData) {
-            window := capturedData(windowBits - 1 downto 0).asUInt
+            val newWindow = capturedData(windowBits - 1 downto 0).asUInt
+            window := newWindow
+            windowInRegisterSpace := newWindow < 4
+            windowIsLocal := newWindow === localWindow
             when(!io.tlRxEop) {
               state := State.drop
             }

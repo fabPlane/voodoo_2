@@ -1972,7 +1972,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..3c186bf 100644
+index 7797711..2655f86 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -2098,7 +2098,7 @@ index 7797711..3c186bf 100644
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
        out.texture.r := 0
        out.texture.g := 0
-@@ -334,23 +387,105 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,23 +387,138 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -2151,35 +2151,68 @@ index 7797711..3c186bf 100644
 +    }
 +    val texPair = StreamJoin(tmuOutput, tmu1Output).stage()
 +    val joined = StreamJoin(texPair, postTmuQueue)
++    // Four stages: TMU1's combine operands, its multiply / clamp, then
++    // TMU0's (each combine in one stage missed 48 MHz, B156).
 +    case class Mid() extends Bundle {
++      val t0 = TextureCombine.Texel()
++      val t1Ops = TextureCombine.Ops() // TMU1's combine, operands
++      val post = Rasterizer.PostTmu(c)
++      val trace = if (c.trace.enabled) Trace.PixelKey() else null
++    }
++    case class Mid2() extends Bundle {
 +      val t0 = TextureCombine.Texel()
 +      val t1 = TextureCombine.Texel() // after TMU1's own combine
 +      val t1Raw = TextureCombine.Texel()
 +      val post = Rasterizer.PostTmu(c)
 +      val trace = if (c.trace.enabled) Trace.PixelKey() else null
 +    }
-+    // Stage 1: TMU1's combine (86Box: other = 0).
++    case class Mid3() extends Bundle {
++      val t0Ops = TextureCombine.Ops() // TMU0's combine, operands
++      val t1Raw = TextureCombine.Texel()
++      val pass, local = Bool()
++      val post = Rasterizer.PostTmu(c)
++      val trace = if (c.trace.enabled) Trace.PixelKey() else null
++    }
++    // Stage 1: TMU1's combine operands (86Box: other = 0).
 +    val mid = joined.translateWith {
 +      val m = Mid()
 +      val post = joined.payload._2
 +      m.t0 := texelOf(joined.payload._1._1)
-+      m.t1Raw := texelOf(joined.payload._1._2)
-+      m.t1 := TextureCombine.tmu1(m.t1Raw, post.texCombine(1), post.texCombine(0))
++      m.t1Ops := TextureCombine.tmu1Ops(texelOf(joined.payload._1._2), post.texCombine(1), post.texCombine(0))
 +      m.post := post
 +      if (c.trace.enabled) m.trace := joined.payload._1._1.trace
 +      m
 +    }.stage()
-+    // Stage 2: TMU0's combine. TMU0 "local" (textureMode & 0x643000 ==
-+    // 0x241000) uses TMU0's texel alone and "pass-through" (combine fields
++    // Stage 2: TMU1's multiply / add / clamp.
++    val mid2 = mid.translateWith {
++      val m = Mid2()
++      m.t0 := mid.payload.t0
++      m.t1Raw := mid.payload.t1Ops.local
++      m.t1 := TextureCombine.finish(mid.payload.t1Ops)
++      m.post := mid.payload.post
++      if (c.trace.enabled) m.trace := mid.payload.trace
++      m
++    }.stage()
++    // Stage 3: TMU0's combine operands. TMU0 "local" (textureMode & 0x643000
++    // == 0x241000) uses TMU0's texel alone and "pass-through" (combine fields
 +    // all 0) TMU1's fetched texel, as 86Box does.
-+    val result = mid.translateWith {
-+      val m0 = mid.payload.post.texCombine(0)
-+      val local = m0.tcZeroOther && !m0.tcSubClocal && m0.tcAddClocal && m0.tcaZeroOther && !m0.tcaSubClocal
-+      val pass = m0.bits(17 downto 0) === 0
++    val mid3 = mid2.translateWith {
++      val m = Mid3()
++      val m0 = mid2.payload.post.texCombine(0)
++      m.local := m0.tcZeroOther && !m0.tcSubClocal && m0.tcAddClocal && m0.tcaZeroOther && !m0.tcaSubClocal
++      m.pass := m0.bits(17 downto 0) === 0
++      m.t0Ops := TextureCombine.tmu0Ops(mid2.payload.t0, mid2.payload.t1, m0)
++      m.t1Raw := mid2.payload.t1Raw
++      m.post := mid2.payload.post
++      if (c.trace.enabled) m.trace := mid2.payload.trace
++      m
++    }.stage()
++    // Stage 4: TMU0's multiply / add / clamp.
++    val result = mid3.translateWith {
 +      val res = TextureCombine.Texel()
-+      res := TextureCombine.tmu0(mid.payload.t0, mid.payload.t1, m0)
-+      when(pass) { res := mid.payload.t1Raw }
-+      when(local) { res := mid.payload.t0 }
++      res := TextureCombine.finish(mid3.payload.t0Ops)
++      when(mid3.payload.pass) { res := mid3.payload.t1Raw }
++      when(mid3.payload.local) { res := mid3.payload.t0Ops.local }
 +      val o = TexAndPost()
 +      o.tex.texture.r := res.r
 +      o.tex.texture.g := res.g
@@ -2195,11 +2228,11 @@ index 7797711..3c186bf 100644
 +        o.tex.texture.b := Tmu.tmuConfigByte(c)
 +        o.tex.textureAlpha := 255
 +      }
-+      if (c.trace.enabled) o.tex.trace := mid.payload.trace
-+      o.post := mid.payload.post
++      if (c.trace.enabled) o.tex.trace := mid3.payload.trace
++      o.post := mid3.payload.post
 +      o
 +    }.stage()
-+    texCombineBusy := texPair.valid || mid.valid || result.valid
++    texCombineBusy := texPair.valid || mid.valid || mid2.valid || mid3.valid || result.valid
 +  }.result
  
    val colorCombineInput = Stream(ColorCombine.Input(c))
@@ -2213,7 +2246,7 @@ index 7797711..3c186bf 100644
  
    val spanPrefetchFork = StreamFork2(rasterizer.prefetchSpan, synchronous = true)
    val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
-@@ -367,17 +502,19 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,17 +535,19 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -2237,7 +2270,7 @@ index 7797711..3c186bf 100644
        ccColor.g === ckG && ccColor.b === ckB
      else False
  
-@@ -397,14 +534,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -397,14 +567,11 @@ case class PixelPipeline(c: Config) extends Component {
      dst.coords := src.coords
      dst.color := src.color
      dst.alpha := src.alpha
@@ -2255,7 +2288,7 @@ index 7797711..3c186bf 100644
      if (c.trace.enabled) dst.trace := src.trace
    }
  
-@@ -413,6 +547,7 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -413,6 +580,7 @@ case class PixelPipeline(c: Config) extends Component {
      fog.io.input.simPublic()
      fog.io.output.simPublic()
      fog.io.fogTable := io.controls.fogTable
@@ -2263,7 +2296,7 @@ index 7797711..3c186bf 100644
      fogArbiterInput >/-> fog.io.input
      fogOutput << fog.io.output
      fogBusy := fog.io.busy
-@@ -439,6 +574,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -439,6 +607,11 @@ case class PixelPipeline(c: Config) extends Component {
    val alphaKill = if (c.enableAlphaTest) alphaTestEnable && !alphaPassed else False
  
    fogOutput >/-> fbAccess.io.input
@@ -2275,7 +2308,7 @@ index 7797711..3c186bf 100644
    fbAccess.io.fbReadColorRsp << io.colorReadRsp
    fbAccess.io.fbReadAuxRsp << io.auxReadRsp
    io.colorReadReq << fbAccess.io.fbReadColorReq.s2mPipe()
-@@ -653,10 +793,18 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,10 +826,18 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -2297,7 +2330,7 @@ index 7797711..3c186bf 100644
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
        fastfillWriter.io.running || fastfillWriter.io.wordValid ||
-@@ -666,12 +814,81 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +847,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -2380,7 +2413,7 @@ index 7797711..3c186bf 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +924,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +957,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -6678,10 +6711,10 @@ index fbf774f..6f372f1 100644
      tables
 diff --git a/src/voodoo/texture/TextureCombine.scala b/src/voodoo/texture/TextureCombine.scala
 new file mode 100644
-index 0000000..9afb041
+index 0000000..47fde4b
 --- /dev/null
 +++ b/src/voodoo/texture/TextureCombine.scala
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,176 @@
 +package voodoo.texture
 +
 +import voodoo._
@@ -6747,11 +6780,47 @@ index 0000000..9afb041
 +  // x * (f + 1) >> 8, or x * ((f ^ 0xff) + 1) >> 8 when inverted (C ints).
 +  // x is a texel difference (|x| <= 255) and f is at most 255 and at least
 +  // the detail factor's -15 << 7, so (f ^ 0xff) + 1 is in [-2047, 256]: a
-+  // 10 x 13-bit multiply gives the same product as the full width (the
-+  // 24 x 24 one missed timing at 48 MHz, B154).
-+  private def scale(x: SInt, f: SInt, inverted: Bool): SInt = {
-+    val fx = Mux(inverted, f ^ S(0xff, W bits), f)
-+    ((x.resize(10 bits) * (fx + 1).resize(13 bits)) >> 8).resize(W bits)
++  // 10 x 13-bit multiply gives the same product as the full width.
++  // Split in two pipeline stages: the operands (ops), then the multiply,
++  // add and clamp (finish); in one stage it missed 48 MHz (B156).
++  case class ChannelOps() extends Bundle {
++    val base = SInt(10 bits) // x
++    val f1 = SInt(13 bits) // (f or f ^ 0xff) + 1
++    val add = SInt(10 bits)
++  }
++
++  /** One TMU's combine, operands computed: finish() gives its texel. */
++  case class Ops() extends Bundle {
++    val c = Vec.fill(3)(ChannelOps())
++    val a = ChannelOps()
++    val enC, enA = Bool() // else the local texel's value
++    val invC, invA = Bool() // invert output
++    val local = Texel()
++  }
++
++  private def chanOps(x: SInt, f: SInt, inverted: Bool, add: SInt): ChannelOps = {
++    val o = ChannelOps()
++    o.base := x.resize(10 bits)
++    o.f1 := (Mux(inverted, f ^ S(0xff, W bits), f) + 1).resize(13 bits)
++    o.add := add.resize(10 bits)
++    o
++  }
++
++  private def finishChannel(o: ChannelOps): UInt =
++    clamp(((o.base * o.f1) >> 8).resize(W bits) + o.add.resize(W bits))
++
++  def finish(o: Ops): Texel = {
++    val out = Texel()
++    out.lod := o.local.lod
++    out.lodFrac := o.local.lodFrac
++    val localC = Seq(o.local.r, o.local.g, o.local.b)
++    for (k <- 0 until 3) {
++      val c = finishChannel(o.c(k))
++      Seq(out.r, out.g, out.b)(k) := Mux(o.enC, Mux(o.invC, c ^ U(0xff, 8 bits), c), localC(k))
++    }
++    val a = finishChannel(o.a)
++    out.a := Mux(o.enA, Mux(o.invA, a ^ U(0xff, 8 bits), a), o.local.a)
++    out
 +  }
 +
 +  private def factorOf(sel: UInt, local: Texel, otherA: SInt, m: Mode, rgb: Int, alpha: Boolean): SInt = {
@@ -6769,38 +6838,34 @@ index 0000000..9afb041
 +  }
 +
 +  /** TMU1's own combine (other = 0). */
-+  def tmu1(local: Texel, m1: Mode, m0: Mode): Texel = {
-+    val out = Texel()
-+    out := local
++  def tmu1Ops(local: Texel, m1: Mode, m0: Mode): Ops = {
++    val o = Ops()
++    o.local := local
 +    val trilinearOdd = m1.trilinear && local.lod(0)
 +    val cReverse = Mux(trilinearOdd, m0.tcReverseBlend, !m0.tcReverseBlend)
 +    val aReverse = Mux(trilinearOdd, m0.tcaReverseBlend, !m0.tcaReverseBlend)
 +    val localC = Seq(local.r, local.g, local.b)
-+    when(m1.tcSubClocal) {
-+      for (k <- 0 until 3) {
-+        // 86Box: a_other is 0 for TMU1.
-+        val f = factorOf(m1.tcMselect, local, S(0, W bits), m1, k, alpha = false)
-+        val v = scale(-s(localC(k)), f, cReverse)
-+        val add = Mux(m1.tcAddClocal, s(localC(k)), Mux(m1.tcAddAlocal, s(local.a), S(0, W bits)))
-+        val o = Seq(out.r, out.g, out.b)(k)
-+        o := clamp(v + add)
-+      }
++    for (k <- 0 until 3) {
++      // 86Box: a_other is 0 for TMU1.
++      val f = factorOf(m1.tcMselect, local, S(0, W bits), m1, k, alpha = false)
++      val add = Mux(m1.tcAddClocal, s(localC(k)), Mux(m1.tcAddAlocal, s(local.a), S(0, W bits)))
++      o.c(k) := chanOps(-s(localC(k)), f, cReverse, add)
 +    }
-+    when(m1.tcaSubClocal) {
-+      val f = factorOf(m1.tcaMselect, local, S(0, W bits), m1, 0, alpha = true)
-+      // 86Box inverts the alpha factor the other way round here.
-+      val v = scale(-s(local.a), f, aReverse === False)
-+      val add = Mux(m1.tcaAddClocal || m1.tcaAddAlocal, s(local.a), S(0, W bits))
-+      out.a := clamp(v + add)
-+    }
-+    out
++    val fa = factorOf(m1.tcaMselect, local, S(0, W bits), m1, 0, alpha = true)
++    // 86Box inverts the alpha factor the other way round here.
++    val addA = Mux(m1.tcaAddClocal || m1.tcaAddAlocal, s(local.a), S(0, W bits))
++    o.a := chanOps(-s(local.a), fa, aReverse === False, addA)
++    o.enC := m1.tcSubClocal
++    o.enA := m1.tcaSubClocal
++    o.invC := False
++    o.invA := False
++    o
 +  }
 +
 +  /** TMU0's combine with TMU1's (combined) output as "other". */
-+  def tmu0(local: Texel, other: Texel, m: Mode): Texel = {
-+    val out = Texel()
-+    out.lod := local.lod
-+    out.lodFrac := local.lodFrac
++  def tmu0Ops(local: Texel, other: Texel, m: Mode): Ops = {
++    val o = Ops()
++    o.local := local
 +    val trilinearOdd = m.trilinear && local.lod(0)
 +    val cReverse = Mux(trilinearOdd, m.tcReverseBlend, !m.tcReverseBlend)
 +    val aReverse = Mux(trilinearOdd, m.tcaReverseBlend, !m.tcaReverseBlend)
@@ -6809,19 +6874,22 @@ index 0000000..9afb041
 +    for (k <- 0 until 3) {
 +      val base = Mux(m.tcZeroOther, S(0, W bits), s(otherC(k))) - Mux(m.tcSubClocal, s(localC(k)), S(0, W bits))
 +      val f = factorOf(m.tcMselect, local, s(other.a), m, k, alpha = false)
-+      val v = scale(base, f, cReverse)
 +      val add = Mux(m.tcAddClocal, s(localC(k)), Mux(m.tcAddAlocal, s(local.a), S(0, W bits)))
-+      val c = clamp(v + add)
-+      Seq(out.r, out.g, out.b)(k) := Mux(m.tcInvertOutput, c ^ U(0xff, 8 bits), c)
++      o.c(k) := chanOps(base, f, cReverse, add)
 +    }
 +    val baseA = Mux(m.tcaZeroOther, S(0, W bits), s(other.a)) - Mux(m.tcaSubClocal, s(local.a), S(0, W bits))
 +    val fa = factorOf(m.tcaMselect, local, s(other.a), m, 0, alpha = true)
-+    val va = scale(baseA, fa, aReverse)
 +    val addA = Mux(m.tcaAddClocal || m.tcaAddAlocal, s(local.a), S(0, W bits))
-+    val a = clamp(va + addA)
-+    out.a := Mux(m.tcaInvertOutput, a ^ U(0xff, 8 bits), a)
-+    out
++    o.a := chanOps(baseA, fa, aReverse, addA)
++    o.enC := True
++    o.enA := True
++    o.invC := m.tcInvertOutput
++    o.invA := m.tcaInvertOutput
++    o
 +  }
++
++  def tmu1(local: Texel, m1: Mode, m0: Mode): Texel = finish(tmu1Ops(local, m1, m0))
++  def tmu0(local: Texel, other: Texel, m: Mode): Texel = finish(tmu0Ops(local, other, m))
 +}
 diff --git a/src/voodoo/texture/TextureMem.scala b/src/voodoo/texture/TextureMem.scala
 index f164007..31832d2 100644
