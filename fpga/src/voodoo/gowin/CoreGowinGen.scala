@@ -139,9 +139,12 @@ object GowinGenSupport {
         // The TMU's per-triangle config FIFO (16 x ~136 bits) replaces ~1.1k
         // front-end stage flops per TMU only as BSRAM.
         bsramComponents = Seq("metaCfgFifo") ++
-          // GOWIN_TMU_QUEUES_BSRAM: the cache's 16-deep request window too (5
-          // tiles per TMU; the 8-deep sample queue stays in flip-flops).
-          sys.env.get("GOWIN_TMU_QUEUES_BSRAM").map(_ => Seq("io_sampleRequest_translated_fifo")).getOrElse(Nil)
+          // GOWIN_TMU_QUEUES_BSRAM (two-TMU builds): the cache's 16-deep
+          // request window and the sample-request queue (12 deep: 2.4k FFs
+          // per TMU as registers, B153).
+          sys.env.get("GOWIN_TMU_QUEUES_BSRAM")
+            .map(_ => Seq("io_sampleRequest_translated_fifo", "sampleRequestBasePre_translated_fifo"))
+            .getOrElse(Nil)
       )
     )
 }

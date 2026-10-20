@@ -1972,7 +1972,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..4f4b64d 100644
+index 7797711..742fb74 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -2008,38 +2008,46 @@ index 7797711..4f4b64d 100644
    rasterizer.enableClipping := io.controls.fastfill.fbzMode.enableClipping
    rasterizer.clipLeft := io.controls.clip.left
    rasterizer.clipRight := io.controls.clip.right
-@@ -280,15 +286,24 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -280,15 +286,29 @@ case class PixelPipeline(c: Config) extends Component {
  
    val rasterYPipe = rasterYTransformed.stage()
    val rasterFork = StreamFork2(rasterYPipe, synchronous = true)
 -  val postTmuQueue = rasterFork._2
 -    .translateWith(Rasterizer.PostTmu.fromOutput(c, rasterFork._2.payload))
+-    .queue(64)
+-    .stage()
 +  val slots = rasterizer.slotConfig // pixelConfigSlots, else null
 +  require(!c.pixelConfigSlots || c.enableTmu)
-+  val postTmuQueued = rasterFork._2
++  val postTmuFifo = StreamFifo(Rasterizer.PostTmuSlim(c), 64)
++  postTmuFifo.io.push << rasterFork._2
 +    .translateWith(Rasterizer.PostTmuSlim.fromOutput(c, rasterFork._2.payload,
 +      Rasterizer.configsOf(c, rasterFork._2.payload, slots)))
-     .queue(64)
-+  val postTmuQueue = postTmuQueued
++  val postTmuQueued = postTmuFifo.io.pop
++  val postTmuStage = postTmuQueued
 +    .translateWith(Rasterizer.PostTmuSlim.toPostTmu(c, postTmuQueued.payload))
      .stage()
-     .stage()
++  val postTmuQueue = postTmuStage.stage()
++  // Every pixel in a TMU has its post-TMU entry here (FIFO or the two stages)
++  // from the fork until it rejoins after the TMU.
++  val postTmuBusy = postTmuFifo.io.occupancy =/= 0 || postTmuQueued.valid || postTmuStage.valid || postTmuQueue.valid
  
    val tmuOutput = Stream(Tmu.Output(c))
    val tmuInputValid = Bool()
 +  val tmuInputStall = Bool()
    val tmuBusy = Bool()
++  val tmuSourceValid = Bool()
 +  val tmuPerf = Vec(UInt(32 bits), 4)
 +  require(c.tmuCount == 1 || c.enableTmu)
 +  val tmu1Output = if (c.tmuCount > 1) Stream(Tmu.Output(c)) else null
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -305,14 +320,47 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -305,15 +325,50 @@ case class PixelPipeline(c: Config) extends Component {
      tmu.io.invalidate := io.tmuInvalidate
      io.texRead <> tmu.io.texRead
  
 +    val tmuSource = rasterFork._1.stage()
++    tmuSourceValid := tmuSource.valid
 +    val tmuCfg = Rasterizer.configsOf(c, tmuSource.payload, slots).tmu
 +    // A span's config slot is free once its last pixel is in the TMUs.
 +    if (c.pixelConfigSlots) {
@@ -2087,9 +2095,11 @@ index 7797711..4f4b64d 100644
 +      tmuBusy := tmu.io.busy || tmu1.io.busy
 +    }
    } else {
++    tmuSourceValid := False
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
        out.texture.r := 0
-@@ -334,23 +382,105 @@ case class PixelPipeline(c: Config) extends Component {
+       out.texture.g := 0
+@@ -334,23 +389,105 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -2204,7 +2214,7 @@ index 7797711..4f4b64d 100644
  
    val spanPrefetchFork = StreamFork2(rasterizer.prefetchSpan, synchronous = true)
    val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
-@@ -367,17 +497,19 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,17 +504,19 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -2228,7 +2238,7 @@ index 7797711..4f4b64d 100644
        ccColor.g === ckG && ccColor.b === ckB
      else False
  
-@@ -400,11 +532,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -400,11 +539,8 @@ case class PixelPipeline(c: Config) extends Component {
      dst.depth := src.depth
      dst.wDepth := 0
      dst.colorBeforeFog := src.color
@@ -2241,7 +2251,7 @@ index 7797711..4f4b64d 100644
      if (c.trace.enabled) dst.trace := src.trace
    }
  
-@@ -413,6 +542,7 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -413,6 +549,7 @@ case class PixelPipeline(c: Config) extends Component {
      fog.io.input.simPublic()
      fog.io.output.simPublic()
      fog.io.fogTable := io.controls.fogTable
@@ -2249,7 +2259,7 @@ index 7797711..4f4b64d 100644
      fogArbiterInput >/-> fog.io.input
      fogOutput << fog.io.output
      fogBusy := fog.io.busy
-@@ -439,6 +569,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -439,6 +576,11 @@ case class PixelPipeline(c: Config) extends Component {
    val alphaKill = if (c.enableAlphaTest) alphaTestEnable && !alphaPassed else False
  
    fogOutput >/-> fbAccess.io.input
@@ -2261,21 +2271,29 @@ index 7797711..4f4b64d 100644
    fbAccess.io.fbReadColorRsp << io.colorReadRsp
    fbAccess.io.fbReadAuxRsp << io.auxReadRsp
    io.colorReadReq << fbAccess.io.fbReadColorReq.s2mPipe()
-@@ -653,10 +788,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,10 +795,18 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
++  // The TMUs' busy terms are registered: they come from across the die, and
++  // TMU queue state -> this OR -> PCI FIFO drain / LFB state was the worst
++  // core-clock path (B151, ~22 ns of routing). A pixel only enters a TMU
++  // from tmuSource, and its post-TMU entry is visible (postTmuBusy) from the
++  // fork until it rejoins, so the cycle of lag never reads as idle.
++  val tmuBusyReg = RegNext(tmuInputValid || tmuBusy) init (False)
++  val tmuSideBusy = tmuBusyReg || tmuSourceValid || postTmuBusy
++
 +  // triangleSetup.busy also covers the multi-cycle setup before o.valid.
    val pipelineBusySignal =
 -    triangleSetup.o.valid || rasterizer.running || tmuInputValid ||
-+    triangleSetup.busy || rasterizer.running || tmuInputValid ||
-       tmuBusy || fbAccess.io.busy ||
+-      tmuBusy || fbAccess.io.busy ||
 -      colorCombine.io.input.valid || fogBusy || fbAccess.io.input.valid ||
++    triangleSetup.busy || rasterizer.running || tmuSideBusy || fbAccess.io.busy ||
 +      colorCombine.io.input.valid || colorCombine.io.busy || texCombineBusy || fogBusy || fbAccess.io.input.valid ||
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
        fastfillWriter.io.running || fastfillWriter.io.wordValid ||
-@@ -666,12 +802,81 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +816,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -2292,7 +2310,7 @@ index 7797711..4f4b64d 100644
 +  // Everything after triangle setup, plus the colour write buffer's drain.
 +  // With fbFlushReq asserted, colorBusy also covers a not yet drained run.
 +  val busyAfterSetup =
-+    rasterizer.running || rasterYPipe.valid || tmuInputValid || tmuBusy || fbAccess.io.busy ||
++    rasterizer.running || rasterYPipe.valid || tmuSideBusy || fbAccess.io.busy ||
 +      colorCombine.io.input.valid || colorCombine.io.busy || texCombineBusy || fogBusy || fbAccess.io.input.valid ||
 +      writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
 +      writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
@@ -2358,7 +2376,7 @@ index 7797711..4f4b64d 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +912,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +926,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -3426,7 +3444,7 @@ index c5a4cd8..966372a 100644
      val address = UInt(8 bits)
      val data = Bits(24 bits)
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
-index de14d02..e21ba5f 100644
+index de14d02..4b945ff 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala
 +++ b/src/voodoo/hdmi/HdmiScanout.scala
 @@ -64,15 +64,19 @@ object Rgb888 {
@@ -3650,7 +3668,7 @@ index de14d02..e21ba5f 100644
    }
  
    when(io.readReq.fire) {
-@@ -430,33 +511,74 @@ case class HdmiCdcFramebufferScanout(
+@@ -430,33 +511,77 @@ case class HdmiCdcFramebufferScanout(
        prefetchX := 0
        when(atEndOfDisplayFrame) {
          prefetchY := 0
@@ -3703,25 +3721,28 @@ index de14d02..e21ba5f 100644
    }
  
 +  // Gamma table in BSRAM (as registers it was ~800 flip-flops plus six 33:1
-+  // read muxes): one memory per channel, word k = entry k + 1 : entry k, so
-+  // one read gives both interpolation points. A clutData write of entry k
-+  // sets the low byte of word k, then the high byte of word k - 1 the next
-+  // cycle; clutData comes from the CPU front door, never two cycles running.
-+  // A write lands in the HDMI domain without a handshake: an update during
-+  // scanout just tints part of one frame.
++  // read muxes). Interpolation reads entries i and i + 1, always one even
++  // and one odd entry, so each channel has an even-entry and an odd-entry
++  // memory: one read from each per pixel, and a clutData write is one byte
++  // into one of them (no byte masks: Spinal splits those into 8-bit arrays
++  // small enough for synthesis to put in registers). A write lands in the
++  // HDMI domain without a handshake: an update during scanout just tints
++  // part of one frame.
 +  val gamma = new Area {
-+    val mems = Seq.fill(3)(Mem(Bits(16 bits), 32) init Seq.tabulate(32)(k =>
-+      B((GammaTable.initEntry(k + 1) << 8) | GammaTable.initEntry(k), 16 bits)))
++    def mem(entries: Seq[Int]) = {
++      val m = Mem(Bits(8 bits), 32) init (entries.map(e => B(GammaTable.initEntry(e), 8 bits)) ++
++        Seq.fill(32 - entries.size)(B(0, 8 bits)))
++      m.addAttribute("syn_ramstyle", "block_ram")
++      m
++    }
++    val even = Seq.fill(3)(mem(0 to 32 by 2)) // entry 2j at j
++    val odd = Seq.fill(3)(mem(1 to 31 by 2)) // entry 2j + 1 at j
 +    val w = io.regs.gammaWrite
-+    val hiPending = RegNext(w.valid && w.index =/= 0 && w.index <= 32) init (False)
-+    val hiIndex = RegNext(w.payload.index - 1)
-+    val hiRgb = RegNext(w.payload.rgb)
-+    val writeLo = w.valid && w.index <= 31
-+    val addr = Mux(writeLo, w.payload.index, hiIndex).resize(5)
-+    val rgb = Mux(writeLo, w.payload.rgb, hiRgb)
-+    for ((m, ch) <- mems.zipWithIndex) {
-+      val byte = rgb(23 - 8 * ch downto 16 - 8 * ch)
-+      m.write(addr, byte ## byte, enable = writeLo || hiPending, mask = Mux(writeLo, B"01", B"10"))
++    val k = w.payload.index
++    for (ch <- 0 until 3) {
++      val byte = w.payload.rgb(23 - 8 * ch downto 16 - 8 * ch)
++      even(ch).write((k >> 1).resize(5), byte, enable = w.valid && k <= 32 && !k(0))
++      odd(ch).write((k >> 1).resize(5), byte, enable = w.valid && k <= 31 && k(0))
 +    }
 +  }
 +
@@ -3734,7 +3755,7 @@ index de14d02..e21ba5f 100644
      val contentWidth = BufferCC(io.regs.displayWidth, U(0, 10 bits)).resize(hWidth)
      val contentHeight = BufferCC(io.regs.displayHeight, U(0, 10 bits)).resize(vWidth)
      val scan = VideoScanout(timing)
-@@ -470,37 +592,61 @@ case class HdmiCdcFramebufferScanout(
+@@ -470,37 +595,65 @@ case class HdmiCdcFramebufferScanout(
  
      val useFramebuffer = !testPatternEnable
      val startArmed = BufferCC(scanoutRun, False)
@@ -3776,11 +3797,15 @@ index de14d02..e21ba5f 100644
 +    // The gamma read takes a cycle, so the video outputs come a cycle later.
 +    val px = Rgb888.fromRgb565(pixelFifo.io.pop.payload(15 downto 0))
 +    val channels = Seq(px.r, px.g, px.b)
-+    val words = gamma.mems.zip(channels).map { case (m, ch) => m.readSync(ch(7 downto 3), clockCrossing = true) }
 +    val gammaRgb = Rgb888()
-+    for (((dst, ch), word) <- Seq(gammaRgb.r, gammaRgb.g, gammaRgb.b).zip(channels).zip(words))
-+      dst := Rgb888.gammaLerp(word(7 downto 0).asUInt, word(15 downto 8).asUInt,
++    for ((dst, (ch, c)) <- Seq(gammaRgb.r, gammaRgb.g, gammaRgb.b).zip(channels.zipWithIndex)) {
++      val i = ch(7 downto 3)
++      val evenEntry = gamma.even(c).readSync(((i +^ 1) >> 1).resize(5), clockCrossing = true).asUInt
++      val oddEntry = gamma.odd(c).readSync((i >> 1).resize(5), clockCrossing = true).asUInt
++      val iOdd = RegNext(i(0))
++      dst := Rgb888.gammaLerp(Mux(iOdd, oddEntry, evenEntry), Mux(iOdd, evenEntry, oddEntry),
 +        RegNext(ch(2 downto 0)), RegNext(ch === 255))
++    }
 +    val showPattern = RegNext(testPatternEnable)
 +    val showBlack = RegNext(!alignedNow || !contentActive || !headValid)
 +    val patternRgb = RegNext(pattern.io.rgb)

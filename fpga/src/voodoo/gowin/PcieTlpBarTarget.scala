@@ -62,7 +62,11 @@ case class PcieTlpBarTarget(
     val window = out UInt (windowBits bits)
     // Window 31 register port: write pulse, combinational read.
     val localWrite = out Bool ()
-    val localAddr = out UInt (8 bits)
+    val localAddr = out UInt (8 bits) // writes (with localWrite)
+    // Reads: localRdata is sampled in the read state for this address, a
+    // register (a mux with the header's address put TLP decode -> local
+    // read mux -> readData on one path for timing, B151).
+    val localRaddr = out UInt (8 bits)
     val localWdata = out Bits (32 bits)
     val localRdata = in Bits (32 bits)
   }
@@ -174,7 +178,8 @@ case class PcieTlpBarTarget(
   object ReadSrc extends SpinalEnum { val local, wedge, window, ones = newElement() }
   val localReadAddr = Reg(UInt(8 bits)) init (0)
   val localReadSrc = Reg(ReadSrc()) init (ReadSrc.local)
-  io.localAddr := Mux(state === State.localRead, localReadAddr, offset20(7 downto 0))
+  io.localAddr := offset20(7 downto 0)
+  io.localRaddr := localReadAddr
   io.localWdata := capturedData
   io.tlRxWait := False
   io.tlTxSop := False

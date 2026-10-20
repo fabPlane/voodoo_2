@@ -129,7 +129,7 @@ case class TangMega138kPro(c: Config) extends Component {
     dma.io.regWrite := localWrite
     dma.io.regWaddr := localAddr
     dma.io.regWdata := localWdata
-    dma.io.regAddr := bar.io.localAddr
+    dma.io.regAddr := bar.io.localRaddr
     val axiDebug = Bits(32 bits)
     // Window 31 offset 0x64: DDR3 throttles for stability testing, [7:0]
     // idle cycles after every native command, [11:8] max reads in flight
@@ -162,12 +162,12 @@ case class TangMega138kPro(c: Config) extends Component {
     dma.io.extraStatus(1) := adcExtremes
     dma.io.extraStatus(2) := adcSamples
     bar.io.localRdata := dma.io.regRdata
-    when(bar.io.localAddr === 0x60) { bar.io.localRdata := axiDebug }
-    when(bar.io.localAddr === 0x64) { bar.io.localRdata := ddrThrottle }
-    when(bar.io.localAddr === 0x68) { bar.io.localRdata := adcNow }
-    when(bar.io.localAddr === 0x6c) { bar.io.localRdata := adcExtremes }
-    when(bar.io.localAddr === 0x70) { bar.io.localRdata := adcSamples }
-    for (i <- 0 until 8) when(bar.io.localAddr === 0x78 + 4 * i) { bar.io.localRdata := ddrStats(i) }
+    when(bar.io.localRaddr === 0x60) { bar.io.localRdata := axiDebug }
+    when(bar.io.localRaddr === 0x64) { bar.io.localRdata := ddrThrottle }
+    when(bar.io.localRaddr === 0x68) { bar.io.localRdata := adcNow }
+    when(bar.io.localRaddr === 0x6c) { bar.io.localRdata := adcExtremes }
+    when(bar.io.localRaddr === 0x70) { bar.io.localRdata := adcSamples }
+    for (i <- 0 until 8) when(bar.io.localRaddr === 0x78 + 4 * i) { bar.io.localRdata := ddrStats(i) }
   }
 
   val adcMon = new ClockingArea(coreCd) {
