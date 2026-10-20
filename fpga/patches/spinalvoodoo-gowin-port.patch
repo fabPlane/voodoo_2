@@ -1140,7 +1140,7 @@ index 0000000..404f420
 +  }
 +}
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
-index 3a197b9..e1ea0ab 100644
+index 3a197b9..2731d3b 100644
 --- a/src/voodoo/bus/BmbBusInterface.scala
 +++ b/src/voodoo/bus/BmbBusInterface.scala
 @@ -88,6 +88,9 @@ case class BmbBusInterface(
@@ -1153,7 +1153,51 @@ index 3a197b9..e1ea0ab 100644
  
    // Float alias support: maps float address -> config (target addr, format)
    // Metadata only — hardware generation is in PciFifo
-@@ -189,6 +192,61 @@ case class BmbBusInterface(
+@@ -115,9 +118,15 @@ case class BmbBusInterface(
+ 
+   // BMB transaction signals — all writes are now immediate (PciFifo has handled ordering)
+   val askWrite = (bus.cmd.valid && bus.cmd.opcode === Bmb.Cmd.Opcode.WRITE).allowPruning()
+-  val askRead = (bus.cmd.valid && bus.cmd.opcode === Bmb.Cmd.Opcode.READ).allowPruning()
++  // Reads take a second cycle: the read mux works from a registered address
++  // (command address -> decode -> mux -> reg_rdata in one cycle missed
++  // 48 MHz, B158). Every response comes two cycles after its command, so
++  // write and read responses keep their order.
++  val readCmdReg = RegNext(bus.cmd.fire && bus.cmd.opcode === Bmb.Cmd.Opcode.READ) init (False)
++  val readAddrReg = RegNext(bus.cmd.address)
++  val askRead = readCmdReg.allowPruning()
+   val doWrite = (bus.cmd.fire && bus.cmd.opcode === Bmb.Cmd.Opcode.WRITE).allowPruning()
+-  val doRead = (bus.cmd.fire && bus.cmd.opcode === Bmb.Cmd.Opcode.READ).allowPruning()
++  val doRead = readCmdReg.allowPruning()
+ 
+   // Write data directly from BMB
+   val writeData = bus.cmd.data
+@@ -128,12 +137,12 @@ case class BmbBusInterface(
+   // Connect read data to response
+   bus.rsp.data := bus_rdata
+ 
+-  // Simple response: one cycle after any command
+-  bus.rsp.valid := RegNext(bus.cmd.fire) init (False)
++  // Response: two cycles after any command (see readCmdReg)
++  bus.rsp.valid := RegNext(RegNext(bus.cmd.fire) init (False)) init (False)
+   bus.rsp.last := True
+   bus.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
+-  bus.rsp.source := RegNext(bus.cmd.source)
+-  if (bus.p.access.contextWidth > 0) bus.rsp.context := RegNext(bus.cmd.context)
++  bus.rsp.source := RegNext(RegNext(bus.cmd.source))
++  if (bus.p.access.contextWidth > 0) bus.rsp.context := RegNext(RegNext(bus.cmd.context))
+ 
+   // Always ready — PciFifo handles stall logic
+   bus.cmd.ready := True
+@@ -144,7 +153,7 @@ case class BmbBusInterface(
+   // Bus-level signals
+   override lazy val bus_nsbit: Bool = False // No non-secure bit in BMB
+ 
+-  def readAddress(): UInt = bus.cmd.address
++  def readAddress(): UInt = readAddrReg
+   def writeAddress(): UInt = bus.cmd.address
+ 
+   def readHalt(): Unit = bus.cmd.ready := False
+@@ -189,6 +198,61 @@ case class BmbBusInterface(
      (VoodooRegInst(reg), bufferedCommandStream(addr, pulseStream))
    }
  
@@ -1215,7 +1259,7 @@ index 3a197b9..e1ea0ab 100644
    /** Create a command register that produces a payload-carrying Stream
      *
      * The payload is sampled in the same cycle as the register write and then buffered using the
-@@ -249,6 +307,9 @@ case class BmbBusInterface(
+@@ -249,6 +313,9 @@ case class BmbBusInterface(
  
    /** Get command stream ready signals (addr -> Bool) */
    def getCommandStreamReady: Map[BigInt, Bool] = commandStreamReady.toMap
