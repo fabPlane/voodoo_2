@@ -475,24 +475,42 @@ case class Axi4ToGowinDdrNative(
       portOh := B(1 << wp.idx, 3 bits)
       cAddr := wp.axi.aw.addr.resized
       beatsLeft := (wp.axi.aw.len.resize(9) + 1).resized
+      inLeft := (wp.axi.aw.len.resize(9) + 1).resized
       if (wp.cfg.useId) cId := wp.axi.aw.id.resized
       groupIdx := wordIdx(wp.axi.aw.addr.resize(32))
       cStrbs.foreach(_ := 0)
       cHasData := False
       collecting := True
     }
-    val wValid = Bool()
-    val wData = Bits(32 bits)
-    val wStrb = Bits(4 bits)
-    val wLast = Bool()
-    val bReady = Bool()
-    wValid := False; wData := 0; wStrb := 0; wLast := False; bReady := False
-    for (wp <- writePorts) when(portOh(wp.idx)) {
-      wValid := wp.axi.w.valid
-      wData := wp.axi.w.data
-      wStrb := wp.axi.w.strb
-      wLast := wp.axi.w.last
+    // The collecting burst's W beats go through a register stage first: the
+    // port mux / clock-crossing outputs fed the line-register enables
+    // directly and missed 100 MHz by 2-15 ns depending on placement (B157).
+    // inLeft stops it at the burst's last beat (the next burst's W may
+    // already be waiting on the same port).
+    case class WBeat() extends Bundle {
+      val data = Bits(32 bits)
+      val strb = Bits(4 bits)
+      val last = Bool()
     }
+    val inLeft = Reg(UInt(9 bits)) init (0)
+    val wIn = Stream(WBeat())
+    wIn.valid := False
+    wIn.payload.assignDontCare()
+    for (wp <- writePorts) when(portOh(wp.idx)) {
+      wIn.valid := wp.axi.w.valid && inLeft =/= 0
+      wIn.data := wp.axi.w.data
+      wIn.strb := wp.axi.w.strb
+      wIn.last := wp.axi.w.last
+      wp.axi.w.ready := wIn.ready && inLeft =/= 0
+    }
+    when(wIn.fire) { inLeft := inLeft - 1 }
+    val wQ = wIn.s2mPipe().m2sPipe()
+    val wValid = wQ.valid
+    val wData = wQ.data
+    val wStrb = wQ.strb
+    val wLast = wQ.last
+    val bReady = Bool()
+    bReady := False
     for (wp <- writePorts) when(iPortOh(wp.idx)) { bReady := wp.axi.b.ready }
 
     // Issue buffer: free once its line is issued (or was all padding) and,
@@ -538,7 +556,7 @@ case class Axi4ToGowinDdrNative(
       (io.fb.aw.valid || io.tex.aw.valid || (if (hasAuxW) io.auxW.aw.valid else False))) init (False)
     val completes = groupIdx === lastIdx || wLast || beatsLeft === 1
     val wReady = collecting && (!completes || (!iValid && !justStarted))
-    for (wp <- writePorts) when(portOh(wp.idx)) { wp.axi.w.ready := wReady }
+    wQ.ready := wReady
     val beat = wValid && wReady
     when(iDone) { iValid := False; iResp := False }
     when(beat) {
