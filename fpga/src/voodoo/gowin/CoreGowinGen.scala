@@ -108,7 +108,12 @@ object GowinGenSupport {
       // less per TMU; same cycles in GLQuake trace replay).
       texHintValidCheck = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
       // TMU1 mostly holds lightmaps (small): half the cache, ~20 BSRAM less.
-      tmu1SmallCacheLines = 256
+      tmu1SmallCacheLines = 256,
+      // Two TMUs: no triangleCMD register copy (~2.3k FFs); register writes
+      // wait for setup instead, same cycles in GLQuake trace replay.
+      triangleSnapshot = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
+      // Two TMUs: per-pixel TMU / pixel config as a slot tag (~1.4k FFs).
+      pixelConfigSlots = sys.env.get("GOWIN_TMU_COUNT").exists(_.toInt > 1)
     )
 
   def verilog(targetDirectory: String = "rtl/gowin"): SpinalConfig =

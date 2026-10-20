@@ -635,7 +635,7 @@ index d163ab7..5ab9b45 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..d794b13 100644
+index 1b34fa2..b168d49 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -648,7 +648,7 @@ index 1b34fa2..d794b13 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,46 @@ case class Config(
+@@ -31,6 +34,55 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -669,6 +669,15 @@ index 1b34fa2..d794b13 100644
 +    // Rasterizer span queue (spans between the walker, which issues the
 +    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
 +    spanQueueDepth: Int = 4,
++    // triangleCMD copies the triangle's registers (~2.3 kbit) so the next
++    // triangle's writes can land during setup; false = no copy, register
++    // writes wait until setup has taken the triangle.
++    triangleSnapshot: Boolean = true,
++    // Per-pixel TMU / pixel config (~375 bits) replaced by a 1-bit tag into
++    // the rasterizer's two triangle-constant slots (live / shadow), read
++    // where the pixel enters the TMUs; a slot is reused once every span of
++    // its triangle has passed there.
++    pixelConfigSlots: Boolean = false,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -696,7 +705,7 @@ index 1b34fa2..d794b13 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..4e0b6b5 100644
+index 100f1c6..9ecb265 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -735,7 +744,7 @@ index 100f1c6..4e0b6b5 100644
      val fbColorWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbAuxWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbColorReadMem = master(Bmb(Core.fbMemBmbParams(c)))
-@@ -92,12 +114,16 @@ case class Core(c: Config) extends Component {
+@@ -92,25 +114,37 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -753,7 +762,14 @@ index 100f1c6..4e0b6b5 100644
    val regBank = RegisterBank(c)
    val pciFifo = PciFifo(
      busParams = RegisterBank.bmbParams(c),
-@@ -110,7 +136,14 @@ case class Core(c: Config) extends Component {
+     categories = regBank.busif.getCategories,
+     floatAliases = regBank.busif.getFloatAliases,
+-    commandAddresses = regBank.busif.getCommandStreamReady.keys.toSeq.sorted
++    commandAddresses = regBank.busif.getCommandStreamReady.keys.toSeq.sorted,
++    blockingCommands = regBank.busif.getBlockingCommands
+   )
+ 
+   val frontdoor = CoreCpuFrontdoor(c)
    val pixelPipeline = PixelPipeline(c)
    val framebufferMem = FramebufferMemSubsystem(c)
    val textureMem = TextureMemSubsystem(c)
@@ -769,7 +785,7 @@ index 100f1c6..4e0b6b5 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -149,7 +182,7 @@ case class Core(c: Config) extends Component {
+@@ -149,7 +183,7 @@ case class Core(c: Config) extends Component {
      hdmiScanout.io.regs.displayHeight := 480
      hdmiScanout.io.regs.framebufferEnable := True
      hdmiScanout.io.regs.testPatternEnable := False
@@ -778,7 +794,7 @@ index 100f1c6..4e0b6b5 100644
  
      pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
        c,
-@@ -158,13 +191,16 @@ case class Core(c: Config) extends Component {
+@@ -158,13 +192,16 @@ case class Core(c: Config) extends Component {
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
      textureMem.io.downloadConfig := TextureMem.DownloadConfig.fromRegisterBank(c, regBank)
@@ -796,7 +812,7 @@ index 100f1c6..4e0b6b5 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,16 +209,20 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +210,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -820,7 +836,7 @@ index 100f1c6..4e0b6b5 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +230,7 @@ case class Core(c: Config) extends Component {
+@@ -190,6 +231,7 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
@@ -828,7 +844,7 @@ index 100f1c6..4e0b6b5 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -200,9 +241,37 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +242,37 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -926,7 +942,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..e3d9f72 100644
+index 6051025..7794bc4 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -10,21 +10,32 @@ object CoreSimGen extends App {
@@ -967,7 +983,7 @@ index 6051025..e3d9f72 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,15 @@ object CoreSimGen extends App {
+@@ -37,7 +48,17 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -980,7 +996,9 @@ index 6051025..e3d9f72 100644
 +      tmuCount = argIntValue("--tmu-count").getOrElse(1),
 +      texSampleQueueDepth = argIntValue("--tex-sample-queue-depth").getOrElse(16),
 +      texHintValidCheck = !args.contains("--no-tex-hint-valid"),
-+      tmu1SmallCacheLines = argIntValue("--tmu1-cache-lines").getOrElse(0)
++      tmu1SmallCacheLines = argIntValue("--tmu1-cache-lines").getOrElse(0),
++      triangleSnapshot = !args.contains("--no-triangle-snapshot"),
++      pixelConfigSlots = args.contains("--pixel-config-slots")
      )
  
    val memTiming = SimMemoryTiming(
@@ -1122,10 +1140,20 @@ index 0000000..404f420
 +  }
 +}
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
-index 3a197b9..0f33de9 100644
+index 3a197b9..e1ea0ab 100644
 --- a/src/voodoo/bus/BmbBusInterface.scala
 +++ b/src/voodoo/bus/BmbBusInterface.scala
-@@ -189,6 +189,42 @@ case class BmbBusInterface(
+@@ -88,6 +88,9 @@ case class BmbBusInterface(
+   // Track command register stream ready signals for automatic drain blocking
+   // Maps address -> pulseStream.ready (from s2mPipe, safe because output valid is registered)
+   private val commandStreamReady = mutable.Map[BigInt, Bool]()
++  // Commands without a payload copy: while one waits, no register write may
++  // drain (its payload is read from the live registers).
++  private val blockingCommands = mutable.Set[BigInt]()
+ 
+   // Float alias support: maps float address -> config (target addr, format)
+   // Metadata only — hardware generation is in PciFifo
+@@ -189,6 +192,61 @@ case class BmbBusInterface(
      (VoodooRegInst(reg), bufferedCommandStream(addr, pulseStream))
    }
  
@@ -1142,18 +1170,37 @@ index 3a197b9..0f33de9 100644
 +      addrB: BigInt,
 +      nameB: String,
 +      category: RegisterCategory,
-+      payloadType: HardType[T]
++      payloadType: HardType[T],
++      snapshot: Boolean = true
 +  )(
-+      buildPayload: (Bool, T) => Unit
++      // (written through B, payload, hold): hold(x) is x as of the command
++      // write (for the write data, e.g. a sign bit).
++      buildPayload: (Bool, T, Bool => Bool) => Unit
 +  ): (RegInst, RegInst, Stream[T]) = {
 +    registerCategories(addrA) = category
 +    registerCategories(addrB) = category
 +    val regA = newRegAt(addrA, nameA, null)
 +    val regB = newRegAt(addrB, nameB, null)
++    val write = regA.hitDoWrite || regB.hitDoWrite
++
++    if (!snapshot) {
++      // No payload copy: the command waits with its payload built from the
++      // live registers, which stay put because PciFifo drains no register
++      // write meanwhile (blockingCommands).
++      val cmd = Stream(payloadType())
++      val pending = RegInit(False) setWhen (write) clearWhen (cmd.fire)
++      cmd.valid := pending
++      buildPayload(RegNextWhen(regB.hitDoWrite, write) init (False), cmd.payload, x => RegNextWhen(x, write))
++      commandStreamReady(addrA) = !pending
++      commandStreamReady(addrB) = !pending
++      blockingCommands += addrA
++      blockingCommands += addrB
++      return (regA, regB, cmd)
++    }
 +
 +    val src = Stream(payloadType())
-+    src.valid := regA.hitDoWrite || regB.hitDoWrite
-+    buildPayload(regB.hitDoWrite, src.payload)
++    src.valid := write
++    buildPayload(regB.hitDoWrite, src.payload, x => x)
 +
 +    // One snapshot slot. Its ready is "slot empty" (registered): PciFifo
 +    // checks it when it pops a command write and holds every other command
@@ -1168,11 +1215,29 @@ index 3a197b9..0f33de9 100644
    /** Create a command register that produces a payload-carrying Stream
      *
      * The payload is sampled in the same cycle as the register write and then buffered using the
+@@ -249,6 +307,9 @@ case class BmbBusInterface(
+ 
+   /** Get command stream ready signals (addr -> Bool) */
+   def getCommandStreamReady: Map[BigInt, Bool] = commandStreamReady.toMap
++
++  /** Command addresses whose waiting command blocks every register drain. */
++  def getBlockingCommands: Set[BigInt] = blockingCommands.toSet
+ }
+ 
+ /** Register write metadata bundle */
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..0b6eb02 100644
+index 226d60e..a462ece 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
-@@ -52,6 +52,10 @@ case class PciFifo(
+@@ -40,6 +40,7 @@ case class PciFifo(
+     categories: Map[BigInt, RegisterCategory],
+     floatAliases: Map[BigInt, PciFifo.FloatAliasConfig],
+     commandAddresses: Seq[BigInt],
++    blockingCommands: Set[BigInt] = Set(),
+     formalStrong: Boolean = true
+ ) extends Component {
+ 
+@@ -52,6 +53,10 @@ case class PciFifo(
    }
  
    val busAddrWidth: Int = busParams.access.addressWidth
@@ -1183,7 +1248,7 @@ index 226d60e..0b6eb02 100644
    val busDataWidth: Int = busParams.access.dataWidth
  
    val io = new Bundle {
-@@ -67,6 +71,8 @@ case class PciFifo(
+@@ -67,6 +72,8 @@ case class PciFifo(
  
      // Drain blocking inputs
      val pipelineBusy = in Bool ()
@@ -1192,7 +1257,7 @@ index 226d60e..0b6eb02 100644
      val commandReady = in Vec (Bool(), commandAddresses.size)
  
      // Status outputs
-@@ -97,20 +103,57 @@ case class PciFifo(
+@@ -97,20 +104,57 @@ case class PciFifo(
    // ========================================================================
    // Address categorization signals (assigned in addPrePopTask)
    // ========================================================================
@@ -1257,7 +1322,7 @@ index 226d60e..0b6eb02 100644
  
    private case class StagedWrite() extends Bundle {
      val address = UInt(busAddrWidth bits)
-@@ -170,10 +213,10 @@ case class PciFifo(
+@@ -170,10 +214,10 @@ case class PciFifo(
      clearStaged(stagedWriteTx)
  
      when(queueableCpuWrite) {
@@ -1272,7 +1337,7 @@ index 226d60e..0b6eb02 100644
        stagedWriteTx.syncRequired := syncRequired
        stagedWriteTx.isFloatAlias := isFloatAlias
        stagedWriteTx.floatTargetAddr := floatTargetAddr
-@@ -268,7 +311,7 @@ case class PciFifo(
+@@ -268,7 +312,7 @@ case class PciFifo(
  
    // wasEnqueued: detect when a specific register write was actually enqueued
    io.wasEnqueued := queuedWriteTx.fire && !queuedWriteTx.isTexture &&
@@ -1281,7 +1346,7 @@ index 226d60e..0b6eb02 100644
  
    // ========================================================================
    // 64-entry PCI FIFO
-@@ -283,6 +326,13 @@ case class PciFifo(
+@@ -283,6 +327,13 @@ case class PciFifo(
    // ========================================================================
    // Drain blocking logic
    // ========================================================================
@@ -1295,7 +1360,7 @@ index 226d60e..0b6eb02 100644
    private val drainControl = new Area {
      val canDrain = Bool()
      canDrain := True
-@@ -294,6 +344,44 @@ case class PciFifo(
+@@ -294,6 +345,44 @@ case class PciFifo(
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
        canDrain := False
      }
@@ -1340,7 +1405,7 @@ index 226d60e..0b6eb02 100644
  
      val commandStreamBlocked = Bool()
      commandStreamBlocked := False
-@@ -303,7 +391,8 @@ case class PciFifo(
+@@ -303,7 +392,8 @@ case class PciFifo(
  
      val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
      fifoEmpty.simPublic()
@@ -1350,7 +1415,7 @@ index 226d60e..0b6eb02 100644
      io.fifoEmpty := fifoEmpty
    }
    private val canDrain = drainControl.canDrain
-@@ -324,11 +413,12 @@ case class PciFifo(
+@@ -324,11 +414,12 @@ case class PciFifo(
      io.texDrain.pciAddr := drainedWrite.texPciAddr
      io.texDrain.data := drainedWrite.data
      io.texDrain.mask := drainedWrite.mask
@@ -1367,7 +1432,7 @@ index 226d60e..0b6eb02 100644
    }
    val isTexDrain = drainRoute.isTexDrain
    val isRegDrain = drainRoute.isRegDrain
-@@ -341,31 +431,31 @@ case class PciFifo(
+@@ -341,31 +432,31 @@ case class PciFifo(
      // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
      // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
      val doWriteDirect = isWriteCmd && fifoBypass
@@ -1416,7 +1481,7 @@ index 226d60e..0b6eb02 100644
        (isTexDrain && io.texDrain.ready)
    }
    private val doWriteDirect = regSideMux.doWriteDirect
-@@ -383,16 +473,16 @@ case class PciFifo(
+@@ -383,16 +474,16 @@ case class PciFifo(
      io.regSide.rsp.ready := True
  
      io.cpuSide.rsp.valid := RegNext(
@@ -1437,7 +1502,7 @@ index 226d60e..0b6eb02 100644
        pendingRead := True
      }
      when(pendingRead && io.regSide.rsp.valid) {
-@@ -414,18 +504,18 @@ case class PciFifo(
+@@ -414,18 +505,18 @@ case class PciFifo(
    // Stall logic
    // ========================================================================
    private val cpuReady = new Area {
@@ -1463,7 +1528,7 @@ index 226d60e..0b6eb02 100644
      }
    }
  
-@@ -453,33 +543,35 @@ case class PciFifo(
+@@ -453,33 +544,35 @@ case class PciFifo(
      println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
  
      // Default: unregistered addresses bypass FIFO
@@ -1514,7 +1579,7 @@ index 226d60e..0b6eb02 100644
        }
      }
  
-@@ -488,52 +580,61 @@ case class PciFifo(
+@@ -488,52 +581,74 @@ case class PciFifo(
        s"[PciFifo] Command stream addresses: ${commandAddresses.map(a => f"0x$a%03x").mkString(", ")}"
      )
      if (commandAddresses.nonEmpty) {
@@ -1533,6 +1598,19 @@ index 226d60e..0b6eb02 100644
 +          commandStreamBlocked := !io.commandReady(idx) || commandInFlight
          }
        }
++      // A command without a payload copy reads the live registers until it
++      // is taken: nothing drains while it waits or is on its way there.
++      if (blockingCommands.nonEmpty) {
++        def isBlocking(a: UInt): Bool = blockingCommands.toSeq.map(x => regIs(a, x)).orR
++        val blockingInFlight =
++          (issuedWrite.valid && !issuedWrite.isTexture && isBlocking(issuedWrite.address)) ||
++            (regCmdStage.valid && regCmdStage.opcode === Bmb.Cmd.Opcode.WRITE && isBlocking(regCmdStage.address))
++        val blockingWaiting = commandAddresses.zipWithIndex
++          .filter { case (a, _) => blockingCommands.contains(a) }
++          .map { case (_, idx) => !io.commandReady(idx) }
++          .orR
++        when(blockingInFlight || blockingWaiting) { commandStreamBlocked := True }
++      }
      }
    })
  
@@ -1597,7 +1675,7 @@ index 226d60e..0b6eb02 100644
      }
  
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
-@@ -550,8 +651,8 @@ case class PciFifo(
+@@ -550,8 +665,8 @@ case class PciFifo(
        assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
      }
  
@@ -1608,7 +1686,7 @@ index 226d60e..0b6eb02 100644
      }
  
      when(floatWriteRequest && !floatConvertInFlight) {
-@@ -581,12 +682,10 @@ case class PciFifo(
+@@ -581,12 +696,10 @@ case class PciFifo(
        assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
      }
  
@@ -1894,7 +1972,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..6bd4052 100644
+index 7797711..4f4b64d 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,7 @@ object PixelPipeline {
@@ -1930,14 +2008,17 @@ index 7797711..6bd4052 100644
    rasterizer.enableClipping := io.controls.fastfill.fbzMode.enableClipping
    rasterizer.clipLeft := io.controls.clip.left
    rasterizer.clipRight := io.controls.clip.right
-@@ -280,15 +286,21 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -280,15 +286,24 @@ case class PixelPipeline(c: Config) extends Component {
  
    val rasterYPipe = rasterYTransformed.stage()
    val rasterFork = StreamFork2(rasterYPipe, synchronous = true)
 -  val postTmuQueue = rasterFork._2
 -    .translateWith(Rasterizer.PostTmu.fromOutput(c, rasterFork._2.payload))
++  val slots = rasterizer.slotConfig // pixelConfigSlots, else null
++  require(!c.pixelConfigSlots || c.enableTmu)
 +  val postTmuQueued = rasterFork._2
-+    .translateWith(Rasterizer.PostTmuSlim.fromOutput(c, rasterFork._2.payload))
++    .translateWith(Rasterizer.PostTmuSlim.fromOutput(c, rasterFork._2.payload,
++      Rasterizer.configsOf(c, rasterFork._2.payload, slots)))
      .queue(64)
 +  val postTmuQueue = postTmuQueued
 +    .translateWith(Rasterizer.PostTmuSlim.toPostTmu(c, postTmuQueued.payload))
@@ -1954,11 +2035,17 @@ index 7797711..6bd4052 100644
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -305,14 +317,41 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -305,14 +320,47 @@ case class PixelPipeline(c: Config) extends Component {
      tmu.io.invalidate := io.tmuInvalidate
      io.texRead <> tmu.io.texRead
  
 +    val tmuSource = rasterFork._1.stage()
++    val tmuCfg = Rasterizer.configsOf(c, tmuSource.payload, slots).tmu
++    // A span's config slot is free once its last pixel is in the TMUs.
++    if (c.pixelConfigSlots) {
++      rasterizer.retire.valid := tmuSource.fire && tmuSource.payload.spanLast
++      rasterizer.retire.payload := tmuSource.payload.cfgTag
++    }
      val tmuInput = Stream(Tmu.Input(c))
 -    tmuInput.translateFrom(rasterFork._1.stage())((out, in) =>
 -      out := Tmu.Input.fromRasterizer(c, in)
@@ -1969,7 +2056,7 @@ index 7797711..6bd4052 100644
 -    tmuBusy := tmu.io.busy
 +    tmuPerf := tmu.io.texPerf
 +    if (c.tmuCount == 1) {
-+      tmuInput.translateFrom(tmuSource)((out, in) => out := Tmu.Input.fromRasterizer(c, in))
++      tmuInput.translateFrom(tmuSource)((out, in) => out := Tmu.Input.fromRasterizer(c, in, tmuCfg))
 +      tmuInput >/-> tmu.io.input
 +      tmuInputValid := tmu.io.input.valid
 +      tmuInputStall := tmu.io.input.valid && !tmu.io.input.ready
@@ -1989,10 +2076,10 @@ index 7797711..6bd4052 100644
 +      tmu1.io.invalidate := io.tmuInvalidate
 +      io.texRead1 <> tmu1.io.texRead
 +      val (toTmu0, toTmu1) = StreamFork2(tmuSource, synchronous = true)
-+      tmuInput.translateFrom(toTmu0)((out, in) => out := Tmu.Input.fromRasterizer(c, in))
++      tmuInput.translateFrom(toTmu0)((out, in) => out := Tmu.Input.fromRasterizer(c, in, tmuCfg))
 +      tmuInput >/-> tmu.io.input
 +      val tmu1Input = Stream(Tmu.Input(c))
-+      tmu1Input.translateFrom(toTmu1)((out, in) => out := Tmu.Input.fromRasterizerTmu1(c, in))
++      tmu1Input.translateFrom(toTmu1)((out, in) => out := Tmu.Input.fromRasterizerTmu1(c, in, tmuCfg))
 +      tmu1Input >/-> tmu1.io.input
 +      tmu1Output << tmu1.io.output
 +      tmuInputValid := tmu.io.input.valid || tmu1.io.input.valid
@@ -2002,7 +2089,7 @@ index 7797711..6bd4052 100644
    } else {
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
        out.texture.r := 0
-@@ -334,23 +373,105 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,23 +382,105 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -2117,7 +2204,7 @@ index 7797711..6bd4052 100644
  
    val spanPrefetchFork = StreamFork2(rasterizer.prefetchSpan, synchronous = true)
    val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
-@@ -367,17 +488,19 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,17 +497,19 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -2141,7 +2228,7 @@ index 7797711..6bd4052 100644
        ccColor.g === ckG && ccColor.b === ckB
      else False
  
-@@ -400,11 +523,8 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -400,11 +532,8 @@ case class PixelPipeline(c: Config) extends Component {
      dst.depth := src.depth
      dst.wDepth := 0
      dst.colorBeforeFog := src.color
@@ -2154,7 +2241,7 @@ index 7797711..6bd4052 100644
      if (c.trace.enabled) dst.trace := src.trace
    }
  
-@@ -413,6 +533,7 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -413,6 +542,7 @@ case class PixelPipeline(c: Config) extends Component {
      fog.io.input.simPublic()
      fog.io.output.simPublic()
      fog.io.fogTable := io.controls.fogTable
@@ -2162,7 +2249,7 @@ index 7797711..6bd4052 100644
      fogArbiterInput >/-> fog.io.input
      fogOutput << fog.io.output
      fogBusy := fog.io.busy
-@@ -439,6 +560,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -439,6 +569,11 @@ case class PixelPipeline(c: Config) extends Component {
    val alphaKill = if (c.enableAlphaTest) alphaTestEnable && !alphaPassed else False
  
    fogOutput >/-> fbAccess.io.input
@@ -2174,7 +2261,7 @@ index 7797711..6bd4052 100644
    fbAccess.io.fbReadColorRsp << io.colorReadRsp
    fbAccess.io.fbReadAuxRsp << io.auxReadRsp
    io.colorReadReq << fbAccess.io.fbReadColorReq.s2mPipe()
-@@ -653,10 +779,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,10 +788,11 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -2188,7 +2275,7 @@ index 7797711..6bd4052 100644
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
        fastfillWriter.io.running || fastfillWriter.io.wordValid ||
-@@ -666,12 +793,81 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +802,81 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -2271,7 +2358,7 @@ index 7797711..6bd4052 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +903,36 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +912,36 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -2922,7 +3009,7 @@ index aeba713..082556f 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..88c583c 100644
+index c5a4cd8..966372a 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -65,35 +65,46 @@ case class RegisterBank(config: Config) extends Component {
@@ -3128,7 +3215,7 @@ index c5a4cd8..88c583c 100644
    private def fifoRegBits(addr: Int, name: String, category: RegisterCategory, doc: String): Bits =
      busif
        .newRegAtWithCategory(addr, name, category)
-@@ -649,28 +680,26 @@ case class RegisterBank(config: Config) extends Component {
+@@ -649,28 +680,27 @@ case class RegisterBank(config: Config) extends Component {
    // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
    // ========================================================================
    val commands = new Area {
@@ -3153,12 +3240,14 @@ index c5a4cd8..88c583c 100644
          0x100,
          "ftriangleCMD",
          RegisterCategory.fifoNoSync,
-         HardType(TriangleSetup.Input(config))
+-        HardType(TriangleSetup.Input(config))
 -      ) { (reg, payload) =>
-+      ) { (isFloat, payload) =>
++        HardType(TriangleSetup.Input(config)),
++        snapshot = config.triangleSnapshot
++      ) { (isFloat, payload, hold) =>
          Component.current.addPrePopTask { () =>
 -          payload.assignFromBits(buildTriangleCommandInput(io.bus.cmd.data(31), True).asBits)
-+          payload.assignFromBits(buildTriangleCommandInput(regBus.cmd.data(31), isFloat).asBits)
++          payload.assignFromBits(buildTriangleCommandInput(hold(regBus.cmd.data(31)), isFloat).asBits)
          }
        }
 +    // Kept for the PixelPipeline / test interface; never valid.
@@ -3168,7 +3257,7 @@ index c5a4cd8..88c583c 100644
      val (nopCmdReg, nopCmdStream) =
        busif.newCommandRegWithPayload(
          0x120,
-@@ -679,7 +708,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -679,7 +709,7 @@ case class RegisterBank(config: Config) extends Component {
          HardType(Bits(32 bits))
        ) { (_, payload) =>
          Component.current.addPrePopTask { () =>
@@ -3177,7 +3266,7 @@ index c5a4cd8..88c583c 100644
          }
        }
      val (fastfillCmdReg, fastfillCmdStream) =
-@@ -691,7 +720,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -691,7 +721,7 @@ case class RegisterBank(config: Config) extends Component {
          when(swapbufferCmdStream.fire) {
            triangleDrawTraceId := triangleDrawTraceId + 1
          }
@@ -3186,7 +3275,7 @@ index c5a4cd8..88c583c 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1124,33 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1125,33 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -3221,7 +3310,7 @@ index c5a4cd8..88c583c 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1169,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1170,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -3230,7 +3319,7 @@ index c5a4cd8..88c583c 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1181,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1182,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -3239,7 +3328,7 @@ index c5a4cd8..88c583c 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1241,55 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1242,55 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -3310,7 +3399,7 @@ index c5a4cd8..88c583c 100644
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
-@@ -1250,6 +1335,25 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1250,6 +1336,25 @@ case class RegisterBank(config: Config) extends Component {
  }
  
  object RegisterBank {
@@ -4404,10 +4493,10 @@ index c6b2ec5..15756b4 100644
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
-index cee86c0..0cd009e 100644
+index cee86c0..f852cb3 100644
 --- a/src/voodoo/raster/Rasterizer.scala
 +++ b/src/voodoo/raster/Rasterizer.scala
-@@ -17,31 +17,136 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -17,31 +17,151 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
    val clipLowY = in UInt (10 bits)
    val clipHighY = in UInt (10 bits)
  
@@ -4432,7 +4521,12 @@ index cee86c0..0cd009e 100644
 +  val walkTag = RegInit(False)
 +  val shadowConst = Reg(Rasterizer.SpanConst(c))
 +  val liveConst = Rasterizer.SpanConst.fromSpanWalker(c, spanWalker.o.payload)
-+  val tagCount = Vec.fill(2)(Reg(UInt(log2Up(c.spanQueueDepth + 2) bits)) init (0))
++  // Spans per tag from the walker to where they retire: the span rasterizer
++  // input, or with pixelConfigSlots the TMU input of their last pixel.
++  val tagCount = Vec.fill(2)(Reg(UInt(log2Up(c.spanQueueDepth + 16) bits)) init (0))
++  // pixelConfigSlots: config of each tag's triangle, and span retirement.
++  val slotConfig = if (c.pixelConfigSlots) out(Vec.fill(2)(Rasterizer.PixelConfigs(c))) else null
++  val retire = if (c.pixelConfigSlots) slave(Flow(Bool())) else null
 +  val shadowBusy = tagCount((!walkTag).asUInt) =/= 0
 +
 +  spanWalker.i << i.haltWhen(shadowBusy)
@@ -4454,12 +4548,19 @@ index cee86c0..0cd009e 100644
 +  val queuedVar = spanVar.queue(c.spanQueueDepth)
 +  for (t <- 0 until 2) {
 +    val inc = spanVar.fire && walkTag === Bool(t == 1)
-+    val dec = queuedVar.fire && queuedVar.payload.tag === Bool(t == 1)
++    val dec =
++      if (c.pixelConfigSlots) retire.valid && retire.payload === Bool(t == 1)
++      else queuedVar.fire && queuedVar.payload.tag === Bool(t == 1)
 +    when(inc && !dec) {
 +      tagCount(t) := tagCount(t) + 1
 +    }.elsewhen(dec && !inc) {
 +      tagCount(t) := tagCount(t) - 1
 +    }
++  }
++  if (c.pixelConfigSlots) for (t <- 0 until 2) {
++    val k = Mux(walkTag === Bool(t == 1), liveConst, shadowConst)
++    slotConfig(t).tmu := k.tmuConfig
++    slotConfig(t).pixel := k.pixelConfig
 +  }
 +  val queuedSpan = queuedVar.translateWith {
 +    val k = Mux(queuedVar.payload.tag === walkTag, liveConst, shadowConst)
@@ -4534,7 +4635,7 @@ index cee86c0..0cd009e 100644
 +    }
 +
 +    def toSpanWalker(c: Config, in: SpanVar, k: SpanConst): SpanWalker.Output = {
-+      val out = SpanWalker.Output(c)
++      val out = SpanWalker.Output(c, withConfig = !c.pixelConfigSlots)
 +      out.xStart := in.xStart
 +      out.xEnd := in.xEnd
 +      out.y := in.y
@@ -4545,8 +4646,11 @@ index cee86c0..0cd009e 100644
 +      if (c.tmuCount > 1) out.hiTex1 := in.hiTex1
 +      out.firstSpan := in.firstSpan
 +      out.stepX := k.stepX
-+      out.tmuConfig := k.tmuConfig
-+      out.pixelConfig := k.pixelConfig
++      if (c.pixelConfigSlots) out.cfgTag := in.tag
++      else {
++        out.tmuConfig := k.tmuConfig
++        out.pixelConfig := k.pixelConfig
++      }
 +      if (c.trace.enabled) out.trace := k.trace
 +      out
 +    }
@@ -4555,7 +4659,7 @@ index cee86c0..0cd009e 100644
    case class InputGradient(fmt: QFormat) extends Bundle {
      val start = AFix(fmt)
      val d = vertex2d(fmt)
-@@ -65,6 +170,8 @@ object Rasterizer {
+@@ -65,13 +185,24 @@ object Rasterizer {
  
    case class Output(c: Config) extends Bundle {
      val grads = GradientBundle(AFix(_), c)
@@ -4563,16 +4667,34 @@ index cee86c0..0cd009e 100644
 +    val tex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsAccumFormat)) else null
      val alphaGradHi = AFix(c.texCoordsHiFormat)
      val coords = Vec.fill(2)(SInt(c.vertexFormat.nonFraction bits))
-     val tmuConfig = TriangleSetup.TmuConfig(c)
-@@ -95,9 +202,71 @@ object Rasterizer {
+-    val tmuConfig = TriangleSetup.TmuConfig(c)
+-    val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
++    val tmuConfig = if (c.pixelConfigSlots) null else TriangleSetup.TmuConfig(c)
++    val pixelConfig = if (c.pixelConfigSlots) null else TriangleSetup.PixelPipelineConfig(c)
++    // pixelConfigSlots: config slot tag, and last pixel of its span.
++    val cfgTag = if (c.pixelConfigSlots) Bool() else null
++    val spanLast = if (c.pixelConfigSlots) Bool() else null
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+   }
+ 
++  /** A pixel's TMU and pixel-pipeline config. */
++  case class PixelConfigs(c: Config) extends Bundle {
++    val tmu = TriangleSetup.TmuConfig(c)
++    val pixel = TriangleSetup.PixelPipelineConfig(c)
++  }
++
+   case class PrefetchSpan(c: Config) extends Bundle {
+     val xStart = AFix(c.vertexFormat)
+     val xEnd = AFix(c.vertexFormat)
+@@ -95,16 +226,90 @@ object Rasterizer {
      val alphaGradHi = AFix(c.texCoordsHiFormat)
      val coords = Vec.fill(2)(SInt(c.vertexFormat.nonFraction bits))
      val config = TriangleSetup.PixelPipelineConfig(c)
 +    // Two TMUs: texture combine modes of TMU0 (index 0) and TMU1.
 +    val texCombine = if (c.tmuCount > 1) Vec.fill(2)(voodoo.texture.TextureCombine.Mode()) else null
-+    val trace = if (c.trace.enabled) Trace.PixelKey() else null
-+  }
-+
+     val trace = if (c.trace.enabled) Trace.PixelKey() else null
+   }
+ 
 +  /** What ColorCombine reads of PostTmu, for the 64-deep post-TMU queue: no
 +    * S / T (the TMU has used them) or low-precision alpha (alphaGradHi is
 +    * used), and W's low 32 bits only (ColorCombine takes rawW as 32 bits). */
@@ -4586,9 +4708,9 @@ index cee86c0..0cd009e 100644
 +    val coords = Vec.fill(2)(SInt(c.vertexFormat.nonFraction bits))
 +    val config = TriangleSetup.PixelPipelineConfig(c)
 +    val texCombine = if (c.tmuCount > 1) Vec.fill(2)(voodoo.texture.TextureCombine.Mode()) else null
-     val trace = if (c.trace.enabled) Trace.PixelKey() else null
-   }
- 
++    val trace = if (c.trace.enabled) Trace.PixelKey() else null
++  }
++
 +  /** TMU0 / TMU1 texture combine modes of a pixel (two-TMU builds). */
 +  def texCombineOf(c: Config, cfg: TriangleSetup.TmuConfig): Vec[voodoo.texture.TextureCombine.Mode] = {
 +    val m = Vec.fill(2)(voodoo.texture.TextureCombine.Mode())
@@ -4599,8 +4721,19 @@ index cee86c0..0cd009e 100644
 +    m
 +  }
 +
++  /** A pixel's configs: its own fields, or its slot's (pixelConfigSlots). */
++  def configsOf(c: Config, in: Output, slots: Vec[PixelConfigs]): PixelConfigs = {
++    val out = PixelConfigs(c)
++    if (c.pixelConfigSlots) out := slots(in.cfgTag.asUInt)
++    else {
++      out.tmu := in.tmuConfig
++      out.pixel := in.pixelConfig
++    }
++    out
++  }
++
 +  object PostTmuSlim {
-+    def fromOutput(c: Config, in: Output): PostTmuSlim = {
++    def fromOutput(c: Config, in: Output, cfg: PixelConfigs): PostTmuSlim = {
 +      val out = PostTmuSlim(c)
 +      out.red := in.grads.redGrad
 +      out.green := in.grads.greenGrad
@@ -4609,8 +4742,8 @@ index cee86c0..0cd009e 100644
 +      out.wLow := in.grads.wGrad.raw(31 downto 0)
 +      out.alphaGradHi := in.alphaGradHi
 +      out.coords := in.coords
-+      out.config := in.pixelConfig
-+      if (c.tmuCount > 1) out.texCombine := texCombineOf(c, in.tmuConfig)
++      out.config := cfg.pixel
++      if (c.tmuCount > 1) out.texCombine := texCombineOf(c, cfg.tmu)
 +      if (c.trace.enabled) out.trace := in.trace
 +      out
 +    }
@@ -4634,51 +4767,109 @@ index cee86c0..0cd009e 100644
 +  }
 +
    object PostTmu {
-     def fromOutput(c: Config, in: Output): PostTmu = {
+-    def fromOutput(c: Config, in: Output): PostTmu = {
++    def fromOutput(c: Config, in: Output, cfg: PixelConfigs): PostTmu = {
        val out = PostTmu(c)
-@@ -105,6 +274,7 @@ object Rasterizer {
+       out.grads := in.grads
        out.alphaGradHi := in.alphaGradHi
        out.coords := in.coords
-       out.config := in.pixelConfig
-+      if (c.tmuCount > 1) out.texCombine := texCombineOf(c, in.tmuConfig)
+-      out.config := in.pixelConfig
++      out.config := cfg.pixel
++      if (c.tmuCount > 1) out.texCombine := texCombineOf(c, cfg.tmu)
        if (c.trace.enabled) {
          out.trace := in.trace
        }
-@@ -119,6 +289,7 @@ object Rasterizer {
+@@ -119,15 +324,17 @@ object Rasterizer {
      val hiS = AFix(c.texCoordsHiFormat)
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
 +    val hiTex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
      val xEnd = AFix(c.vertexFormat)
      val stepX = SpanWalker.StepX(c)
-     val tmuConfig = TriangleSetup.TmuConfig(c)
-@@ -153,6 +324,7 @@ object Rasterizer {
+-    val tmuConfig = TriangleSetup.TmuConfig(c)
+-    val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
++    val tmuConfig = if (c.pixelConfigSlots) null else TriangleSetup.TmuConfig(c)
++    val pixelConfig = if (c.pixelConfigSlots) null else TriangleSetup.PixelPipelineConfig(c)
++    val cfgTag = if (c.pixelConfigSlots) Bool() else null
+     val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
+   }
+ 
+   case class SpanRasterizer(c: Config) extends Component {
+-    val i = slave Stream (SpanWalker.Output(c))
++    val i = slave Stream (SpanWalker.Output(c, withConfig = !c.pixelConfigSlots))
+     val o = master Stream (Output(c))
+     val running = out(Bool())
+ 
+@@ -146,6 +353,7 @@ object Rasterizer {
+       outputType = HardType(Output(c)),
+       maxIterations = c.maxFbDims._1,
+       init = (input: SpanWalker.Output) => {
++        val slots = c.pixelConfigSlots
+         val state = cloneOf(SpanState(c))
+         state.x := input.xStart
+         state.y := input.y
+@@ -153,10 +361,14 @@ object Rasterizer {
          state.hiS := input.hiS
          state.hiT := input.hiT
          state.hiAlpha := input.hiAlpha
 +        if (c.tmuCount > 1) state.hiTex1 := input.hiTex1
          state.xEnd := input.xEnd
          state.stepX := input.stepX
-         state.tmuConfig := input.tmuConfig
-@@ -174,6 +346,7 @@ object Rasterizer {
+-        state.tmuConfig := input.tmuConfig
+-        state.pixelConfig := input.pixelConfig
++        if (slots) state.cfgTag := input.cfgTag
++        else {
++          state.tmuConfig := input.tmuConfig
++          state.pixelConfig := input.pixelConfig
++        }
+         if (c.trace.enabled) {
+           state.trace := input.trace
+         }
+@@ -174,8 +386,15 @@ object Rasterizer {
          output.grads.sGrad := state.hiS.fixTo(c.texCoordsAccumFormat)
          output.grads.tGrad := state.hiT.fixTo(c.texCoordsAccumFormat)
          output.alphaGradHi := state.hiAlpha
+-        output.tmuConfig := state.tmuConfig
+-        output.pixelConfig := state.pixelConfig
 +        if (c.tmuCount > 1) for (k <- 0 until 2) output.tex1(k) := state.hiTex1(k).fixTo(c.texCoordsAccumFormat)
-         output.tmuConfig := state.tmuConfig
-         output.pixelConfig := state.pixelConfig
++        val isLast = toPixelCoord(state.x) >= toPixelCoord(state.xEnd)
++        if (c.pixelConfigSlots) {
++          output.cfgTag := state.cfgTag
++          output.spanLast := isLast
++        } else {
++          output.tmuConfig := state.tmuConfig
++          output.pixelConfig := state.pixelConfig
++        }
          if (c.trace.enabled) {
-@@ -212,6 +385,8 @@ object Rasterizer {
+           output.trace.primitive := state.trace
+           output.trace.pixelSeq := currentPixelSeq
+@@ -185,8 +404,11 @@ object Rasterizer {
+         next.y := state.y
+         next.xEnd := state.xEnd
+         next.stepX := state.stepX
+-        next.tmuConfig := state.tmuConfig
+-        next.pixelConfig := state.pixelConfig
++        if (c.pixelConfigSlots) next.cfgTag := state.cfgTag
++        else {
++          next.tmuConfig := state.tmuConfig
++          next.pixelConfig := state.pixelConfig
++        }
+         if (c.trace.enabled) {
+           next.trace := state.trace
+         }
+@@ -212,8 +434,9 @@ object Rasterizer {
          next.hiS := (state.hiS + state.stepX.tex(0)).fixTo(c.texCoordsHiFormat)
          next.hiT := (state.hiT + state.stepX.tex(1)).fixTo(c.texCoordsHiFormat)
          next.hiAlpha := (state.hiAlpha + state.stepX.alpha).fixTo(c.texCoordsHiFormat)
 +        if (c.tmuCount > 1) for (k <- 0 until 2)
 +          next.hiTex1(k) := (state.hiTex1(k) + state.stepX.tex1(k)).fixTo(c.texCoordsHiFormat)
  
-         val isLast = toPixelCoord(state.x) >= toPixelCoord(state.xEnd)
+-        val isLast = toPixelCoord(state.x) >= toPixelCoord(state.xEnd)
          (next, isLast)
+       }
+     )
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..4cc017c 100644
+index 59df4ba..e6e7185 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -5,6 +5,20 @@ import spinal.core.formal._
@@ -5191,8 +5382,7 @@ index 59df4ba..4cc017c 100644
 -    firstSpanPending := False
 -    prepareNextRow(leftEdge, leftBiasedGuess = true)
 -  }
-+  o << spans
- 
+-
 -  // Span discovery still reaches EmitSpan for some fully off-screen or reversed
 -  // rows. Drop them here so negative or out-of-range coordinates do not wrap in
 -  // later framebuffer address generation.
@@ -5200,7 +5390,8 @@ index 59df4ba..4cc017c 100644
 -    firstSpanPending := False
 -    prepareNextRow(leftEdge, leftBiasedGuess = true)
 -  }
--
++  o << spans
+ 
 -  when(state === WalkerState.AdvanceRow) {
 -    val nextY = (nextRowBase.coords(1) + one).fixTo(c.vertexFormat)
 -    when(nextY >= triangleConst.yrange(1)) {
@@ -5296,22 +5487,34 @@ index 59df4ba..4cc017c 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,6 +371,7 @@ object SpanWalker {
+@@ -426,9 +371,12 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
 +    val scanX = Vec.fill(3)(SInt(32 bits))
    }
  
-   case class Output(c: Config) extends Bundle {
-@@ -436,6 +382,7 @@ object SpanWalker {
+-  case class Output(c: Config) extends Bundle {
++  /** withConfig = false (pixelConfigSlots, span rasterizer input): the
++    * triangle's config slot tag instead of the TMU / pixel config. */
++  case class Output(c: Config, withConfig: Boolean = true) extends Bundle {
+     val xStart = AFix(c.vertexFormat)
+     val xEnd = AFix(c.vertexFormat)
+     val y = AFix(c.vertexFormat)
+@@ -436,9 +384,11 @@ object SpanWalker {
      val hiS = AFix(c.texCoordsHiFormat)
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
 +    val hiTex1 = if (c.tmuCount > 1) Vec.fill(2)(AFix(c.texCoordsHiFormat)) else null
      val stepX = StepX(c)
-     val tmuConfig = TriangleSetup.TmuConfig(c)
-     val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
+-    val tmuConfig = TriangleSetup.TmuConfig(c)
+-    val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
++    val tmuConfig = if (withConfig) TriangleSetup.TmuConfig(c) else null
++    val pixelConfig = if (withConfig) TriangleSetup.PixelPipelineConfig(c) else null
++    val cfgTag = if (withConfig) null else Bool()
+     val firstSpan = Bool()
+     val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
+   }
 diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
 index fb95365..51cd92d 100644
 --- a/src/voodoo/raster/TriangleSetup.scala
@@ -6325,7 +6528,7 @@ index f164007..31832d2 100644
              cmd.mask := prep.mask
              cmd
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..bfaf7c3 100644
+index 8b06179..7656e41 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -7233,7 +7436,7 @@ index 8b06179..bfaf7c3 100644
    }
  
    /** TMU input bundle */
-@@ -1125,10 +1375,7 @@ object Tmu {
+@@ -1125,15 +1375,12 @@ object Tmu {
      val cOther = Color.u8()
      val aOther = UInt(8 bits)
      val config = TmuConfig(c)
@@ -7245,25 +7448,45 @@ index 8b06179..bfaf7c3 100644
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
-@@ -1149,20 +1396,48 @@ object Tmu {
-       out.config.texBaseAddr38 := in.tmuConfig.texBaseAddr38
-       out.config.tLOD := in.tmuConfig.tLOD
-       out.config.textureEnable := in.tmuConfig.textureEnable
+   object Input {
+-    def fromRasterizer(c: voodoo.Config, in: Rasterizer.Output): Input = {
++    def fromRasterizer(c: voodoo.Config, in: Rasterizer.Output, cfg: TriangleSetup.TmuConfig): Input = {
+       val out = Input(c)
+       out.s := in.grads.sGrad
+       out.t := in.grads.tGrad
+@@ -1142,27 +1389,55 @@ object Tmu {
+       out.cOther.g := 0
+       out.cOther.b := 0
+       out.aOther := 0
+-      out.config.textureMode := in.tmuConfig.textureMode
+-      out.config.texBaseAddr := in.tmuConfig.texBaseAddr
+-      out.config.texBaseAddr1 := in.tmuConfig.texBaseAddr1
+-      out.config.texBaseAddr2 := in.tmuConfig.texBaseAddr2
+-      out.config.texBaseAddr38 := in.tmuConfig.texBaseAddr38
+-      out.config.tLOD := in.tmuConfig.tLOD
+-      out.config.textureEnable := in.tmuConfig.textureEnable
 -      if (c.packedTexLayout) out.config.texTables := in.tmuConfig.texTables
 -      out.dSdX := in.tmuConfig.dSdX
 -      out.dTdX := in.tmuConfig.dTdX
 -      out.dSdY := in.tmuConfig.dSdY
 -      out.dTdY := in.tmuConfig.dTdY
-+      out.baseLod := in.tmuConfig.baseLod
++      out.config.textureMode := cfg.textureMode
++      out.config.texBaseAddr := cfg.texBaseAddr
++      out.config.texBaseAddr1 := cfg.texBaseAddr1
++      out.config.texBaseAddr2 := cfg.texBaseAddr2
++      out.config.texBaseAddr38 := cfg.texBaseAddr38
++      out.config.tLOD := cfg.tLOD
++      out.config.textureEnable := cfg.textureEnable
++      out.baseLod := cfg.baseLod
 +      if (c.trace.enabled) out.trace := in.trace
 +      out
 +    }
 +    /** TMU1's input (two-TMU builds): its S/T, the shared W, its registers.
 +      * Bypassed (no fetch) while TMU0 uses only its own texel ("local"). */
-+    def fromRasterizerTmu1(c: voodoo.Config, in: Rasterizer.Output): Input = {
++    def fromRasterizerTmu1(c: voodoo.Config, in: Rasterizer.Output, cfg: TriangleSetup.TmuConfig): Input = {
 +      val out = Input(c)
-+      val t1 = in.tmuConfig.tmu1
-+      val m0 = in.tmuConfig.tmu0Combine
++      val t1 = cfg.tmu1
++      val m0 = cfg.tmu0Combine
 +      val tmu0Local = m0(0) && !m0(1) && m0(6) && m0(9) && !m0(10)
 +      out.s := in.tex1(0)
 +      out.t := in.tex1(1)
@@ -7278,7 +7501,7 @@ index 8b06179..bfaf7c3 100644
 +      out.config.texBaseAddr2 := t1.texBaseAddr2
 +      out.config.texBaseAddr38 := t1.texBaseAddr38
 +      out.config.tLOD := t1.tLOD
-+      out.config.textureEnable := in.tmuConfig.textureEnable && !tmu0Local
++      out.config.textureEnable := cfg.textureEnable && !tmu0Local
 +      out.baseLod := t1.baseLod
        if (c.trace.enabled) out.trace := in.trace
        out
