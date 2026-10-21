@@ -2282,7 +2282,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..11ad8aa 100644
+index 7797711..0c3e39f 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,8 @@ object PixelPipeline {
@@ -2661,7 +2661,7 @@ index 7797711..11ad8aa 100644
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
        fastfillWriter.io.running || fastfillWriter.io.wordValid ||
-@@ -666,12 +862,81 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +862,122 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -2712,13 +2712,54 @@ index 7797711..11ad8aa 100644
 +    // Area written since memory was last current (all pixels drained).
 +    val dirtyValid = RegInit(False)
 +    val dMinX, dMaxX, dMinY, dMaxY = Reg(SInt(16 bits)) init (0)
-+    val overlap = dirtyValid && !(maxX < dMinX || minX > dMaxX || maxY < dMinY || minY > dMaxY)
++    val opaqueOverlap = dirtyValid && !(maxX < dMinX || minX > dMaxX || maxY < dMinY || minY > dMaxY)
++    // fbzModePerTriangle: an fbzMode write no longer drains the pipeline, but
++    // that drain also ordered blends over the blends before it (B92 below).
++    // Keep that order: blended writes from before the last fbzMode change
++    // (a triangle whose fbzMode differs from the previous one's) form a
++    // second dirty box that a blend must not overtake.
++    val epoch = if (c.fbzModePerTriangle) new Area {
++      val fbzNow = RegNext(tri.config.fbzMode.asBits)
++      val lastFbz = Reg(Bits(widthOf(tri.config.fbzMode) bits)) init (0)
++      val changed = fbzNow =/= lastFbz
++      val curValid, oldValid = RegInit(False)
++      val cMinX, cMaxX, cMinY, cMaxY, oMinX, oMaxX, oMinY, oMaxY = Reg(SInt(16 bits)) init (0)
++      // A head that changes fbzMode must not overtake the current box either.
++      val overlap = oldValid && !(maxX < oMinX || minX > oMaxX || maxY < oMinY || minY > oMaxY) ||
++        changed && curValid && !(maxX < cMinX || minX > cMaxX || maxY < cMinY || minY > cMaxY)
++    } else null
++    val overlap = if (c.fbzModePerTriangle) opaqueOverlap || epoch.overlap else opaqueOverlap
 +    val hold = if (c.fbReadHazardGuard)
 +      head.valid && (firstCycle || (readsColor && overlap && !drainedForHazard))
 +    else False
 +    hazardHold := hold
 +    io.fbFlushReq := RegNext(head.valid && !firstCycle && readsColor && overlap && !drainedForHazard) init (False)
 +    when(drainedForHazard) { dirtyValid := False }
++    if (c.fbzModePerTriangle) {
++      import epoch._
++      when(drainedForHazard) { curValid := False; oldValid := False }
++      when(head.fire) {
++        lastFbz := fbzNow
++        when(changed && curValid && !drainedForHazard) {
++          val fresh = !oldValid || drainedForHazard
++          oldValid := True
++          oMinX := Mux(fresh || cMinX < oMinX, cMinX, oMinX)
++          oMaxX := Mux(fresh || cMaxX > oMaxX, cMaxX, oMaxX)
++          oMinY := Mux(fresh || cMinY < oMinY, cMinY, oMinY)
++          oMaxY := Mux(fresh || cMaxY > oMaxY, cMaxY, oMaxY)
++        }
++        when(writesColor && readsColor) {
++          val fresh = !curValid || changed || drainedForHazard
++          curValid := True
++          cMinX := Mux(fresh || minX < cMinX, minX, cMinX)
++          cMaxX := Mux(fresh || maxX > cMaxX, maxX, cMaxX)
++          cMinY := Mux(fresh || minY < cMinY, minY, cMinY)
++          cMaxY := Mux(fresh || maxY > cMaxY, maxY, cMaxY)
++        } elsewhen (changed) {
++          curValid := False
++        }
++      }
++    }
 +    // Only opaque (non-reading) colour writes make an area dirty: the race is
 +    // a blend reading what an earlier opaque pass wrote (GLQuake's lightmap
 +    // over texture pass). Counting blended writes too made every lightmap
@@ -2744,7 +2785,7 @@ index 7797711..11ad8aa 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +972,45 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +1013,45 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
