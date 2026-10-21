@@ -637,20 +637,24 @@ index 67ca828..9c10926 100644
                              (addr & 0x2u) ? VOODOO_TRACE_READ_FB_W : VOODOO_TRACE_READ_FB_L,
                              addr,
 diff --git a/emu/test/ref_model.c b/emu/test/ref_model.c
-index 3f1a2a8..9bb4a21 100644
+index 3f1a2a8..d4b4d35 100644
 --- a/emu/test/ref_model.c
 +++ b/emu/test/ref_model.c
-@@ -544,7 +544,8 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+@@ -544,7 +544,12 @@ int ref_init(int fb_size_mb, int tex_size_mb)
      if (!voodoo) return -1;
  
      voodoo->type           = VOODOO_1;
 -    voodoo->dual_tmus      = 0;
 +    /* REF_DUAL_TMUS=1: two TMUs (TMU1 registers / texture memory). */
 +    voodoo->dual_tmus      = getenv("REF_DUAL_TMUS") && atoi(getenv("REF_DUAL_TMUS")) ? 1 : 0;
++    /* The RTL shows 640x480; traces that never set videoDimensions (the
++     * trace runtime writes 0) still need it for the y-origin swap. */
++    voodoo->h_disp = 640;
++    voodoo->v_disp = 480;
      voodoo->render_threads = 1;
      ref_total_pixels_in = 0;
      ref_total_pixels_out = 0;
-@@ -566,6 +567,11 @@ int ref_init(int fb_size_mb, int tex_size_mb)
+@@ -566,6 +571,11 @@ int ref_init(int fb_size_mb, int tex_size_mb)
      voodoo->tex_mem[0]   = (uint8_t *)calloc(1, voodoo->texture_size);
      voodoo->tex_mem_w[0] = (uint16_t *)voodoo->tex_mem[0];
      if (!voodoo->tex_mem[0]) return -1;
@@ -662,6 +666,16 @@ index 3f1a2a8..9bb4a21 100644
  
      /* Texture cache: allocate data buffers for each cache entry.
       * Size must hold all LOD levels: 256*256 *2 + 128*128 + 64*64 + ... + 2*2 */
+@@ -653,6 +663,9 @@ void ref_write_reg(uint32_t addr, uint32_t val)
+             return;
+         case SST_videoDimensions:
+             voodoo->videoDimensions = val;
++            /* Glide's init in the trace runtime writes 0 here; keep the
++             * 640x480 the RTL displays (v_disp sets the y-origin swap). */
++            if (val == 0) return;
+             voodoo->h_disp = (val & 0xfff) + 1;
+             voodoo->v_disp = (val >> 16) & 0xfff;
+             if ((voodoo->v_disp == 386) || (voodoo->v_disp == 402) ||
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
 index d163ab7..5ab9b45 100644
 --- a/emu/test/trace_test.cpp
