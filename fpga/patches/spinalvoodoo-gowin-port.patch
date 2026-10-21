@@ -835,7 +835,7 @@ index d163ab7..0714bde 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..cf9ed30 100644
+index 1b34fa2..149a82f 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -848,7 +848,7 @@ index 1b34fa2..cf9ed30 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,62 @@ case class Config(
+@@ -31,6 +34,66 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -857,6 +857,10 @@ index 1b34fa2..cf9ed30 100644
 +    texSmallCacheLines: Int = 0,
 +    // TmuSmallTextureCache line fills in flight (prefetch hints + misses).
 +    texSmallFillSlots: Int = 4,
++    // Small texture cache: one data copy per tap pair (taps 0/1 and 2/3 are
++    // horizontal neighbours), each split into even-word and odd-word banks,
++    // instead of one copy per tap: half the data BSRAM for the same lines.
++    texCachePairedBanks: Boolean = false,
 +    // Texture units: 1 (Voodoo 1) or 2 (two TREX: TMU1 feeds TMU0's texture
 +    // combine, the multitexture path of 2-TMU boards and the Voodoo 2).
 +    tmuCount: Int = 1,
@@ -1156,7 +1160,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..2e4db86 100644
+index 6051025..e45038b 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,37 @@ import spinal.core._
@@ -1203,7 +1207,7 @@ index 6051025..2e4db86 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,19 @@ object CoreSimGen extends App {
+@@ -37,7 +48,20 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1220,7 +1224,8 @@ index 6051025..2e4db86 100644
 +      triangleSnapshot = !args.contains("--no-triangle-snapshot"),
 +      pixelConfigSlots = args.contains("--pixel-config-slots"),
 +      tmuForkAsync = args.contains("--tmu-fork-async"),
-+      tmuOutputQueue = argIntValue("--tmu-output-queue").getOrElse(0)
++      tmuOutputQueue = argIntValue("--tmu-output-queue").getOrElse(0),
++      texCachePairedBanks = args.contains("--tex-cache-paired")
      )
  
    val memTiming = SimMemoryTiming(
@@ -8298,7 +8303,7 @@ index d5f1a9b..51cc3c9 100644
          result.trace := pass.trace
        }
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..10b4a51 100644
+index 465ea78..56411fd 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -8387,7 +8392,7 @@ index 465ea78..10b4a51 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,325 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,401 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
@@ -8473,7 +8478,17 @@ index 465ea78..10b4a51 100644
 +
 +  val tagMem = Seq.fill(lanes)(Mem(UInt(tagBits bits), lines))
 +  val hintTagMem = Seq.fill(lanes)(Mem(UInt(tagBits bits), lines))
-+  val dataMem = Seq.fill(lanes)(Mem(Bits(32 bits), lines * wordsPerLine))
++  // Data: one copy per tap (lanes), or with texCachePairedBanks one per tap
++  // pair, split by word parity: a tap and its right-hand neighbour are in the
++  // same word or in adjacent words (power-of-two rows start on even words, so
++  // a wrap to the row start also flips parity), so both banks of a pair copy
++  // serve the pair in one read. Should two taps of a pair want different
++  // words of one bank, the lane that missed out is read again next cycle.
++  val paired = c.texCachePairedBanks
++  val dataMem =
++    if (paired) Seq.fill(2 * 2)(Mem(Bits(32 bits), lines * wordsPerLine / 2)) // (pair, parity)
++    else Seq.fill(lanes)(Mem(Bits(32 bits), lines * wordsPerLine))
++  def pairOf(i: Int): Int = i / 2
 +  val lineValid = Reg(Bits(lines bits)) init 0
 +
 +  // Lanes a fill of `line` may write, for a sample whose taps are `addr` /
@@ -8523,16 +8538,29 @@ index 465ea78..10b4a51 100644
 +  val doneIdx = doneLine(idxBits - 1 downto 0)
 +  val doneTag = doneLine(aw - offBits - 1 downto idxBits)
 +  val firstBeat = fill.beat === 0
-+  val beatMask = Mux(firstBeat, fill.mask(fill.donePtr) | Mux(lineValid(doneIdx), B(0, lanes bits), B((1 << lanes) - 1, lanes bits)), fill.writeMask)
++  val beatMaskRaw = Mux(firstBeat, fill.mask(fill.donePtr) | Mux(lineValid(doneIdx), B(0, lanes bits), B((1 << lanes) - 1, lanes bits)), fill.writeMask)
++  // Paired: a pair copy is written only if both of its lanes allow it (the
++  // lanes of a pair never need different lines at one index).
++  val beatMask = Bits(lanes bits)
++  if (paired) for (i <- 0 until lanes) beatMask(i) := beatMaskRaw(i & ~1) && beatMaskRaw(i | 1)
++  else beatMask := beatMaskRaw
 +  val fillDone = io.texRead.rsp.valid && io.texRead.rsp.last
 +  // A fill is writing doneIdx in the lanes of beatMask from its first beat
 +  // until its tags are written with the last one.
 +  val fillWriting = Bool()
 +  fillWriting := !firstBeat || io.texRead.rsp.valid
 +  when(io.texRead.rsp.valid) {
-+    val wAddr = (doneIdx ## fill.beat).asUInt
-+    for (j <- 0 until lanes)
-+      when(beatMask(j)) { dataMem(j).write(wAddr, io.texRead.rsp.fragment.data) }
++    if (paired) {
++      val wAddr = (doneIdx ## fill.beat(2 downto 1)).asUInt
++      for (p <- 0 until 2; par <- 0 until 2)
++        when(beatMask(2 * p) && fill.beat(0) === Bool(par == 1)) {
++          dataMem(2 * p + par).write(wAddr, io.texRead.rsp.fragment.data)
++        }
++    } else {
++      val wAddr = (doneIdx ## fill.beat).asUInt
++      for (j <- 0 until lanes)
++        when(beatMask(j)) { dataMem(j).write(wAddr, io.texRead.rsp.fragment.data) }
++    }
 +    when(firstBeat) { fill.writeMask := beatMask }
 +    fill.beat := fill.beat + 1
 +    when(io.texRead.rsp.last) {
@@ -8564,10 +8592,48 @@ index 465ea78..10b4a51 100644
 +  val rdConflict = Bits(lanes bits)
 +  val laneHit = Bits(lanes bits)
 +  val lanePending = Bits(lanes bits)
++  val tagHitOnly = Bits(lanes bits)
++  // Paired: lanes already served keep their word (s1Have / s1Data), so a
++  // re-read only needs the others; a lane whose bank went to its partner
++  // (bankLost) is just read again.
++  val s1Have = Reg(Bits(lanes bits)) init 0
++  val s1Data = Reg(Vec(Bits(32 bits), lanes))
++  val bankLost = Bits(lanes bits)
++  bankLost := 0
++  val rdAddrs = Vec((0 until lanes).map(i => Mux(reread, s1.addr(i), reqLookup.addr(i))))
++  def wordIdx(a: UInt): UInt = (lineIdx(a) ## wordOff(a)).asUInt
++  val laneParity = Vec(rdAddrs.map(a => a(2)))
++  // Paired bank addresses: each bank serves the pair's first lane wanting it
++  // (lane b only once lane a is served, on a re-read).
++  val bankAddr = Vec(UInt(log2Up(lines * wordsPerLine / 2) bits), 4)
++  val bankFor = Vec(Bits(2 bits), 4) // which lane of the pair a bank serves (one-hot)
++  if (paired) for (p <- 0 until 2; par <- 0 until 2) {
++    val a = 2 * p; val b = a + 1
++    val haveA = reread && s1Have(a)
++    val aWants = laneParity(a) === Bool(par == 1) && !haveA
++    bankFor(2 * p + par) := Mux(aWants, B"01", B"10")
++    val src = Mux(aWants, rdAddrs(a), rdAddrs(b))
++    bankAddr(2 * p + par) := (wordIdx(src) >> 1).resized
++  } else { bankAddr.foreach(_ := 0); bankFor.foreach(_ := 0) }
++  val bankRd = Vec((0 until 4).map(k =>
++    if (paired) dataMem(k).readSync(bankAddr(k), enable = rdEnable) else B(0, 32 bits)))
++  val bankForRd = Vec(bankFor.map(f => RegNextWhen(f, rdEnable)))
++  val parityRd = Vec(laneParity.map(p => RegNextWhen(p, rdEnable)))
++  val wordRd = Vec(rdAddrs.map(a => RegNextWhen(wordIdx(a), rdEnable)))
 +  for (i <- 0 until lanes) {
-+    val rdAddr = Mux(reread, s1.addr(i), reqLookup.addr(i))
++    val rdAddr = rdAddrs(i)
 +    tagRd(i) := tagMem(i).readSync(lineIdx(rdAddr), enable = rdEnable)
-+    dataRd(i) := dataMem(i).readSync((lineIdx(rdAddr) ## wordOff(rdAddr)).asUInt, enable = rdEnable)
++    if (paired) {
++      val p = pairOf(i); val other = i ^ 1
++      val k = Mux(parityRd(i), U(2 * p + 1, 2 bits), U(2 * p, 2 bits))
++      dataRd(i) := bankRd(k)
++      // Served unless the bank went to the partner for a different word.
++      val bankF = bankForRd(k)
++      val mine = bankF((i & 1))
++      bankLost(i) := !mine && wordRd(other) =/= wordRd(i)
++    } else {
++      dataRd(i) := dataMem(i).readSync((lineIdx(rdAddr) ## wordOff(rdAddr)).asUInt, enable = rdEnable)
++    }
 +    // A read of a line being filled in this lane may see it half written.
 +    rdConflict(i) := RegNextWhen(fillWriting && beatMask(i) && lineIdx(rdAddr) === doneIdx, rdEnable) init (False)
 +    // lineValid is sampled with the tags (the 512:1 select fed the miss /
@@ -8577,11 +8643,24 @@ index 465ea78..10b4a51 100644
 +    val validRd = Reg(Bool()) init (False)
 +    when(rdEnable) { validRd := lineValid(lineIdx(rdAddr)) }
 +    when(io.invalidate) { validRd := False }
-+    laneHit(i) := !s1.active(i) ||
-+      (!rdConflict(i) && validRd && tagRd(i) === lineTag(s1.addr(i)))
++    val tagHit = !rdConflict(i) && validRd && tagRd(i) === lineTag(s1.addr(i))
++    laneHit(i) := !s1.active(i) || (if (paired) s1Have(i) || (tagHit && !bankLost(i)) else tagHit)
++    tagHitOnly(i) := tagHit && bankLost(i)
 +    lanePending(i) := fill.pending(lineOf(s1.addr(i)))
 +  }
 +  val allHit = laneHit.andR
++  // Paired: lanes served by this read keep their word; lanes that only lost
++  // their bank to the partner are read again at once (no fill).
++  val bankRetry = s1Valid && !waitFill && !reread && !allHit && (~laneHit & ~tagHitOnly & s1.active) === 0
++  if (paired) {
++    when(s1Valid && !waitFill && !reread) {
++      for (i <- 0 until lanes) when(s1.active(i) && laneHit(i) && !s1Have(i)) {
++        s1Have(i) := True
++        s1Data(i) := dataRd(i)
++      }
++    }
++    when(advance) { s1Have := 0 }
++  }
 +  val evaluate = s1Valid && !waitFill && !reread
 +  val lookupHit = evaluate && allHit
 +
@@ -8592,9 +8671,10 @@ index 465ea78..10b4a51 100644
 +  val missOh = OHMasking.first(~laneHit)
 +  val missLane = OHToUInt(missOh)
 +  val missLine = lineOf(s1.addr(missLane))
-+  val backMiss = evaluate && !allHit
++  val backMiss = evaluate && !allHit && (if (paired) !bankRetry else True)
 +  val backAlloc = backMiss && !(missOh & lanePending).orR && !fill.full
 +  reread := False
++  if (paired) when(bankRetry) { reread := True }
 +  when(backMiss) {
 +    when(fillDone) { reread := True } otherwise { waitFill := True }
 +  }
@@ -8692,7 +8772,8 @@ index 465ea78..10b4a51 100644
 +    for (i <- 0 until lanes)
 +      assembled.texels(i) := Mux(
 +        s1.active(i),
-+        texel16(dataRd(i), s1.tapHalf(i), s1.tapByte(i), s1.is16Bit),
++        texel16(if (paired) Mux(s1Have(i), s1Data(i), dataRd(i)) else dataRd(i),
++          s1.tapHalf(i), s1.tapByte(i), s1.is16Bit),
 +        B(0, 16 bits)
 +      )
 +    outValid := True
