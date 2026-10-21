@@ -679,7 +679,7 @@ index 3f1a2a8..d4b4d35 100644
              voodoo->v_disp = (val >> 16) & 0xfff;
              if ((voodoo->v_disp == 386) || (voodoo->v_disp == 402) ||
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
-index d163ab7..0714bde 100644
+index d163ab7..6d56df3 100644
 --- a/emu/test/trace_test.cpp
 +++ b/emu/test/trace_test.cpp
 @@ -192,6 +192,37 @@ static uint32_t remap_backend_reg_addr(uint32_t addr) {
@@ -706,7 +706,7 @@ index d163ab7..0714bde 100644
 +            " tex words %u misses %u fill %.0f%% samples %u;"
 +            " fb rd col wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%,"
 +            " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%;"
-+            " held: raster %.0f%% postFull %.0f%% texWait %.0f%% postWait %.0f%% tmu1 misses %u fill %.0f%%\n",
++            " held: raster %.0f%% syncWait %.0f%% texWait %.0f%% postWait %.0f%% tmu1 misses %u fill %.0f%%\n",
 +            label, dp[0], pc(13), pc(14), pc(15), dp[1], dp[2], pc(3), pc(4), pc(5), pc(6),
 +            pc(7), pc(8), dp[9], pc(10), pc(11), pc(12), dp[16], dp[17], pc(18), dp[19],
 +            pc(20), pc(21), pc(22), pc(23), pc(24), pc(25),
@@ -916,7 +916,7 @@ index 1b34fa2..149a82f 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..cb7ca7c 100644
+index 100f1c6..49b0ccf 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -1062,7 +1062,7 @@ index 100f1c6..cb7ca7c 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -200,9 +249,37 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +249,42 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -1093,6 +1093,11 @@ index 100f1c6..cb7ca7c 100644
 +    // 20-25: fb reader stalls (colour wait-data / rsp-full / issue-blocked,
 +    // then aux).
 +    for (i <- 0 until 6) regDebug.perf(20 + i) := st.readerStall(i)
++    // 27: cycles a Sync=Yes / texture write waits at the FIFO head for the
++    // pipeline to drain (was post-TMU queue full, always 0).
++    val syncWaitCycles = Reg(UInt(32 bits)) init (0)
++    when(pciFifo.io.syncWait) { syncWaitCycles := syncWaitCycles + 1 }
++    regDebug.perf(27) := syncWaitCycles
 +  }
 +  regBank.io.debug := regDebug
  
@@ -1497,7 +1502,7 @@ index 3a197b9..2731d3b 100644
  
  /** Register write metadata bundle */
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..a462ece 100644
+index 226d60e..25afca6 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
 @@ -40,6 +40,7 @@ case class PciFifo(
@@ -1519,7 +1524,7 @@ index 226d60e..a462ece 100644
    val busDataWidth: Int = busParams.access.dataWidth
  
    val io = new Bundle {
-@@ -67,6 +72,8 @@ case class PciFifo(
+@@ -67,10 +72,15 @@ case class PciFifo(
  
      // Drain blocking inputs
      val pipelineBusy = in Bool ()
@@ -1528,7 +1533,14 @@ index 226d60e..a462ece 100644
      val commandReady = in Vec (Bool(), commandAddresses.size)
  
      // Status outputs
-@@ -97,20 +104,57 @@ case class PciFifo(
+     val fifoEmpty = out Bool ()
++    // The FIFO head is a Sync=Yes register or texture write waiting for the
++    // pipeline to drain (perf counter).
++    val syncWait = out Bool ()
+     val pciFifoFree = out UInt (7 bits)
+ 
+     // Event signals
+@@ -97,20 +107,57 @@ case class PciFifo(
    // ========================================================================
    // Address categorization signals (assigned in addPrePopTask)
    // ========================================================================
@@ -1593,7 +1605,7 @@ index 226d60e..a462ece 100644
  
    private case class StagedWrite() extends Bundle {
      val address = UInt(busAddrWidth bits)
-@@ -170,10 +214,10 @@ case class PciFifo(
+@@ -170,10 +217,10 @@ case class PciFifo(
      clearStaged(stagedWriteTx)
  
      when(queueableCpuWrite) {
@@ -1608,7 +1620,7 @@ index 226d60e..a462ece 100644
        stagedWriteTx.syncRequired := syncRequired
        stagedWriteTx.isFloatAlias := isFloatAlias
        stagedWriteTx.floatTargetAddr := floatTargetAddr
-@@ -268,7 +312,7 @@ case class PciFifo(
+@@ -268,7 +315,7 @@ case class PciFifo(
  
    // wasEnqueued: detect when a specific register write was actually enqueued
    io.wasEnqueued := queuedWriteTx.fire && !queuedWriteTx.isTexture &&
@@ -1617,7 +1629,7 @@ index 226d60e..a462ece 100644
  
    // ========================================================================
    // 64-entry PCI FIFO
-@@ -283,6 +327,13 @@ case class PciFifo(
+@@ -283,6 +330,13 @@ case class PciFifo(
    // ========================================================================
    // Drain blocking logic
    // ========================================================================
@@ -1631,7 +1643,7 @@ index 226d60e..a462ece 100644
    private val drainControl = new Area {
      val canDrain = Bool()
      canDrain := True
-@@ -294,6 +345,44 @@ case class PciFifo(
+@@ -294,6 +348,44 @@ case class PciFifo(
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
        canDrain := False
      }
@@ -1676,7 +1688,7 @@ index 226d60e..a462ece 100644
  
      val commandStreamBlocked = Bool()
      commandStreamBlocked := False
-@@ -303,7 +392,8 @@ case class PciFifo(
+@@ -303,10 +395,12 @@ case class PciFifo(
  
      val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
      fifoEmpty.simPublic()
@@ -1686,7 +1698,11 @@ index 226d60e..a462ece 100644
      io.fifoEmpty := fifoEmpty
    }
    private val canDrain = drainControl.canDrain
-@@ -324,11 +414,12 @@ case class PciFifo(
++  io.syncWait := pciFifo.io.pop.valid && (pciFifo.io.pop.syncRequired || pciFifo.io.pop.isTexture) && io.pipelineBusy
+   private val issuedWrite = drainControl.issuedWrite
+   private val commandStreamBlocked = drainControl.commandStreamBlocked
+   private val drainedWrite = issuedWrite
+@@ -324,11 +418,12 @@ case class PciFifo(
      io.texDrain.pciAddr := drainedWrite.texPciAddr
      io.texDrain.data := drainedWrite.data
      io.texDrain.mask := drainedWrite.mask
@@ -1703,7 +1719,7 @@ index 226d60e..a462ece 100644
    }
    val isTexDrain = drainRoute.isTexDrain
    val isRegDrain = drainRoute.isRegDrain
-@@ -341,31 +432,31 @@ case class PciFifo(
+@@ -341,31 +436,31 @@ case class PciFifo(
      // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
      // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
      val doWriteDirect = isWriteCmd && fifoBypass
@@ -1752,7 +1768,7 @@ index 226d60e..a462ece 100644
        (isTexDrain && io.texDrain.ready)
    }
    private val doWriteDirect = regSideMux.doWriteDirect
-@@ -383,16 +474,16 @@ case class PciFifo(
+@@ -383,16 +478,16 @@ case class PciFifo(
      io.regSide.rsp.ready := True
  
      io.cpuSide.rsp.valid := RegNext(
@@ -1773,7 +1789,7 @@ index 226d60e..a462ece 100644
        pendingRead := True
      }
      when(pendingRead && io.regSide.rsp.valid) {
-@@ -414,18 +505,18 @@ case class PciFifo(
+@@ -414,18 +509,18 @@ case class PciFifo(
    // Stall logic
    // ========================================================================
    private val cpuReady = new Area {
@@ -1799,7 +1815,7 @@ index 226d60e..a462ece 100644
      }
    }
  
-@@ -453,33 +544,35 @@ case class PciFifo(
+@@ -453,33 +548,35 @@ case class PciFifo(
      println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
  
      // Default: unregistered addresses bypass FIFO
@@ -1850,7 +1866,7 @@ index 226d60e..a462ece 100644
        }
      }
  
-@@ -488,52 +581,74 @@ case class PciFifo(
+@@ -488,52 +585,74 @@ case class PciFifo(
        s"[PciFifo] Command stream addresses: ${commandAddresses.map(a => f"0x$a%03x").mkString(", ")}"
      )
      if (commandAddresses.nonEmpty) {
@@ -1946,7 +1962,7 @@ index 226d60e..a462ece 100644
      }
  
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
-@@ -550,8 +665,8 @@ case class PciFifo(
+@@ -550,8 +669,8 @@ case class PciFifo(
        assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
      }
  
@@ -1957,7 +1973,7 @@ index 226d60e..a462ece 100644
      }
  
      when(floatWriteRequest && !floatConvertInFlight) {
-@@ -581,12 +696,10 @@ case class PciFifo(
+@@ -581,12 +700,10 @@ case class PciFifo(
        assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
      }
  
