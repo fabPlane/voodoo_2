@@ -533,6 +533,109 @@ index eda5bba..0476105 100644
      /* Check cycle limit (sim_time/2 = tick count) */
      if (cycle_limit && (sim_time / 2) >= cycle_limit) {
          fprintf(stderr, "[sim_harness] Cycle limit reached (%lu ticks), shutting down.\n",
+diff --git a/emu/sim/harness/sim_trace_harness.c b/emu/sim/harness/sim_trace_harness.c
+index 67ca828..9c10926 100644
+--- a/emu/sim/harness/sim_trace_harness.c
++++ b/emu/sim/harness/sim_trace_harness.c
+@@ -91,6 +91,61 @@ static void shadow_write16(uint32_t *shadow, uint32_t word_count, uint32_t addr,
+     }
+ }
+ 
++/* ------------------------------------------------------------------ */
++/* Frame window (SIM_TRACE_FRAMES=N:M)                                 */
++/* ------------------------------------------------------------------ */
++/* Records frames N .. N+M-1 (counted by swapbufferCMD writes) plus, from
++ * before them, everything that sets up state, in order: texture downloads
++ * and every register write except the per-triangle parameters (0x008-0x0FC,
++ * fixed and float) and the drawing commands (nop / fastfill / swap), which
++ * frame N redoes. Framebuffer accesses before the window are dropped (the
++ * replay starts with a cleared framebuffer). Full-run traces of a game are
++ * GBs; this keeps e.g. multitexture GLQuake frames with the right textures
++ * and modes. The program exits after the window. */
++static int tf_mode = -1;      /* -1 unset, 0 off, 1 before the window, 2 in it */
++static uint32_t tf_start, tf_count, tf_frames;
++
++static void tf_init(void)
++{
++    const char *e = getenv("SIM_TRACE_FRAMES");
++    tf_mode = 0;
++    if (!e || sscanf(e, "%u:%u", &tf_start, &tf_count) != 2 || tf_count == 0) return;
++    tf_mode = tf_start ? 1 : 2;
++    fprintf(stderr, "[sim_trace] frame window: frames %u..%u\n", tf_start, tf_start + tf_count - 1);
++}
++
++/* 1 = record this access. */
++static int tf_pass(uint32_t addr, uint32_t data, int is_write)
++{
++    (void)data;
++    if (tf_mode < 0) tf_init();
++    if (tf_mode == 0) return 1;
++    if (tf_mode == 1) {
++        uint32_t reg = addr & 0x3FCu;
++        if (!is_write || (addr >= 0x400000 && addr < 0x800000)) return 0; /* fb */
++        if (addr >= 0x800000) return 1;                                   /* texture */
++        if (reg == 0x128 && ++tf_frames == tf_start) {
++            tf_mode = 2;
++            tf_frames = 0;
++            fprintf(stderr, "[sim_trace] frame window starts (%lu entries of state)\n",
++                    (unsigned long)writer.entry_count);
++            return 0;
++        }
++        if (reg <= 0x0FC || reg == 0x120 || reg == 0x124 || reg == 0x128) return 0;
++        return 1;
++    }
++    if (tf_mode == 3) return 0;
++    if (is_write && addr < 0x400000 && (addr & 0x3FCu) == 0x128 && ++tf_frames >= tf_count) {
++        trace_writer_record(&writer, VOODOO_TRACE_SWAP, swap_count, data);
++        trace_writer_record(&writer, VOODOO_TRACE_WRITE_REG_L, addr, data);
++        tf_mode = 3;
++        fprintf(stderr, "[sim_trace] frame window done\n");
++        sim_shutdown();
++        exit(0);
++    }
++    return 1;
++}
++
+ static void sim_trace_shutdown_atexit(void)
+ {
+     sim_shutdown();
+@@ -188,6 +243,15 @@ void sim_shutdown(void)
+ void sim_write(uint32_t addr, uint32_t data)
+ {
+     uint8_t cmd_type;
++    int rec;
++
++    if (addr >= 0x800000)
++        shadow_write32(tex_shadow, TEX_WORD_COUNT, addr - 0x800000u, data);
++    rec = tf_pass(addr, data, 1);
++    if (!rec) {
++        if (addr < 0x400000) reg_shadow[(addr >> 2) & (REG_SHADOW_SIZE - 1)] = data;
++        return;
++    }
+ 
+     if (addr < 0x400000) {
+         cmd_type = VOODOO_TRACE_WRITE_REG_L;
+@@ -211,6 +275,12 @@ void sim_write16(uint32_t addr, uint16_t data)
+ {
+     uint8_t cmd_type;
+ 
++    if (!tf_pass(addr, data, 1)) {
++        if (addr >= 0x800000)
++            shadow_write16(tex_shadow, TEX_WORD_COUNT, addr - 0x800000u, data);
++        return;
++    }
++
+     if (addr < 0x400000) {
+         uint32_t idx = (addr >> 2) & (REG_SHADOW_SIZE - 1);
+         if (addr & 0x2u)
+@@ -250,6 +320,7 @@ uint32_t sim_read(uint32_t addr)
+ 
+     if (addr < 0x800000) {
+         uint32_t value = shadow_read32(fb_shadow, FB_WORD_COUNT, addr - 0x400000u);
++        if (tf_pass(addr, 0, 0))
+         trace_writer_record(&writer,
+                             (addr & 0x2u) ? VOODOO_TRACE_READ_FB_W : VOODOO_TRACE_READ_FB_L,
+                             addr,
 diff --git a/emu/test/ref_model.c b/emu/test/ref_model.c
 index 3f1a2a8..9bb4a21 100644
 --- a/emu/test/ref_model.c

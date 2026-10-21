@@ -74,3 +74,9 @@ Mesa's software fallback). timedemo demo1: 27.5 fps, against 25.0 fps for the
 single-TMU build at 48 MHz. Getting there took area cuts (per-pixel values
 reduced when formed, no triangleCMD register copy, per-pixel config slots,
 gamma in BSRAM, ...) and three timing rounds driven by the saved PnR reports.
+
+2026-10-21: B159d, two TMUs at 48 MHz (all clocks met), timedemo demo1
+31.4 fps. Also: register reads take two cycles (timing), per-TMU palettes
+(mtex00 quad 6), SIM_TRACE_FRAMES=N:M frame-window trace capture in the
+trace backend (multitexture GLQuake frames; the 86Box reference still
+segfaults replaying them in its blend path - to fix).
