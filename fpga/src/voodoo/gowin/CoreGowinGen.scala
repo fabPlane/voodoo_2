@@ -107,8 +107,12 @@ object GowinGenSupport {
       // Two TMUs: cache hints compare tags only (four 512:1 lineValid reads
       // less per TMU; same cycles in GLQuake trace replay).
       texHintValidCheck = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
-      // TMU1 mostly holds lightmaps (small): half the cache, ~20 BSRAM less.
-      tmu1SmallCacheLines = 256,
+      // TMU1 holds GLQuake's lightmaps: 256 lines missed twice as often as
+      // 512 (multitexture GLQuake replay: 512 lines -7.3% cycles).
+      tmu1SmallCacheLines = 512,
+      // Two TMUs: one data copy per tap pair, split into word-parity banks
+      // (half the texture cache data BSRAM; same cycles in replay).
+      texCachePairedBanks = sys.env.get("GOWIN_TMU_COUNT").exists(_.toInt > 1),
       // Two TMUs: no triangleCMD register copy (~2.3k FFs); register writes
       // wait for setup instead, same cycles in GLQuake trace replay.
       triangleSnapshot = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
