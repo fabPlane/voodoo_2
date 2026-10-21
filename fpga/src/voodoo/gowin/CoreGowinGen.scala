@@ -113,6 +113,9 @@ object GowinGenSupport {
       // Two TMUs: one data copy per tap pair, split into word-parity banks
       // (half the texture cache data BSRAM; same cycles in replay).
       texCachePairedBanks = sys.env.get("GOWIN_TMU_COUNT").exists(_.toInt > 1),
+      // GOWIN_FBZ_PER_TRIANGLE: fbzMode travels with the pixels instead of
+      // draining the pipeline on each write (GLQuake ~220 per frame).
+      fbzModePerTriangle = sys.env.contains("GOWIN_FBZ_PER_TRIANGLE"),
       // Two TMUs: no triangleCMD register copy (~2.3k FFs); register writes
       // wait for setup instead, same cycles in GLQuake trace replay.
       triangleSnapshot = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),

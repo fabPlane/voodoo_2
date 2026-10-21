@@ -4962,7 +4962,7 @@ index 1a3a34c..76f1906 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..90c5eff 100644
+index c6b2ec5..7437fb0 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
 @@ -26,9 +26,16 @@ case class FramebufferAccess(c: Config) extends Component {
@@ -5024,7 +5024,7 @@ index c6b2ec5..90c5eff 100644
    val biasedDepthRaw = (compDepthPreBias.resize(17 bits).asSInt + zaColorSigned.resize(17 bits))
    val biasedDepth = UInt(16 bits)
    when(biasedDepthRaw < 0) {
-@@ -97,16 +96,10 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -97,17 +96,14 @@ case class FramebufferAccess(c: Config) extends Component {
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
      val alpha = UInt(8 bits)
      val colorBeforeFog = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
@@ -5034,15 +5034,19 @@ index c6b2ec5..90c5eff 100644
 -    val fbzMode = FbzMode()
 -    val routing = FbRouting(c)
 +    val isLfb = Bool()
++    val fbzMode = if (c.fbzModePerTriangle) FbzMode() else null // each pixel's own
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
 -
 -    def fbColorBaseAddr: UInt = routing.colorBaseAddr
 -    def fbAuxBaseAddr: UInt = routing.auxBaseAddr
 -    def fbPixelStride: UInt = routing.pixelStride
    }
++  // fbzMode of the pixel a stage is working on (live register otherwise).
++  def fbzOf(p: Passthrough): FbzMode = if (c.fbzModePerTriangle) p.fbzMode else io.live.fbzMode
  
    // Create internal stream with computed address and passthrough data
-@@ -123,31 +116,33 @@ case class FramebufferAccess(c: Config) extends Component {
+   case class Internal() extends Bundle {
+@@ -123,31 +119,34 @@ case class FramebufferAccess(c: Config) extends Component {
    val pixelY = payload.coords(1).asUInt
    val colorPlaneAddress =
      FramebufferAddressMath.planeAddress(
@@ -5081,10 +5085,11 @@ index c6b2ec5..90c5eff 100644
 -  request.passthrough.fbzMode := fbzMode
 -  request.passthrough.routing := payload.routing
 +  request.passthrough.isLfb := payload.isLfb
++  if (c.fbzModePerTriangle) request.passthrough.fbzMode := fbzMode
    if (c.trace.enabled) {
      request.passthrough.trace := payload.trace
    }
-@@ -165,7 +160,8 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -165,7 +164,8 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -5094,7 +5099,7 @@ index c6b2ec5..90c5eff 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
-@@ -199,45 +195,23 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -199,45 +199,23 @@ case class FramebufferAccess(c: Config) extends Component {
    val colorRspBuf = io.fbReadColorRsp.queue(4)
    val auxRspBuf = io.fbReadAuxRsp.queue(4)
  
@@ -5156,21 +5161,21 @@ index c6b2ec5..90c5eff 100644
  
    val fetchedRaw = StreamJoin(StreamJoin(colorRsp, auxRsp), passMeta).translateWith {
      val out = FetchResult()
-@@ -266,7 +240,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -266,7 +244,7 @@ case class FramebufferAccess(c: Config) extends Component {
    val pdata = fetched.payload.passthrough
    val oldDepth = auxData.asUInt
  
 -  val depthPassed = pdata.fbzMode.depthFunction.mux(
-+  val depthPassed = fbzMode.depthFunction.mux(
++  val depthPassed = fbzOf(pdata).depthFunction.mux(
      U(0) -> False,
      U(1) -> (pdata.newDepth < oldDepth),
      U(2) -> (pdata.newDepth === oldDepth),
-@@ -277,10 +251,13 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -277,10 +255,13 @@ case class FramebufferAccess(c: Config) extends Component {
      U(7) -> True
    )
  
 -  val depthKill = pdata.fbzMode.enableDepthBuffer && !depthPassed
-+  val depthKill = fbzMode.enableDepthBuffer && !depthPassed
++  val depthKill = fbzOf(pdata).enableDepthBuffer && !depthPassed
    io.zFuncFail := fetched.fire && depthKill
    val afterDepthTest = fetched.throwWhen(depthKill)
    val afterDepthTestPiped = afterDepthTest.m2sPipe()
@@ -5180,7 +5185,7 @@ index c6b2ec5..90c5eff 100644
  
    // ========================================================================
    // Step 4: Alpha blend
-@@ -291,28 +268,18 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -291,28 +272,18 @@ case class FramebufferAccess(c: Config) extends Component {
  
    val oldColor565 = afterColorData.asUInt
    val destColor = expandRgb565(oldColor565)
@@ -5210,15 +5215,15 @@ index c6b2ec5..90c5eff 100644
 -    ditherAddr(destColor.b, afterPdata.fbzMode.ditherAlgorithm, dsubX, dsubY)
 -  )
 -  val blendDestColor = afterPdata.fbzMode.enableDitherSubtract ? destDsub | destColor
-+  val dsub2x2 = fbzMode.ditherAlgorithm
++  val dsub2x2 = fbzOf(afterPdata).ditherAlgorithm
 +  destDsub.r := Dither.subtract(destColor.r, dsubX, dsubY, dsub2x2, green = false)
 +  destDsub.g := Dither.subtract(destColor.g, dsubX, dsubY, dsub2x2, green = true)
 +  destDsub.b := Dither.subtract(destColor.b, dsubX, dsubY, dsub2x2, green = false)
-+  val blendDestColor = fbzMode.enableDitherSubtract ? destDsub | destColor
++  val blendDestColor = fbzOf(afterPdata).enableDitherSubtract ? destDsub | destColor
    val destA = U(0xff, 8 bits)
  
    val srcColor = afterPdata.color
-@@ -395,6 +362,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -395,6 +366,7 @@ case class FramebufferAccess(c: Config) extends Component {
      }
      .m2sPipe()
  
@@ -5226,7 +5231,7 @@ index c6b2ec5..90c5eff 100644
    io.debug := 0
    io.debug(0) := io.input.valid
    io.debug(1) := io.input.ready
-@@ -417,10 +385,10 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -417,10 +389,10 @@ case class FramebufferAccess(c: Config) extends Component {
    io.debug(18) := auxCtlBase.ready
    io.debug(19) := passMeta.valid
    io.debug(20) := passMeta.ready
@@ -5241,7 +5246,7 @@ index c6b2ec5..90c5eff 100644
    io.debug(25) := fetched.valid
    io.debug(26) := fetched.ready
    io.debug(31 downto 27) := inFlightCount.asBits
-@@ -454,14 +422,14 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -454,14 +426,15 @@ case class FramebufferAccess(c: Config) extends Component {
      out.colorBeforeFog := pd.colorBeforeFog
      out.newDepth := pd.newDepth
      out.alphaMode := pd.alphaMode
@@ -5253,18 +5258,19 @@ index c6b2ec5..90c5eff 100644
 -    out.enableDithering := pd.fbzMode.enableDithering
 -    out.ditherAlgorithm := pd.fbzMode.ditherAlgorithm
 -    out.routing := pd.routing
-+    out.fbzMode := fbzMode
++    val pfbz = fbzOf(pd)
++    out.fbzMode := pfbz
 +    out.chromaKey := pd.isLfb ? B(0, 32 bits) | io.live.chromaKey
-+    out.rgbWrite := fbzMode.rgbBufferMask
-+    out.auxWrite := fbzMode.auxBufferMask
-+    out.enableAlphaPlanes := fbzMode.enableAlphaPlanes
-+    out.enableDithering := fbzMode.enableDithering
-+    out.ditherAlgorithm := fbzMode.ditherAlgorithm
++    out.rgbWrite := pfbz.rgbBufferMask
++    out.auxWrite := pfbz.auxBufferMask
++    out.enableAlphaPlanes := pfbz.enableAlphaPlanes
++    out.enableDithering := pfbz.enableDithering
++    out.ditherAlgorithm := pfbz.ditherAlgorithm
 +    out.routing := pd.isLfb ? io.live.lfbRouting | io.live.drawRouting
      if (c.trace.enabled) {
        out.trace := pd.trace
      }
-@@ -469,6 +437,15 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -469,6 +442,15 @@ case class FramebufferAccess(c: Config) extends Component {
  }
  
  object FramebufferAccess {
