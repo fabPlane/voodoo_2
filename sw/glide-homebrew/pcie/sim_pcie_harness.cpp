@@ -67,7 +67,7 @@ bool g_busySample = false;
 // VOODOO_PERF (with VOODOO_PCI_PROFILE, B70+ bitstreams): read the 16 perf
 // counters at 0x280-0x2e4 after each swap and print the per-frame deltas.
 bool g_perf = false;
-uint32_t g_lastPerf[26];
+uint32_t g_lastPerf[32];
 uint32_t g_lastDdr[8];
 uint64_t g_busyN = 0, g_busyCnt[32];
 const char *const kBusyNames[32] = {
@@ -338,9 +338,9 @@ void reportFrame() {
   uint32_t dIn = (in - g_lastPixIn) & 0xffffff, dOut = (out - g_lastPixOut) & 0xffffff;
   g_lastPixIn = in;
   g_lastPixOut = out;
-  uint32_t perf[26], dp[26];
+  uint32_t perf[32], dp[32];
   if (g_perf) {
-    for (int i = 0; i < 26; ++i) {
+    for (int i = 0; i < 32; ++i) {
       perf[i] = g_bar.read32(0x280 + 4 * i);
       dp[i] = perf[i] - g_lastPerf[i];
       g_lastPerf[i] = perf[i];
@@ -381,11 +381,12 @@ void reportFrame() {
               " raster px %u overhead %.0f%% setup-bound %.0f%% guard hold %.0f%%;"
               " tex words %u misses %u fill %.0f%% samples %u (%.2f words/sample);"
               " fb rd col wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%,"
-              " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%\n",
+              " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%;"
+              " held: raster %.0f%% postFull %.0f%% texWait %.0f%% postWait %.0f%% tmu1 misses %u fill %.0f%%\n",
               (unsigned long long)g_frameNo, dp[0] / 1e6, pc(13), pc(14), pc(15), dp[1], dp[2],
               pc(3), pc(4), pc(5), pc(6), pc(7), pc(8), dp[9], pc(10), pc(11), pc(12), dp[16],
               dp[17], pc(18), dp[19], dp[19] ? double(dp[16]) / dp[19] : 0.0, pc(20), pc(21), pc(22),
-              pc(23), pc(24), pc(25));
+              pc(23), pc(24), pc(25), pc(26), pc(27), pc(28), pc(29), dp[30], pc(31));
     }
     if (g_perf && dd[0]) {
       auto pd = [&](int i) { return 100.0 * dd[i] / dd[0]; };
