@@ -102,3 +102,10 @@ split "no triangle" cycles by PCI FIFO state: on B165b 33% of cycles had no
 triangle and an empty FIFO, i.e. the host could not deliver register writes
 fast enough; the PCIe BAR target waited for every write's response. B166
 makes BAR writes posted (reads still wait for all earlier writes).
+B166a (posted BAR writes) 47.4 fps; B167c (2048-entry PCI FIFO) 48.2 fps
+(52.6 with vsync off). B168f re-enabled the DDR bridge counters: DRAM
+commands take only ~6% of DDR cycles, read latency ~40 DDR cycles, no
+head-of-line waits, so memory bandwidth is not the limit; a 32-deep span
+queue changed nothing. With the PCI FIFO nearly full ~55% of cycles the
+card itself is the limit now: TMU path stalls (rasterizer held ~15%,
+post-TMU entries waiting for texels ~19%) at a 48 MHz core clock.
