@@ -835,7 +835,7 @@ index d163ab7..6d56df3 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..a8fa398 100644
+index 1b34fa2..3a38222 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -848,7 +848,7 @@ index 1b34fa2..a8fa398 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,72 @@ case class Config(
+@@ -31,6 +34,75 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -895,6 +895,9 @@ index 1b34fa2..a8fa398 100644
 +    // drain empties the (deep) pipeline. A write still drains when it changes
 +    // the draw buffer or y origin, which stay live.
 +    fbzModePerTriangle: Boolean = false,
++    // An fbzMode write that does not change the register skips the pipeline
++    // drain (GLQuake: ~205 of ~220 writes a frame). Exact.
++    skipRedundantFbzSync: Boolean = false,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -922,7 +925,7 @@ index 1b34fa2..a8fa398 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..f11e9e4 100644
+index 100f1c6..c3fc098 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -961,7 +964,7 @@ index 100f1c6..f11e9e4 100644
      val fbColorWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbAuxWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbColorReadMem = master(Bmb(Core.fbMemBmbParams(c)))
-@@ -92,25 +114,38 @@ case class Core(c: Config) extends Component {
+@@ -92,25 +114,39 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -984,7 +987,8 @@ index 100f1c6..f11e9e4 100644
 -    commandAddresses = regBank.busif.getCommandStreamReady.keys.toSeq.sorted
 +    commandAddresses = regBank.busif.getCommandStreamReady.keys.toSeq.sorted,
 +    blockingCommands = regBank.busif.getBlockingCommands,
-+    relaxedFbzSync = c.fbzModePerTriangle
++    relaxedFbzSync = c.fbzModePerTriangle,
++    skipRedundantFbzSync = c.skipRedundantFbzSync
    )
  
    val frontdoor = CoreCpuFrontdoor(c)
@@ -1003,7 +1007,7 @@ index 100f1c6..f11e9e4 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -149,7 +184,7 @@ case class Core(c: Config) extends Component {
+@@ -149,7 +185,7 @@ case class Core(c: Config) extends Component {
      hdmiScanout.io.regs.displayHeight := 480
      hdmiScanout.io.regs.framebufferEnable := True
      hdmiScanout.io.regs.testPatternEnable := False
@@ -1012,7 +1016,7 @@ index 100f1c6..f11e9e4 100644
  
      pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
        c,
-@@ -158,13 +193,23 @@ case class Core(c: Config) extends Component {
+@@ -158,13 +194,23 @@ case class Core(c: Config) extends Component {
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
      textureMem.io.downloadConfig := TextureMem.DownloadConfig.fromRegisterBank(c, regBank)
@@ -1037,7 +1041,7 @@ index 100f1c6..f11e9e4 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,16 +218,20 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +219,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -1061,7 +1065,7 @@ index 100f1c6..f11e9e4 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +239,7 @@ case class Core(c: Config) extends Component {
+@@ -190,6 +240,7 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
@@ -1069,7 +1073,7 @@ index 100f1c6..f11e9e4 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -200,9 +250,42 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +251,42 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -1172,7 +1176,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..b0b9d4b 100644
+index 6051025..693b540 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,37 @@ import spinal.core._
@@ -1219,7 +1223,7 @@ index 6051025..b0b9d4b 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,21 @@ object CoreSimGen extends App {
+@@ -37,7 +48,22 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1238,7 +1242,8 @@ index 6051025..b0b9d4b 100644
 +      tmuForkAsync = args.contains("--tmu-fork-async"),
 +      tmuOutputQueue = argIntValue("--tmu-output-queue").getOrElse(0),
 +      texCachePairedBanks = args.contains("--tex-cache-paired"),
-+      fbzModePerTriangle = args.contains("--fbz-per-triangle")
++      fbzModePerTriangle = args.contains("--fbz-per-triangle"),
++      skipRedundantFbzSync = args.contains("--skip-redundant-fbz-sync")
      )
  
    val memTiming = SimMemoryTiming(
@@ -1510,10 +1515,10 @@ index 3a197b9..2731d3b 100644
  
  /** Register write metadata bundle */
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..86b7647 100644
+index 226d60e..a6d42f9 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
-@@ -40,6 +40,10 @@ case class PciFifo(
+@@ -40,6 +40,11 @@ case class PciFifo(
      categories: Map[BigInt, RegisterCategory],
      floatAliases: Map[BigInt, PciFifo.FloatAliasConfig],
      commandAddresses: Seq[BigInt],
@@ -1521,10 +1526,11 @@ index 226d60e..86b7647 100644
 +    // fbzMode (0x110) only waits for the pipeline to drain when it changes the
 +    // draw buffer or the y origin (Config.fbzModePerTriangle).
 +    relaxedFbzSync: Boolean = false,
++    skipRedundantFbzSync: Boolean = false,
      formalStrong: Boolean = true
  ) extends Component {
  
-@@ -52,6 +56,10 @@ case class PciFifo(
+@@ -52,6 +57,10 @@ case class PciFifo(
    }
  
    val busAddrWidth: Int = busParams.access.addressWidth
@@ -1535,7 +1541,7 @@ index 226d60e..86b7647 100644
    val busDataWidth: Int = busParams.access.dataWidth
  
    val io = new Bundle {
-@@ -67,10 +75,15 @@ case class PciFifo(
+@@ -67,10 +76,15 @@ case class PciFifo(
  
      // Drain blocking inputs
      val pipelineBusy = in Bool ()
@@ -1551,7 +1557,7 @@ index 226d60e..86b7647 100644
      val pciFifoFree = out UInt (7 bits)
  
      // Event signals
-@@ -97,20 +110,57 @@ case class PciFifo(
+@@ -97,20 +111,57 @@ case class PciFifo(
    // ========================================================================
    // Address categorization signals (assigned in addPrePopTask)
    // ========================================================================
@@ -1616,7 +1622,7 @@ index 226d60e..86b7647 100644
  
    private case class StagedWrite() extends Bundle {
      val address = UInt(busAddrWidth bits)
-@@ -170,10 +220,10 @@ case class PciFifo(
+@@ -170,10 +221,10 @@ case class PciFifo(
      clearStaged(stagedWriteTx)
  
      when(queueableCpuWrite) {
@@ -1631,7 +1637,7 @@ index 226d60e..86b7647 100644
        stagedWriteTx.syncRequired := syncRequired
        stagedWriteTx.isFloatAlias := isFloatAlias
        stagedWriteTx.floatTargetAddr := floatTargetAddr
-@@ -268,7 +318,7 @@ case class PciFifo(
+@@ -268,7 +319,7 @@ case class PciFifo(
  
    // wasEnqueued: detect when a specific register write was actually enqueued
    io.wasEnqueued := queuedWriteTx.fire && !queuedWriteTx.isTexture &&
@@ -1640,7 +1646,7 @@ index 226d60e..86b7647 100644
  
    // ========================================================================
    // 64-entry PCI FIFO
-@@ -283,6 +333,13 @@ case class PciFifo(
+@@ -283,6 +334,13 @@ case class PciFifo(
    // ========================================================================
    // Drain blocking logic
    // ========================================================================
@@ -1654,7 +1660,7 @@ index 226d60e..86b7647 100644
    private val drainControl = new Area {
      val canDrain = Bool()
      canDrain := True
-@@ -294,6 +351,44 @@ case class PciFifo(
+@@ -294,6 +352,44 @@ case class PciFifo(
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
        canDrain := False
      }
@@ -1699,7 +1705,7 @@ index 226d60e..86b7647 100644
  
      val commandStreamBlocked = Bool()
      commandStreamBlocked := False
-@@ -303,10 +398,12 @@ case class PciFifo(
+@@ -303,10 +399,12 @@ case class PciFifo(
  
      val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
      fifoEmpty.simPublic()
@@ -1713,7 +1719,7 @@ index 226d60e..86b7647 100644
    private val issuedWrite = drainControl.issuedWrite
    private val commandStreamBlocked = drainControl.commandStreamBlocked
    private val drainedWrite = issuedWrite
-@@ -324,11 +421,12 @@ case class PciFifo(
+@@ -324,11 +422,12 @@ case class PciFifo(
      io.texDrain.pciAddr := drainedWrite.texPciAddr
      io.texDrain.data := drainedWrite.data
      io.texDrain.mask := drainedWrite.mask
@@ -1730,7 +1736,7 @@ index 226d60e..86b7647 100644
    }
    val isTexDrain = drainRoute.isTexDrain
    val isRegDrain = drainRoute.isRegDrain
-@@ -341,31 +439,31 @@ case class PciFifo(
+@@ -341,31 +440,31 @@ case class PciFifo(
      // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
      // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
      val doWriteDirect = isWriteCmd && fifoBypass
@@ -1779,7 +1785,7 @@ index 226d60e..86b7647 100644
        (isTexDrain && io.texDrain.ready)
    }
    private val doWriteDirect = regSideMux.doWriteDirect
-@@ -383,16 +481,16 @@ case class PciFifo(
+@@ -383,16 +482,16 @@ case class PciFifo(
      io.regSide.rsp.ready := True
  
      io.cpuSide.rsp.valid := RegNext(
@@ -1800,7 +1806,7 @@ index 226d60e..86b7647 100644
        pendingRead := True
      }
      when(pendingRead && io.regSide.rsp.valid) {
-@@ -414,18 +512,18 @@ case class PciFifo(
+@@ -414,18 +513,18 @@ case class PciFifo(
    // Stall logic
    // ========================================================================
    private val cpuReady = new Area {
@@ -1826,7 +1832,7 @@ index 226d60e..86b7647 100644
      }
    }
  
-@@ -453,33 +551,47 @@ case class PciFifo(
+@@ -453,33 +552,68 @@ case class PciFifo(
      println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
  
      // Default: unregistered addresses bypass FIFO
@@ -1867,6 +1873,27 @@ index 226d60e..86b7647 100644
 +        fbzShadow := cpuCmdIn.payload.data
 +      }
 +    }
++
++    // fbzMode written with the value it already holds needs no drain: the
++    // register does not change. GLQuake (Mesa re-sends state per texture
++    // bind) writes ~220 fbzModes a frame and ~205 change nothing. Writes enter
++    // in order, so the shadow is what the register holds when this write
++    // reaches the head. TMU1-only writes (tag bit 11) do not reach the FBI;
++    // partial writes make the shadow unknown.
++    if (skipRedundantFbzSync && !relaxedFbzSync) {
++      val shadow = Reg(Bits(32 bits)) init (0)
++      val shadowValid = RegInit(False)
++      val isFbz = regIs(cpuCmdIn.payload.address, 0x110) &&
++        !cpuCmdIn.payload.address(voodoo.frontend.RegisterBank.tagSkipMainBit)
++      val fullWrite = cpuCmdIn.payload.mask === B"1111"
++      when(isFbz && shadowValid && fullWrite && cpuCmdIn.payload.data === shadow) {
++        decodeInfo.syncRequired := False
++      }
++      when(cpuCmdIn.fire && isFbz && cpuCmdIn.payload.opcode === Bmb.Cmd.Opcode.WRITE) {
++        shadow := cpuCmdIn.payload.data
++        shadowValid := fullWrite
++      }
++    }
  
      // Float alias address decode
 -    isFloatAlias := False
@@ -1889,7 +1916,7 @@ index 226d60e..86b7647 100644
        }
      }
  
-@@ -488,52 +600,74 @@ case class PciFifo(
+@@ -488,52 +622,74 @@ case class PciFifo(
        s"[PciFifo] Command stream addresses: ${commandAddresses.map(a => f"0x$a%03x").mkString(", ")}"
      )
      if (commandAddresses.nonEmpty) {
@@ -1985,7 +2012,7 @@ index 226d60e..86b7647 100644
      }
  
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
-@@ -550,8 +684,8 @@ case class PciFifo(
+@@ -550,8 +706,8 @@ case class PciFifo(
        assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
      }
  
@@ -1996,7 +2023,7 @@ index 226d60e..86b7647 100644
      }
  
      when(floatWriteRequest && !floatConvertInFlight) {
-@@ -581,12 +715,10 @@ case class PciFifo(
+@@ -581,12 +737,10 @@ case class PciFifo(
        assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
      }
  
