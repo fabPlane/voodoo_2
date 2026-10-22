@@ -92,3 +92,13 @@ Known sim-only difference: without the drains the multitexture frame
 differs from the drained run in 11 pixels of one span under GLQuake's
 full-screen tint (one dither step); not a blend-over-blend ordering race
 (ordering blends did not change it).
+
+2026-10-22: B164e (512-entry PCI FIFO) 34.1 fps. The swap was the next
+limit: at swap interval 1 with two buffers nothing behind a swap may run
+until retrace (34.1 fps vs 46.2 with vsync off, which tears). B165b adds
+Voodoo 2 style triple buffering (fbiInit2 bit 4, SST_TRIPLE_BUFFER=1 in the
+init stub): **43.6 fps with vsync on**, no tearing. New perf counters 30/31
+split "no triangle" cycles by PCI FIFO state: on B165b 33% of cycles had no
+triangle and an empty FIFO, i.e. the host could not deliver register writes
+fast enough; the PCIe BAR target waited for every write's response. B166
+makes BAR writes posted (reads still wait for all earlier writes).
