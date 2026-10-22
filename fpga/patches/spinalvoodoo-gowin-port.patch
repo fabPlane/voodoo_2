@@ -679,7 +679,7 @@ index 3f1a2a8..d4b4d35 100644
              voodoo->v_disp = (val >> 16) & 0xfff;
              if ((voodoo->v_disp == 386) || (voodoo->v_disp == 402) ||
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
-index d163ab7..6d56df3 100644
+index d163ab7..bb42f6a 100644
 --- a/emu/test/trace_test.cpp
 +++ b/emu/test/trace_test.cpp
 @@ -192,6 +192,37 @@ static uint32_t remap_backend_reg_addr(uint32_t addr) {
@@ -706,11 +706,11 @@ index d163ab7..6d56df3 100644
 +            " tex words %u misses %u fill %.0f%% samples %u;"
 +            " fb rd col wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%,"
 +            " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%;"
-+            " held: raster %.0f%% syncWait %.0f%% texWait %.0f%% postWait %.0f%% tmu1 misses %u fill %.0f%%\n",
++            " held: raster %.0f%% syncWait %.0f%% texWait %.0f%% postWait %.0f%%; no triangle: fifo empty %.0f%% fifo busy %.0f%%\n",
 +            label, dp[0], pc(13), pc(14), pc(15), dp[1], dp[2], pc(3), pc(4), pc(5), pc(6),
 +            pc(7), pc(8), dp[9], pc(10), pc(11), pc(12), dp[16], dp[17], pc(18), dp[19],
 +            pc(20), pc(21), pc(22), pc(23), pc(24), pc(25),
-+            pc(26), pc(27), pc(28), pc(29), dp[30], pc(31));
++            pc(26), pc(27), pc(28), pc(29), pc(30), pc(31));
 +}
 +static uint32_t perf_prev[32];
 +static bool perf_have_prev;
@@ -2342,7 +2342,7 @@ index c23fa0b..5df6bdd 100644
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..0c3e39f 100644
+index 7797711..138ce01 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,8 @@ object PixelPipeline {
@@ -2845,13 +2845,14 @@ index 7797711..0c3e39f 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +1013,45 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +1013,48 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
 +
 +  // Perf counters 13-15: cycles busy, cycles the TMU input was held (texture
 +  // misses), cycles the framebuffer-access input was held (fb reads).
++  val rasterIdleNoTriangle = !rasterizer.running && !triangleSetup.busy && !triangleSetup.o.valid
 +  private def cycleCounter(cond: Bool): UInt = {
 +    val r = Reg(UInt(32 bits)) init (0)
 +    when(cond) { r := r + 1 }
@@ -2873,13 +2874,15 @@ index 7797711..0c3e39f 100644
 +        12 -> cycleCounter(hazardHold),
 +        // 26 rasterizer pixel held downstream, 27 post-TMU queue full, 28 TMU
 +        // texel waiting for its post-TMU entry, 29 post-TMU entry waiting for
-+        // its texels, 30 / 31 TMU1 texture cache misses / fill cycles.
++        // its texels; 30 / 31: no triangle in setup or rasterizer, with the
++        // PCI FIFO empty (the host is behind) / not empty (the front end is
++        // still turning register writes into the next triangle).
 +        26 -> cycleCounter(rasterizer.o.valid && !rasterizer.o.ready),
 +        27 -> cycleCounter(postTmuFifo.io.push.valid && !postTmuFifo.io.push.ready),
 +        28 -> cycleCounter(tmuOutput.valid && !tmuOutput.ready),
 +        29 -> cycleCounter(postTmuQueue.valid && !postTmuQueue.ready),
-+        30 -> tmu1Perf(1),
-+        31 -> tmu1Perf(2)
++        30 -> cycleCounter(rasterIdleNoTriangle && io.pciFifoEmpty),
++        31 -> cycleCounter(rasterIdleNoTriangle && !io.pciFifoEmpty)
 +      )
 +    else Map.empty
 +  // 20-25 are filled in by Core (fb write-buffer drain counters).

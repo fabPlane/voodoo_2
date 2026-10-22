@@ -382,11 +382,11 @@ void reportFrame() {
               " tex words %u misses %u fill %.0f%% samples %u (%.2f words/sample);"
               " fb rd col wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%,"
               " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%;"
-              " held: raster %.0f%% syncWait %.0f%% texWait %.0f%% postWait %.0f%% tmu1 misses %u fill %.0f%%\n",
+              " held: raster %.0f%% syncWait %.0f%% texWait %.0f%% postWait %.0f%%; no triangle: fifo empty %.0f%% fifo busy %.0f%%\n",
               (unsigned long long)g_frameNo, dp[0] / 1e6, pc(13), pc(14), pc(15), dp[1], dp[2],
               pc(3), pc(4), pc(5), pc(6), pc(7), pc(8), dp[9], pc(10), pc(11), pc(12), dp[16],
               dp[17], pc(18), dp[19], dp[19] ? double(dp[16]) / dp[19] : 0.0, pc(20), pc(21), pc(22),
-              pc(23), pc(24), pc(25), pc(26), pc(27), pc(28), pc(29), dp[30], pc(31));
+              pc(23), pc(24), pc(25), pc(26), pc(27), pc(28), pc(29), pc(30), pc(31));
     }
     if (g_perf && dd[0]) {
       auto pd = [&](int i) { return 100.0 * dd[i] / dd[0]; };

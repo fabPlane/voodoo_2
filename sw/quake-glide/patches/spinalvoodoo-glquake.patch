@@ -91,18 +91,6 @@ index 3f1a2a8..43a3797 100644
      if (params->fbzColorPath & FBZCP_TEXTURE_ENABLED)
          ref_triangles_textured++;
      else
-@@ -564,8 +591,10 @@ int ref_init(int fb_size_mb, int tex_size_mb)
-     voodoo->texture_size = tex_size_mb * 1024 * 1024;
-     voodoo->texture_mask = voodoo->texture_size - 1;
-     voodoo->tex_mem[0]   = (uint8_t *)calloc(1, voodoo->texture_size);
-+    voodoo->tex_mem[1]   = (uint8_t *)calloc(1, voodoo->texture_size);
-     voodoo->tex_mem_w[0] = (uint16_t *)voodoo->tex_mem[0];
--    if (!voodoo->tex_mem[0]) return -1;
-+    voodoo->tex_mem_w[1] = (uint16_t *)voodoo->tex_mem[1];
-+    if (!voodoo->tex_mem[0] || !voodoo->tex_mem[1]) return -1;
- 
-     /* Texture cache: allocate data buffers for each cache entry.
-      * Size must hold all LOD levels: 256*256 *2 + 128*128 + 64*64 + ... + 2*2 */
 @@ -573,7 +602,9 @@ int ref_init(int fb_size_mb, int tex_size_mb)
                               32*32 + 16*16 + 8*8 + 4*4 + 2*2) * sizeof(uint32_t);
      for (int i = 0; i < TEX_CACHE_MAX; i++) {
