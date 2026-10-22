@@ -378,7 +378,7 @@ void reportFrame() {
               "[perf] frame %llu: %.1f Mcyc busy %.0f%%; tmuInStall %.0f%% fbAccInStall %.0f%%;"
               " fill hit %u miss %u stall %.0f%%; write stall %.0f%%;"
               " blocked colRd %.0f%% auxRd %.0f%% colWr %.0f%% auxWr %.0f%%;"
-              " raster px %u overhead %.0f%% setup-bound %.0f%% guard hold %.0f%%;"
+              " raster px %u overhead %.0f%% setup-bound %.0f%% pci fifo nearly full %.0f%%;"
               " tex words %u misses %u fill %.0f%% samples %u (%.2f words/sample);"
               " fb rd col wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%,"
               " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%;"

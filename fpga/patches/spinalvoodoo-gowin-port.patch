@@ -694,7 +694,7 @@ index 3f1a2a8..d4b4d35 100644
              voodoo->v_disp = (val >> 16) & 0xfff;
              if ((voodoo->v_disp == 386) || (voodoo->v_disp == 402) ||
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
-index d163ab7..bb42f6a 100644
+index d163ab7..b019fb0 100644
 --- a/emu/test/trace_test.cpp
 +++ b/emu/test/trace_test.cpp
 @@ -192,6 +192,37 @@ static uint32_t remap_backend_reg_addr(uint32_t addr) {
@@ -717,7 +717,7 @@ index d163ab7..bb42f6a 100644
 +            "[perf] %s: %u cyc busy %.0f%%; tmuInStall %.0f%% fbAccInStall %.0f%%;"
 +            " fill hit %u miss %u stall %.0f%%; write stall %.0f%%;"
 +            " blocked colRd %.0f%% auxRd %.0f%% colWr %.0f%% auxWr %.0f%%;"
-+            " raster px %u overhead %.0f%% setup-bound %.0f%% guard hold %.0f%%;"
++            " raster px %u overhead %.0f%% setup-bound %.0f%% pci fifo nearly full %.0f%%;"
 +            " tex words %u misses %u fill %.0f%% samples %u;"
 +            " fb rd col wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%,"
 +            " aux wait %.0f%% rspfull %.0f%% issue-blocked %.0f%%;"
@@ -949,7 +949,7 @@ index 1b34fa2..3c0f2c1 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..2ce85bd 100644
+index 100f1c6..6921e33 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -1117,7 +1117,7 @@ index 100f1c6..2ce85bd 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -200,9 +255,45 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +255,50 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -1153,6 +1153,11 @@ index 100f1c6..2ce85bd 100644
 +    val syncWaitCycles = Reg(UInt(32 bits)) init (0)
 +    when(pciFifo.io.syncWait) { syncWaitCycles := syncWaitCycles + 1 }
 +    regDebug.perf(27) := syncWaitCycles
++    // 12: PCI FIFO under 64 free (the host is about to wait for room); was
++    // the read-hazard guard hold, ~0% since B92.
++    val fifoNearlyFull = Reg(UInt(32 bits)) init (0)
++    when(pciFifo.io.pciFifoFree < 64) { fifoNearlyFull := fifoNearlyFull + 1 }
++    regDebug.perf(12) := fifoNearlyFull
 +  }
 +  regBank.io.debug := regDebug
  

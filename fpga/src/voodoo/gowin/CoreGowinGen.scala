@@ -119,10 +119,13 @@ object GowinGenSupport {
       // fbzMode rewrites of the current value skip the drain (GLQuake ~205 of
       // ~220 a frame; drains in a multitexture frame 75 -> 5).
       skipRedundantFbzSync = true,
-      // 512-entry PCI FIFO (same BSRAM as 64: one 18K block is 512 deep). 64
-      // ran empty while the host waited on status reads: B163f's rasterizer
-      // idled ~29% with the host stalled on a full FIFO 11 of 15 ms.
-      pciFifoDepth = 512,
+      // Deep PCI FIFO (the real chip backs its 64 entries with a memory FIFO
+      // in framebuffer RAM). 64 ran empty while the host waited on status
+      // reads (B163f: rasterizer idle ~29%); 512 (same 4 BSRAMs) gave B164e
+      // +2.7%. With posted BAR writes (B166a) the FIFO still alternated
+      // between full (big triangles) and empty (runs of small ones: no
+      // triangle 20% of cycles): 2048 entries, ~14 BSRAMs.
+      pciFifoDepth = 2048,
       // fbiInit2 bit 4 triple buffering (Voodoo 2); off until software sets it.
       tripleBuffering = true,
       // Two TMUs: no triangleCMD register copy (~2.3k FFs); register writes
