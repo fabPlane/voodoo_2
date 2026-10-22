@@ -88,7 +88,14 @@ case class ScanoutTap() extends Component {
       when(decimCnt =/= 0) { decimCnt := decimCnt - 1 }
     }
   }
-  when(!io.enable) { decimCnt := 0 }
+  // Stop at once when disabled: the writer drains and restarts at slot 0, and
+  // the rest of a frame captured past that would land there misaligned (its
+  // next start-of-frame word then misses the writer's TLP-start check).
+  when(!io.enable) {
+    decimCnt := 0
+    capturing := False
+    padLeft := 0
+  }
 }
 
 /** One TLP transmit port (Gowin native TL TX: first dword in bits 255:224,

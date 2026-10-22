@@ -141,6 +141,11 @@ int main(int argc, char **argv) {
   if (!attach) {
   *status = 0;
   setReg(bar, kRegCtrl, 0);
+  // The scanout tap only stops at the next vsync: if the writer is enabled
+  // again mid-frame it starts slot 0 with the rest of that frame, and when
+  // that is not a whole TLP the start-of-frame marker never lands where the
+  // writer checks it, so every frame stays rotated. Wait two frames.
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
   setReg(bar, kRegBase, uint32_t(info.bus));
   setReg(bar, kRegSlots, slots);
   setReg(bar, kRegFrameWords, kFrameWords);
