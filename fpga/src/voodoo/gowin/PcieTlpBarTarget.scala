@@ -242,6 +242,14 @@ case class PcieTlpBarTarget(
     io.tlTxData := dw0 ## dw1 ## dw2 ## (if (withData) pcieSwap(data) else B(0, 32 bits)) ## B(0, 128 bits)
   }
 
+  // tlpAddr / writeData only drive AXI channels that are pending, so with
+  // none pending they can load on every TLP start: their enables then skip
+  // the TLP decode and wedged (-2.4 ns on clk100 in one B162 placement).
+  when(state === State.idle && axiIdle && rxBeat && io.tlRxSop) {
+    tlpAddr := mappedAddr
+    writeData := capturedData
+  }
+
   switch(state) {
     is(State.idle) {
       stall := 0
@@ -266,7 +274,6 @@ case class PcieTlpBarTarget(
             }
           } otherwise {
             localReadSrc := ReadSrc.window
-            tlpAddr := 0
             state := State.localRead
           }
         } elsewhen (isLocal) {
@@ -296,8 +303,6 @@ case class PcieTlpBarTarget(
             state := State.localRead
           }
         } otherwise {
-          tlpAddr := mappedAddr
-          writeData := capturedData
           when(hasData) {
             awPend := True
             wPend := True

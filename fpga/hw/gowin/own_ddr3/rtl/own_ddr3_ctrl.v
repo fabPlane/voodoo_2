@@ -154,7 +154,12 @@ module own_ddr3_ctrl #(
     reg [DQ_WIDTH-1:0]    wq_mask [0:WDQ_DEPTH-1];
     reg [WDQ_AW-1:0]      wq_head, wq_tail;
     reg [WDQ_AW:0]        wq_count;
-    reg [WDQ_AW:0]        wq_claimed;   // writes started, data not yet sent
+    // Queued write data not yet claimed by an issued write (count - claimed;
+    // a pop lowers both). Kept as a count plus a registered nonzero flag so
+    // the issue check is one flop instead of a compare behind the command
+    // queue head (-2.4 ns on ddr_clk_out in one B162 placement).
+    reg [WDQ_AW:0]        wq_unclaimed;
+    reg                   wq_unclaimed_nz;
 
     reg cal_done;
     // Both readies drop together, so a master that offers a write command
@@ -184,7 +189,7 @@ module own_ddr3_ctrl #(
     wire [ADDR_WIDTH-1:0] hq_addr = cq_addr[cq_head];
     wire                  hq_wr = cq_wr[cq_head];
     wire                  hq_valid = cq_count != 2'd0 &&
-                                     (!hq_wr || wq_count > wq_claimed);
+                                     (!hq_wr || wq_unclaimed_nz);
 
     wire                  rq_valid = cal_active ? cal_req : (cal_done && hq_valid);
     wire                  rq_wr    = cal_active ? cal_req_wr : hq_wr;
@@ -225,6 +230,8 @@ module own_ddr3_ctrl #(
     wire can_issue = running && rq_valid && rfc_idle && !ref_due &&
                      bank_idle[rq_bank] && (rq_wr ? rtw_idle : wtr_idle);
     wire do_ref = running && ref_due && rfc_idle && all_banks_idle;
+    // can_issue needs !ref_due, so it never coincides with do_ref.
+    wire wq_claim = can_issue && rq_wr && !rq_cal;
 
     // Stage 1: the RD/WR half of the access started last frame
     reg                   s1_valid, s1_wr, s1_cal, s1_b;
@@ -452,7 +459,7 @@ module own_ddr3_ctrl #(
             req_recal <= 1'b0;
             req_reinit <= 1'b0;
             cq_head <= 1'b0; cq_tail <= 1'b0; cq_count <= 2'd0;
-            wq_head <= 0; wq_tail <= 0; wq_count <= 0; wq_claimed <= 0;
+            wq_head <= 0; wq_tail <= 0; wq_count <= 0; wq_unclaimed <= 0; wq_unclaimed_nz <= 1'b0;
             for (i = 0; i < 8; i = i + 1) bank_cnt[i] <= 3'd0;
             rtw_cnt <= 3'd0; wtr_cnt <= 3'd0; rfc_cnt <= 5'd0;
             bank_idle <= 8'hFF; rtw_idle <= 1'b1; wtr_idle <= 1'b1; rfc_idle <= 1'b1;
@@ -643,7 +650,6 @@ module own_ddr3_ctrl #(
                 if (!rq_cal) begin
                     cq_head <= ~cq_head;
                 end
-                if (rq_wr && !rq_cal) wq_claimed <= wq_claimed + 1'b1;
             end
             if (s1_valid) begin
                 // slot 2 = RD, slot 3 = WR, both with auto-precharge
@@ -670,10 +676,16 @@ module own_ddr3_ctrl #(
             // FIFO counts (pushes above, pops here)
             cq_count <= cq_count_n;
             wq_count <= wq_count_n;
+            if (wq_claim) begin
+                wq_unclaimed <= wq_unclaimed + wq_push - 1'b1;
+                wq_unclaimed_nz <= wq_push ? wq_unclaimed != 0 : wq_unclaimed > 1;
+            end else begin
+                wq_unclaimed <= wq_unclaimed + wq_push;
+                wq_unclaimed_nz <= wq_push || wq_unclaimed != 0;
+            end
             ui_room <= cal_done && cq_count_n != 2'd2 && wq_count_n != WDQ_DEPTH;
             if (wdata_pop) begin
                 wq_head <= wq_head + 1'b1;
-                wq_claimed <= wq_claimed + (can_issue && rq_wr && !rq_cal) - 1'b1;
             end
 
             // ---------------- pipelines / PHY data path ----------------
