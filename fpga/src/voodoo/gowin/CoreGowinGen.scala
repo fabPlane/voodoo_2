@@ -119,6 +119,10 @@ object GowinGenSupport {
       // fbzMode rewrites of the current value skip the drain (GLQuake ~205 of
       // ~220 a frame; drains in a multitexture frame 75 -> 5).
       skipRedundantFbzSync = true,
+      // 512-entry PCI FIFO (same BSRAM as 64: one 18K block is 512 deep). 64
+      // ran empty while the host waited on status reads: B163f's rasterizer
+      // idled ~29% with the host stalled on a full FIFO 11 of 15 ms.
+      pciFifoDepth = 512,
       // Two TMUs: no triangleCMD register copy (~2.3k FFs); register writes
       // wait for setup instead, same cycles in GLQuake trace replay.
       triangleSnapshot = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
