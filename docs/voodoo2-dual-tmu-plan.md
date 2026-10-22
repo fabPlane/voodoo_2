@@ -80,3 +80,15 @@ gamma in BSRAM, ...) and three timing rounds driven by the saved PnR reports.
 (mtex00 quad 6), SIM_TRACE_FRAMES=N:M frame-window trace capture in the
 trace backend (multitexture GLQuake frames; the 86Box reference still
 segfaults replaying them in its blend path - to fix).
+
+2026-10-21/22: B160a 32.5 fps (TMU1 cache 512 lines, paired-bank texture
+caches). B161d added a syncWait counter: on the board 34-47% of cycles had a
+Sync=Yes write waiting at the FIFO head, almost all fbzMode, and ~205 of
+GLQuake's ~220 fbzMode writes a frame rewrite the current value (Mesa
+re-sends state per texture bind). B163f skips the drain for those (exact):
+syncWait 0.5%, pipeline busy 89 -> 93.5%, timedemo demo1 **33.2 fps**.
+Remaining stalls: depth reads blocked ~24%, TMU input ~11%.
+Known sim-only difference: without the drains the multitexture frame
+differs from the drained run in 11 pixels of one span under GLQuake's
+full-screen tint (one dither step); not a blend-over-blend ordering race
+(ordering blends did not change it).
