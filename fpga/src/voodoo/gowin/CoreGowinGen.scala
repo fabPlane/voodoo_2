@@ -79,7 +79,7 @@ object GowinGenSupport {
       // Span queue between the walker (which issues the framebuffer prefetch)
       // and the span rasterizer: the prefetch's lead. 16 instead of 4 halved
       // fill waits in trace replay at 120-cycle memory latency.
-      spanQueueDepth = 16,
+      spanQueueDepth = sys.env.get("GOWIN_SPAN_QUEUE").map(_.toInt).getOrElse(16),
       // More HDMI scanout FIFO margin: refilling only from 1024 left too
       // little once rendering competed for memory (frames blanked
       // mid-frame, B52). 3072-3840 hung the scanout reader for good (B53).
