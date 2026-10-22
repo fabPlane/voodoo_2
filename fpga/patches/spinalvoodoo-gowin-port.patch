@@ -217,7 +217,7 @@ index 0000000..fc67cfb
 +  return 0;
 +}
 diff --git a/emu/glide/glide2x/sst1/init/initvg/video.c b/emu/glide/glide2x/sst1/init/initvg/video.c
-index c71ac23..44c086a 100644
+index c71ac23..b773156 100644
 --- a/emu/glide/glide2x/sst1/init/initvg/video.c
 +++ b/emu/glide/glide2x/sst1/init/initvg/video.c
 @@ -82,6 +82,11 @@ FX_EXPORT FxBool FX_CSTYLE sst1InitVideo(FxU32 *sstbase,
@@ -232,6 +232,21 @@ index c71ac23..44c086a 100644
      /* Set up basic rendering state for simulation. DE10 uses the FPGA HDMI
       * scanout path and does not need the legacy SST video read-modify-write
       * sequence here; that sequence can touch unsupported/reset-sensitive
+@@ -97,6 +102,14 @@ FX_EXPORT FxBool FX_CSTYLE sst1InitVideo(FxU32 *sstbase,
+         return(FXFALSE);
+ #endif
+ 
++    /* SST_TRIPLE_BUFFER, as the real path below: fbiInit2 bit 4. Glide keeps
++     * drawing to "back"; the core rotates three buffers (depth moves to
++     * 3 x bufferOffset) and keeps rendering while a swap waits for retrace. */
++    if (GETENV(("SST_TRIPLE_BUFFER"))) {
++        INIT_PRINTF(("sst1InitVideo(): Enabling Triple Buffering\n"));
++        ISET(sst->fbiInit2, IGET(sst->fbiInit2) | SST_EN_TRIPLE_BUFFERING);
++    }
++
+     INIT_PRINTF(("sst1InitVideo(): backend video init stubbed (%dx%d)\n",
+         sst1CurrentBoard->fbiVideoWidth, sst1CurrentBoard->fbiVideoHeight));
+     return(FXTRUE);
 diff --git a/emu/glide/swlibs/newpci/pcilib/fxsim.c b/emu/glide/swlibs/newpci/pcilib/fxsim.c
 index d36865c..c4c27ab 100644
 --- a/emu/glide/swlibs/newpci/pcilib/fxsim.c
@@ -835,7 +850,7 @@ index d163ab7..bb42f6a 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..f3d5f7d 100644
+index 1b34fa2..3c0f2c1 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -848,7 +863,7 @@ index 1b34fa2..f3d5f7d 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,79 @@ case class Config(
+@@ -31,6 +34,84 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -902,6 +917,11 @@ index 1b34fa2..f3d5f7d 100644
 +    // the host's status-read round trips (rasterizer idle ~29% on the board
 +    // while the host was stalled on a full FIFO 11 of 15 ms).
 +    pciFifoDepth: Int = 64,
++    // Triple buffering (fbiInit2 bit 4, as Voodoo 2): rendering goes on into
++    // the third buffer while a swap waits for retrace. With two buffers GLQuake
++    // at swap interval 1 lost ~1/4 of the frame time waiting (B164e: 34.1 fps,
++    // 46.2 with vsync off).
++    tripleBuffering: Boolean = false,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -929,7 +949,7 @@ index 1b34fa2..f3d5f7d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..5d6f5df 100644
+index 100f1c6..2ce85bd 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -36,6 +36,27 @@ object Core {
@@ -1012,7 +1032,24 @@ index 100f1c6..5d6f5df 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -149,7 +186,7 @@ case class Core(c: Config) extends Component {
+@@ -135,6 +172,8 @@ case class Core(c: Config) extends Component {
+     swapBuffer.io.vsyncEnable := regBank.commands.swapVsyncEnable
+     swapBuffer.io.swapInterval := regBank.commands.swapInterval
+     swapBuffer.io.swapCmdEnqueued := pciFifo.io.wasEnqueued
++    val tripleOn = if (c.tripleBuffering) regBank.init.fbiInit2_tripleBuffer else False
++    swapBuffer.io.triple := tripleOn
+ 
+     regBank.io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
+     regBank.io.swapsPending := framebufferLayout.swapsPending
+@@ -142,14 +181,14 @@ case class Core(c: Config) extends Component {
+     io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
+     io.swapsPending := framebufferLayout.swapsPending
+ 
+-    hdmiScanout.io.regs.frontBase := framebufferLayout.front
++    hdmiScanout.io.regs.frontBase := framebufferLayout.display
+     hdmiScanout.io.regs.backBase := framebufferLayout.back
+     hdmiScanout.io.regs.pixelStride := framebufferLayout.draw.pixelStride
+     hdmiScanout.io.regs.displayWidth := 640
      hdmiScanout.io.regs.displayHeight := 480
      hdmiScanout.io.regs.framebufferEnable := True
      hdmiScanout.io.regs.testPatternEnable := False
@@ -1021,9 +1058,11 @@ index 100f1c6..5d6f5df 100644
  
      pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
        c,
-@@ -158,13 +195,23 @@ case class Core(c: Config) extends Component {
+@@ -157,14 +196,25 @@ case class Core(c: Config) extends Component {
+       framebufferLayout
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
++    when(tripleOn) { pixelPipeline.io.externalBusy.swapWaiting := False }
      textureMem.io.downloadConfig := TextureMem.DownloadConfig.fromRegisterBank(c, regBank)
 +    if (c.tmuCount > 1) textureMem.io.downloadConfig1 := TextureMem.DownloadConfig.fromTmu1(c, regBank.tmu1.regsOut)
    }
@@ -1046,7 +1085,7 @@ index 100f1c6..5d6f5df 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,16 +220,20 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +223,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -1070,7 +1109,7 @@ index 100f1c6..5d6f5df 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +241,7 @@ case class Core(c: Config) extends Component {
+@@ -190,6 +244,7 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
@@ -1078,7 +1117,7 @@ index 100f1c6..5d6f5df 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -200,9 +252,42 @@ case class Core(c: Config) extends Component {
+@@ -200,9 +255,45 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
    regBank.io.statistics := pixelPipeline.io.stats
@@ -1118,7 +1157,10 @@ index 100f1c6..5d6f5df 100644
 +  regBank.io.debug := regDebug
  
    pciFifo.io.pipelineBusy := pixelPipeline.io.debug.pipelineBusy
-+  pciFifo.io.swapBusy := controlPlane.swapBuffer.io.waiting || regBank.commands.swapbufferCmd.valid
++  // Triple buffering: a swap waiting for retrace holds nothing up; only a
++  // second swap waits for it (its command stays valid until accepted).
++  pciFifo.io.swapBusy := (controlPlane.swapBuffer.io.waiting && !controlPlane.tripleOn) ||
++    regBank.commands.swapbufferCmd.valid
    pciFifo.io.commandReady := regBank.io.commandReady
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
@@ -1181,7 +1223,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..9a09c71 100644
+index 6051025..e4974c8 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,37 @@ import spinal.core._
@@ -1228,7 +1270,7 @@ index 6051025..9a09c71 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,23 @@ object CoreSimGen extends App {
+@@ -37,7 +48,24 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1249,7 +1291,8 @@ index 6051025..9a09c71 100644
 +      texCachePairedBanks = args.contains("--tex-cache-paired"),
 +      fbzModePerTriangle = args.contains("--fbz-per-triangle"),
 +      skipRedundantFbzSync = args.contains("--skip-redundant-fbz-sync"),
-+      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64)
++      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64),
++      tripleBuffering = args.contains("--triple-buffering")
      )
  
    val memTiming = SimMemoryTiming(
@@ -2086,10 +2129,75 @@ index f8d33d6..a6111b8 100644
    routeCmd(io.lfbBus, isLfb, cpuCmd.address.resize(22 bits))
  
 diff --git a/src/voodoo/core/CoreTypes.scala b/src/voodoo/core/CoreTypes.scala
-index 2f55df7..258170f 100644
+index 2f55df7..58c106f 100644
 --- a/src/voodoo/core/CoreTypes.scala
 +++ b/src/voodoo/core/CoreTypes.scala
-@@ -90,6 +90,8 @@ case class FramebufferMemStats() extends Bundle {
+@@ -7,6 +7,9 @@ import voodoo.frontend.RegisterBank
+ 
+ case class FramebufferLayout(c: Config) extends Bundle {
+   val front = UInt(c.addressWidth.value bits)
++  // The buffer the scanout shows: front, except with triple buffering, where
++  // front moves on when a swap is accepted and the display when it completes.
++  val display = UInt(c.addressWidth.value bits)
+   val back = UInt(c.addressWidth.value bits)
+   val aux = UInt(c.addressWidth.value bits)
+   val draw = FbRouting(c)
+@@ -31,28 +34,47 @@ object FramebufferLayout {
+     val buffer1Base = fbBaseAddr + bufferOffsetBytes
+     val auxBufferBase = fbBaseAddr + (bufferOffsetBytes << 1).resized
+     val displayed = swapBuffer.io.swapCount(0)
+-    val frontBufferBase = displayed ? buffer1Base | buffer0Base
+-    val backBufferBase = displayed ? buffer0Base | buffer1Base
++    val frontBufferBase = UInt(c.addressWidth.value bits)
++    val backBufferBase = UInt(c.addressWidth.value bits)
++    frontBufferBase := displayed ? buffer1Base | buffer0Base
++    backBufferBase := displayed ? buffer0Base | buffer1Base
++    layout.display := frontBufferBase
++    layout.aux := auxBufferBase
++    layout.displayedBuffer := displayed.asUInt.resize(2 bits)
++    if (c.tripleBuffering) {
++      // fbiInit2 bit 4 (86Box TRIPLE_BUFFER): buffers at 0, 1, 2 x offset,
++      // depth at 3 x offset.
++      val triple = regBank.init.fbiInit2_tripleBuffer
++      val buffer2Base = fbBaseAddr + (bufferOffsetBytes << 1).resized
++      def base(i: UInt): UInt = i.mux(0 -> buffer0Base, 1 -> buffer1Base, default -> buffer2Base)
++      val issued = swapBuffer.io.issuedCount
++      val next = Mux(issued === 2, U(0, 2 bits), issued + 1)
++      when(triple) {
++        frontBufferBase := base(issued)
++        backBufferBase := base(next)
++        layout.display := base(swapBuffer.io.swapCount)
++        layout.aux := fbBaseAddr + (bufferOffsetBytes * 3).resized
++        layout.displayedBuffer := swapBuffer.io.swapCount
++      }
++    }
+ 
+     layout.front := frontBufferBase
+     layout.back := backBufferBase
+-    layout.aux := auxBufferBase
+     layout.draw.colorBaseAddr := regBank.renderConfig.fbzMode.drawBuffer(
+       0
+     ) ? backBufferBase | frontBufferBase
+-    layout.draw.auxBaseAddr := auxBufferBase
++    layout.draw.auxBaseAddr := layout.aux
+     layout.draw.pixelStride := fbPixelStride
+     layout.lfbWrite.colorBaseAddr := regBank.renderConfig.lfbMode.writeBufferSelect(
+       0
+     ) ? backBufferBase | frontBufferBase
+-    layout.lfbWrite.auxBaseAddr := auxBufferBase
++    layout.lfbWrite.auxBaseAddr := layout.aux
+     layout.lfbWrite.pixelStride := fbPixelStride
+     layout.lfbRead.colorBaseAddr := regBank.renderConfig.lfbMode.readBufferSelect(
+       0
+     ) ? backBufferBase | frontBufferBase
+-    layout.lfbRead.auxBaseAddr := auxBufferBase
++    layout.lfbRead.auxBaseAddr := layout.aux
+     layout.lfbRead.pixelStride := fbPixelStride
+-    layout.displayedBuffer := displayed.asUInt.resize(2 bits)
+     layout.swapsPending := swapBuffer.io.swapsPending
+     layout
+   }
+@@ -90,6 +112,8 @@ case class FramebufferMemStats() extends Bundle {
    val fillBurstCount = UInt(32 bits)
    val fillBurstBeats = UInt(32 bits)
    val fillStallCycles = UInt(32 bits)
@@ -2098,7 +2206,7 @@ index 2f55df7..258170f 100644
    val writeStallCycles = UInt(32 bits)
    val writeDrainCount = UInt(32 bits)
    val writeFullDrainCount = UInt(32 bits)
-@@ -386,6 +388,9 @@ case class CoreWritePathMap() extends Bundle {
+@@ -386,6 +410,9 @@ case class CoreWritePathMap() extends Bundle {
  
  case class CoreDebug() extends Bundle {
    val pipelineBusy = Bool()
@@ -3530,7 +3638,7 @@ index aeba713..0c8673a 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..1817bfc 100644
+index c5a4cd8..9bcc95b 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -51,7 +51,7 @@ case class RegisterBank(config: Config) extends Component {
@@ -3918,7 +4026,17 @@ index c5a4cd8..1817bfc 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1095,13 +1097,34 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1042,6 +1044,9 @@ case class RegisterBank(config: Config) extends Component {
+ 
+     // fbiInit2 (0x218) - Buffer config and swap algorithm
+     val fbiInit2Reg = busif.newRegAtWithCategory(0x218, "fbiInit2", RegisterCategory.bypassFifo)
++    val fbiInit2_tripleBuffer = fbiInit2Reg
++      .fieldAt(4, Bool(), AccessType.RW, 0, "Enable triple buffering")
++      .asOutput()
+     val fbiInit2_swapAlgorithm = fbiInit2Reg
+       .fieldAt(
+         9,
+@@ -1095,13 +1100,34 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -3954,7 +4072,7 @@ index c5a4cd8..1817bfc 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1143,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1146,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -3963,7 +4081,7 @@ index c5a4cd8..1817bfc 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1155,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1158,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -3972,7 +4090,7 @@ index c5a4cd8..1817bfc 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1215,64 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1218,64 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -4052,7 +4170,7 @@ index c5a4cd8..1817bfc 100644
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
-@@ -1250,6 +1318,25 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1250,6 +1321,25 @@ case class RegisterBank(config: Config) extends Component {
  }
  
  object RegisterBank {
@@ -4078,6 +4196,62 @@ index c5a4cd8..1817bfc 100644
    case class PaletteWrite() extends Bundle {
      val address = UInt(8 bits)
      val data = Bits(24 bits)
+diff --git a/src/voodoo/frontend/SwapBuffer.scala b/src/voodoo/frontend/SwapBuffer.scala
+index 8da950d..4ee5a39 100644
+--- a/src/voodoo/frontend/SwapBuffer.scala
++++ b/src/voodoo/frontend/SwapBuffer.scala
+@@ -26,6 +26,11 @@ case class SwapBuffer(formalStrong: Boolean = false) extends Component {
+     val vsyncEnable = in Bool ()
+     val swapInterval = in UInt (8 bits)
+     val swapCmdEnqueued = in Bool ()
++    // fbiInit2 bit 4: three colour buffers. Counts run mod 3; issuedCount
++    // advances when a swap is accepted (the draw buffer moves on at once),
++    // swapCount when it completes (what the scanout shows).
++    val triple = in Bool () default (False)
++    val issuedCount = out UInt (2 bits)
+ 
+     val waiting = out Bool ()
+     val swapCount = out UInt (2 bits)
+@@ -39,6 +44,8 @@ case class SwapBuffer(formalStrong: Boolean = false) extends Component {
+   val state = RegInit(State.Idle)
+   val retraceCounter = Reg(UInt(8 bits)) init (0)
+   val swapCountReg = Reg(UInt(2 bits)) init (0)
++  val issuedReg = Reg(UInt(2 bits)) init (0)
++  def advance(v: UInt): UInt = Mux(io.triple && v === 2, U(0, 2 bits), v + 1)
+   val swapsPendingReg = Reg(UInt(3 bits)) init (0)
+   val vRetracePrev = RegNext(io.vRetrace) init (False)
+   val capturedInterval = Reg(UInt(8 bits)) init (0)
+@@ -54,6 +61,12 @@ case class SwapBuffer(formalStrong: Boolean = false) extends Component {
+ 
+   io.waiting := state =/= State.Idle
+   io.swapCount := swapCountReg
++  io.issuedCount := issuedReg
++  when(io.cmd.fire) { issuedReg := advance(issuedReg) }
++  when(io.triple =/= RegNext(io.triple, init = False)) {
++    swapCountReg := 0
++    issuedReg := 0
++  }
+   io.swapsPending := swapsPendingReg
+   io.cmd.ready := state === State.Idle
+ 
+@@ -65,7 +78,7 @@ case class SwapBuffer(formalStrong: Boolean = false) extends Component {
+     }
+     is(State.Sampling) {
+       when(!io.vsyncEnable) {
+-        swapCountReg := swapCountReg + 1
++        swapCountReg := advance(swapCountReg)
+         swapCompleted := True
+         state := State.Idle
+       } otherwise {
+@@ -77,7 +90,7 @@ case class SwapBuffer(formalStrong: Boolean = false) extends Component {
+     is(State.Waiting) {
+       when(vRetraceRising) {
+         when(retraceCounter >= capturedInterval) {
+-          swapCountReg := swapCountReg + 1
++          swapCountReg := advance(swapCountReg)
+           swapCompleted := True
+           state := State.Idle
+         } otherwise {
 diff --git a/src/voodoo/hdmi/HdmiScanout.scala b/src/voodoo/hdmi/HdmiScanout.scala
 index de14d02..4b945ff 100644
 --- a/src/voodoo/hdmi/HdmiScanout.scala

@@ -123,6 +123,8 @@ object GowinGenSupport {
       // ran empty while the host waited on status reads: B163f's rasterizer
       // idled ~29% with the host stalled on a full FIFO 11 of 15 ms.
       pciFifoDepth = 512,
+      // fbiInit2 bit 4 triple buffering (Voodoo 2); off until software sets it.
+      tripleBuffering = true,
       // Two TMUs: no triangleCMD register copy (~2.3k FFs); register writes
       // wait for setup instead, same cycles in GLQuake trace replay.
       triangleSnapshot = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
