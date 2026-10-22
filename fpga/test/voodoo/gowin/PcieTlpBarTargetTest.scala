@@ -7,6 +7,8 @@ import spinal.core.sim._
 class PcieTlpBarTargetTest extends AnyFunSuite {
   private lazy val compiled =
     SimConfig.withVerilator.compile(PcieTlpBarTarget(timeoutLog2 = 10))
+  private lazy val compiledPosted =
+    SimConfig.withVerilator.compile(PcieTlpBarTarget(timeoutLog2 = 10, postedWrites = true))
 
   private def dword(value: Long): BigInt = BigInt(value) & 0xffffffffL
 
@@ -293,6 +295,122 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       var c = 0
       while (dut.io.tlTxValid.toInt == 0) { dut.clockDomain.waitSampling(); c += 1; assert(c < 100) }
       assert(unpackDw(dut.io.tlTxData.toBigInt, 3) == pcie(0x600dL))
+    }
+  }
+
+  private def mwr(dut: PcieTlpBarTarget, addr: Long, data: Long): Unit =
+    beat(dut, Seq(0x40000001L, 0x0000000fL, addr, pcie(data)))
+
+  test("posted writes: back-to-back writes go to AXI before any B returns") {
+    compiledPosted.doSim("posted-b2b") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.io.axi.aw.ready #= true
+      dut.io.axi.w.ready #= true
+      dut.clockDomain.waitSampling()
+      val seen = scala.collection.mutable.ArrayBuffer[(Long, Long)]()
+      fork {
+        while (true) {
+          dut.clockDomain.waitSampling()
+          if (dut.io.axi.aw.valid.toBoolean && dut.io.axi.aw.ready.toBoolean)
+            seen += ((dut.io.axi.aw.addr.toLong & 0xffffffL, dut.io.axi.w.data.toLong & 0xffffffffL))
+        }
+      }
+      // Feed 4 writes as fast as the target takes them (a beat is held while
+      // tlRxWait is high at the edge); no B yet.
+      var sent = 0
+      var cycles = 0
+      while (sent < 4 && cycles < 200) {
+        dut.io.tlRxSop #= true
+        dut.io.tlRxEop #= true
+        dut.io.tlRxValid #= 0xff
+        dut.io.tlRxData #= pack(Seq(0x40000001L, 0x0000000fL, 0x100L + 4 * sent, pcie(0x1000L + sent)))
+        dut.io.tlRxBardec #= 1
+        sleep(1)
+        val held = dut.io.tlRxWait.toBoolean
+        dut.clockDomain.waitSampling()
+        if (!held) sent += 1
+        cycles += 1
+      }
+      dut.io.tlRxSop #= false
+      dut.io.tlRxEop #= false
+      dut.io.tlRxValid #= 0
+      dut.clockDomain.waitSampling(8)
+      assert(sent == 4, s"only $sent writes taken without B responses")
+      assert(seen.map(_._1) == Seq(0x100L, 0x104L, 0x108L, 0x10cL), s"AXI writes $seen")
+      assert(seen.map(_._2) == Seq(0x1000L, 0x1001L, 0x1002L, 0x1003L))
+      assert(dut.bOut.toInt == 4)
+    }
+  }
+
+  test("posted writes: a read waits until every earlier write's B is back") {
+    compiledPosted.doSim("posted-read-order") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.io.axi.aw.ready #= true
+      dut.io.axi.w.ready #= true
+      dut.clockDomain.waitSampling()
+      mwr(dut, 0x100L, 1)
+      dut.clockDomain.waitSampling(3)
+      mwr(dut, 0x104L, 2)
+      dut.clockDomain.waitSampling(3)
+      beat(dut, Seq(0x00000001L, 0x0102000fL, 0x200L)) // MRd
+      // Two Bs outstanding: no AR yet.
+      for (_ <- 0 until 20) {
+        assert(!dut.io.axi.ar.valid.toBoolean, "read overtook outstanding writes")
+        dut.clockDomain.waitSampling()
+      }
+      dut.io.axi.b.valid #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.b.valid #= false
+      for (_ <- 0 until 5) {
+        assert(!dut.io.axi.ar.valid.toBoolean, "read went out with one B outstanding")
+        dut.clockDomain.waitSampling()
+      }
+      dut.io.axi.b.valid #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.b.valid #= false
+      var cycles = 0
+      while (!dut.io.axi.ar.valid.toBoolean && cycles < 16) { dut.clockDomain.waitSampling(); cycles += 1 }
+      assert(dut.io.axi.ar.valid.toBoolean, "read never went to AXI after the Bs")
+      assert((dut.io.axi.ar.addr.toLong & 0xffffffL) == 0x200L)
+      dut.io.axi.ar.ready #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.ar.ready #= false
+      dut.io.axi.r.valid #= true
+      dut.io.axi.r.data #= 0x55aal
+      dut.clockDomain.waitSampling()
+      dut.io.axi.r.valid #= false
+      cycles = 0
+      while (dut.io.tlTxValid.toInt == 0 && cycles < 32) { dut.clockDomain.waitSampling(); cycles += 1 }
+      assert((unpackDw(dut.io.tlTxData.toBigInt, 3) & 0xffffffffL) == pcie(0x55aal))
+    }
+  }
+
+  test("posted writes: Bs that never come wedge the target and the read answers all-ones") {
+    compiledPosted.doSim("posted-no-b") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.io.axi.aw.ready #= true
+      dut.io.axi.w.ready #= true
+      dut.clockDomain.waitSampling()
+      mwr(dut, 0x100L, 1)
+      dut.clockDomain.waitSampling(3)
+      beat(dut, Seq(0x00000001L, 0x0102000fL, 0x200L))
+      var cycles = 0
+      while (dut.io.tlTxValid.toInt == 0 && cycles < 4000) { dut.clockDomain.waitSampling(); cycles += 1 }
+      assert(dut.io.tlTxValid.toInt != 0, "no completion: the link would stall")
+      assert((unpackDw(dut.io.tlTxData.toBigInt, 3) & 0xffffffffL) == 0xffffffffL)
+      assert(!dut.io.axi.ar.valid.toBoolean, "read went to AXI past an outstanding write")
+      dut.clockDomain.waitSampling(2)
+      assert(dut.wedged.toBoolean)
+      // The late B is discarded, and the target recovers.
+      dut.io.axi.b.valid #= true
+      dut.clockDomain.waitSampling()
+      dut.io.axi.b.valid #= false
+      dut.clockDomain.waitSampling(3)
+      assert(!dut.wedged.toBoolean, "did not recover after the late B")
+      assert(dut.bOut.toInt == 0)
     }
   }
 }

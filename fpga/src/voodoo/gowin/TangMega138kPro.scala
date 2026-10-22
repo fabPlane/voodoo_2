@@ -71,7 +71,9 @@ case class TangMega138kPro(c: Config) extends Component {
   )
 
   val pcie = new ClockingArea(pcieCd) {
-    val bar = PcieTlpBarTarget(addressWidth = PcieTlpBarTarget.rawAddressWidth)
+    // Posted writes: GLQuake's host waited on one AXI round trip per write
+    // (B165b: rasterizer idle 33% of cycles with the PCI FIFO empty).
+    val bar = PcieTlpBarTarget(addressWidth = PcieTlpBarTarget.rawAddressWidth, postedWrites = true)
     // Register RX beats between the PCIe hard block and the BAR target (same
     // accept-unless-wait handshake, full throughput): the block's TL_RX_DATA
     // pins otherwise fed the target's decode and enables combinationally, and

@@ -1,6 +1,7 @@
 package voodoo.gowin
 
 import spinal.core._
+import spinal.core.sim._
 import spinal.lib._
 import spinal.lib.bus.amba4.axilite._
 
@@ -38,7 +39,13 @@ object PcieTlpBarTarget {
   */
 case class PcieTlpBarTarget(
     addressWidth: Int = PcieTlpBarTarget.voodooAddressWidth,
-    timeoutLog2: Int = 20
+    timeoutLog2: Int = 20,
+    // Posted writes: a write TLP is done once AXI takes its address and data;
+    // its B is counted (bOut) instead of waited for, and a read waits for
+    // bOut == 0 before it goes to AXI, so it still sees every earlier write.
+    // Waiting for each B capped the host at ~one write per AXI round trip
+    // (B165b: the rasterizer idled 33% of cycles with the PCI FIFO empty).
+    postedWrites: Boolean = false
 ) extends Component {
   import PcieTlpBarTarget._
 
@@ -75,7 +82,7 @@ case class PcieTlpBarTarget(
     data(255 - index * 32 downto 224 - index * 32)
 
   object State extends SpinalEnum {
-    val idle, axiWrite, axiRead, localRead, cpl, drop = newElement()
+    val idle, axiWrite, waitB, axiRead, localRead, cpl, drop = newElement()
   }
 
   val state = RegInit(State.idle)
@@ -119,7 +126,10 @@ case class PcieTlpBarTarget(
   val awPend = RegInit(False)
   val wPend = RegInit(False)
   val arPend = RegInit(False)
-  val dropB = Reg(UInt(4 bits)) init (0)
+  val dropB = Reg(UInt(7 bits)) init (0)
+  // Posted writes whose B has not come back yet.
+  val bOut = Reg(UInt(6 bits)) init (0)
+  val bOutFull = bOut.andR
   val dropR = Reg(UInt(4 bits)) init (0)
   val axiIdle = !awPend && !wPend && !arPend
 
@@ -130,6 +140,7 @@ case class PcieTlpBarTarget(
   // [0] wedged now, [1] write timeout seen, [2] read timeout seen,
   // [31:16] TLPs dropped; a write there clears bits 1-2 and the count.
   val wedged = RegInit(False)
+  wedged.simPublic(); bOut.simPublic()
   val writeTimeoutSeen = RegInit(False)
   val readTimeoutSeen = RegInit(False)
   val droppedTlps = Reg(UInt(16 bits)) init (0)
@@ -206,11 +217,22 @@ case class PcieTlpBarTarget(
   when(io.axi.w.fire) { wPend := False }
   when(io.axi.ar.fire) { arPend := False }
   val bForUs = io.axi.b.valid && dropB === 0
+  var bOutIncSig: Bool = null
   val rForUs = io.axi.r.valid && dropR === 0
   val dropBInc, dropRInc = False
   val dropBDec = io.axi.b.valid && dropB =/= 0
   val dropRDec = io.axi.r.valid && dropR =/= 0
-  dropB := dropB + dropBInc.asUInt.resized - dropBDec.asUInt.resized
+  // Posted mode: on a timeout every outstanding B becomes one to discard.
+  val dropAllOut = False
+  // (A B taken this cycle is ours and already off the count.)
+  val bOutLeft = (bOut - bForUs.asUInt.resize(6 bits)).resize(7 bits)
+  dropB := dropB + Mux(dropAllOut, bOutLeft, dropBInc.asUInt.resize(7 bits)) - dropBDec.asUInt.resized
+  if (postedWrites) {
+    val bOutInc = False
+    val bOutDec = bForUs
+    bOut := Mux(dropAllOut, U(0, 6 bits), bOut + bOutInc.asUInt.resized - bOutDec.asUInt.resized)
+    bOutIncSig = bOutInc
+  } else bOut := 0
   dropR := dropR + dropRInc.asUInt.resized - dropRDec.asUInt.resized
 
   val cplCreditOk = io.tlTxCreditsCpl(31)
@@ -253,10 +275,23 @@ case class PcieTlpBarTarget(
   switch(state) {
     is(State.idle) {
       stall := 0
+      if (postedWrites) {
+        // A posted write still waiting for AXI to take it: a core that never
+        // does must wedge the target, not stall the link.
+        when(!axiIdle && !wedged) {
+          stall := stall
+          when(prescaleTick) { stall := stall + 1 }
+          when(writeTimeout) {
+            wedged := True
+            writeTimeoutSeen := True
+            dropAllOut := True
+          }
+        }
+      }
       // Don't take a new TLP while an abandoned request still waits for its
       // AXI handshake (tlpAddr / writeData drive the pending channels) -
       // unless wedged, when TLPs never reach AXI.
-      val canTake = axiIdle || wedged
+      val canTake = (if (postedWrites) axiIdle && !bOutFull else axiIdle) || wedged
       io.tlRxWait := !canTake
       when(canTake && rxBeat && io.tlRxSop && bar0 && isMem) {
         reqId := header1(31 downto 16)
@@ -306,10 +341,19 @@ case class PcieTlpBarTarget(
           when(hasData) {
             awPend := True
             wPend := True
-            state := State.axiWrite
+            if (postedWrites) {
+              bOutIncSig := True
+              when(!io.tlRxEop) { state := State.drop }
+            } else {
+              state := State.axiWrite
+            }
           } otherwise {
-            arPend := True
-            state := State.axiRead
+            if (postedWrites) {
+              state := State.waitB
+            } else {
+              arPend := True
+              state := State.axiRead
+            }
           }
         }
       } elsewhen (canTake && rxBeat && io.tlRxSop && !bar0) {
@@ -337,6 +381,23 @@ case class PcieTlpBarTarget(
         wedged := True
         writeTimeoutSeen := True
         state := State.idle
+      } otherwise {
+        when(prescaleTick) { stall := stall + 1 }
+      }
+    }
+    is(State.waitB) {
+      // Posted mode: a read goes to AXI once every earlier write's B is in.
+      io.tlRxWait := True
+      when(bOut === 0 && axiIdle) {
+        arPend := True
+        stall := 0
+        state := State.axiRead
+      } elsewhen (writeTimeout) {
+        wedged := True
+        writeTimeoutSeen := True
+        dropAllOut := True
+        readData := B(0xffffffffL, 32 bits)
+        state := State.cpl
       } otherwise {
         when(prescaleTick) { stall := stall + 1 }
       }
