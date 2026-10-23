@@ -102,3 +102,57 @@ diff -ruN '--exclude=.patched' Quake-2.orig/linux/vid_so.c Quake-2/linux/vid_so.
  			Com_Printf( "LoadLibrary(\"%s\") failed: ref is not owned by root\n", name);
  			return false;
  		}
+diff -ruN '--exclude=.patched' Quake-2.orig/ref_gl/gl_rmain.c Quake-2/ref_gl/gl_rmain.c
+--- a/ref_gl/gl_rmain.c	2026-10-24 04:55:14.928693725 +0700
++++ b/ref_gl/gl_rmain.c	2026-10-24 05:32:43.928531344 +0700
+@@ -19,6 +19,9 @@
+ */
+ // r_main.c
+ #include "gl_local.h"
++#ifndef WIN32
++#include <dlfcn.h>
++#endif
+ 
+ void R_Clear (void);
+ 
+@@ -1243,7 +1246,13 @@
+ 	/*
+ 	** grab extensions
+ 	*/
+-#ifdef WIN32
++#ifndef WIN32
++	// Linux: look the extension entry points up in the libGL ref_gl is
++	// linked against (the stock source only grabbed them on Windows).
++	{
++		void *gl = dlopen( "libGL.so.1", RTLD_LAZY );
++#define qwglGetProcAddress(n) ( gl ? dlsym( gl, n ) : NULL )
++#endif
+ 	if ( strstr( gl_config.extensions_string, "GL_EXT_compiled_vertex_array" ) || 
+ 		 strstr( gl_config.extensions_string, "GL_SGI_compiled_vertex_array" ) )
+ 	{
+@@ -1256,6 +1265,7 @@
+ 		ri.Con_Printf( PRINT_ALL, "...GL_EXT_compiled_vertex_array not found\n" );
+ 	}
+ 
++#ifdef WIN32
+ 	if ( strstr( gl_config.extensions_string, "WGL_EXT_swap_control" ) )
+ 	{
+ 		qwglSwapIntervalEXT = ( BOOL (WINAPI *)(int)) qwglGetProcAddress( "wglSwapIntervalEXT" );
+@@ -1265,6 +1275,7 @@
+ 	{
+ 		ri.Con_Printf( PRINT_ALL, "...WGL_EXT_swap_control not found\n" );
+ 	}
++#endif
+ 
+ 	if ( strstr( gl_config.extensions_string, "GL_EXT_point_parameters" ) )
+ 	{
+@@ -1319,6 +1330,9 @@
+ 	{
+ 		ri.Con_Printf( PRINT_ALL, "...GL_SGIS_multitexture not found\n" );
+ 	}
++#ifndef WIN32
++#undef qwglGetProcAddress
++	}
+ #endif
+ 
+ 	GL_SetDefaultState();

@@ -109,3 +109,29 @@ head-of-line waits, so memory bandwidth is not the limit; a 32-deep span
 queue changed nothing. With the PCI FIFO nearly full ~55% of cycles the
 card itself is the limit now: TMU path stalls (rasterizer held ~15%,
 post-TMU entries waiting for texels ~19%) at a 48 MHz core clock.
+
+## Quake II demo baseline (2026-10-24, B168f)
+
+`sw/quake2-glide`: id's GPL 3.21 source, fxMesa ref_gl, official 3.14 demo
+data, `timedemo 1; demomap q2demo1.dm2` (633 frames), 640x480, 2 TMUs,
+48 MHz, triple buffering.
+
+| ref_gl extensions | fps |
+|---|---|
+| stock Linux build (no extensions: two-pass lightmaps) | 22.4 |
+| SGIS multitexture (default now) | **30.2-30.5** |
+| + GL_EXT_point_parameters | 7.3 (Mesa fx point path, ~20k texture flushes) |
+| + paletted textures | 31.2, but world surfaces render black (8-bit path broken) |
+
+The stock Linux ref_gl only grabbed extensions under `#ifdef WIN32`; the
+patch looks them up in libGL. run-pcie.sh turns point parameters and
+paletted textures off.
+
+Per demo frame (~33 ms): 1940 triangles, 66k register writes, 568k raster
+pixels (902k in, 458k out). Host: FIFO stall 15 ms, writes 11 ms, game 5 ms.
+Card busy 82%: syncWait 28%, postWait 17%, raster held 12%, TMU in-stall
+13%, PCI FIFO nearly full 49%.
+
+Period reference: Voodoo2 Quake II demo1 640x480 ~75-85 fps (PII-333/400),
+SLI ~91. demo1.dm2 (full game) and q2demo1.dm2 differ, so this is a rough
+comparison.
