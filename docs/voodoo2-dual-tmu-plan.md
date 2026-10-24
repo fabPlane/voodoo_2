@@ -135,3 +135,12 @@ Card busy 82%: syncWait 28%, postWait 17%, raster held 12%, TMU in-stall
 Period reference: Voodoo2 Quake II demo1 640x480 ~75-85 fps (PII-333/400),
 SLI ~91. demo1.dm2 (full game) and q2demo1.dm2 differ, so this is a rough
 comparison.
+
+### B169a (2026-10-24): rasterizer fix for sub-row triangles
+
+SpanWalker no longer emits a row for a triangle whose rounded y range is
+empty (Quake II dotted lines). gowin-q33, all clocks TNS 0. Quake II
+paletted (Mesa global-palette fix): 31.2 / 30.9 fps, dotted lines gone in
+DMA frame grabs. GLQuake timedemo demo1 (play-web, default ztrick): 48.2
+fps, unchanged. (With +gl_ztrick 0 GLQuake is 38.6: one extra depth clear
+per frame.)
