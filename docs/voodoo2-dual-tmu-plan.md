@@ -144,3 +144,18 @@ paletted (Mesa global-palette fix): 31.2 / 30.9 fps, dotted lines gone in
 DMA frame grabs. GLQuake timedemo demo1 (play-web, default ztrick): 48.2
 fps, unchanged. (With +gl_ztrick 0 GLQuake is 38.6: one extra depth clear
 per frame.)
+
+### B170a (2026-10-25): full-rate fastfill
+
+The fastfill word writer passed words through a halfPipe (one per two
+cycles); Quake II clears depth every frame, ~27% of the frame's busy time
+in replay of a cut demo frame. m2sPipe + s2mPipe: Quake II timedemo
+**33.6 fps** (31.1 on B169a, +8%), picture clean; GLQuake 48.2 unchanged
+(z-trick, no per-frame clear). gowin-q33, TNS 0 (49.6 / 77.4 / 103.3 MHz).
+
+Replay of the cut frame (busy cycles, latency 40): 1.205M after the fix.
+Remaining: TMU input stall ~285k (texture line fills, ~10k first-touch
+misses a frame; bigger caches change nothing, 8 fill slots -1.1%), the
+clear ~231k (write-buffer stalls behind 2 x 256-word slots), span overhead
+58k, setup 40k. With 1-cycle memory the frame still takes ~2.1 cycles per
+pixel, so the pipeline itself is the main limit.
