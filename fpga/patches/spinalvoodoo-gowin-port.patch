@@ -694,10 +694,10 @@ index 3f1a2a8..d4b4d35 100644
              voodoo->v_disp = (val >> 16) & 0xfff;
              if ((voodoo->v_disp == 386) || (voodoo->v_disp == 402) ||
 diff --git a/emu/test/trace_test.cpp b/emu/test/trace_test.cpp
-index d163ab7..b019fb0 100644
+index d163ab7..01b6194 100644
 --- a/emu/test/trace_test.cpp
 +++ b/emu/test/trace_test.cpp
-@@ -192,6 +192,37 @@ static uint32_t remap_backend_reg_addr(uint32_t addr) {
+@@ -192,6 +192,42 @@ static uint32_t remap_backend_reg_addr(uint32_t addr) {
   * Main
   * ------------------------------------------------------------------- */
  
@@ -712,6 +712,11 @@ index d163ab7..b019fb0 100644
 +    uint32_t dp[32];
 +    for (int i = 0; i < 32; ++i) dp[i] = cur[i] - (base ? base[i] : 0);
 +    if (!dp[0]) return;
++    if (getenv("SIM_PERF_RAW")) {
++        fprintf(stderr, "[perfraw] %s:", label);
++        for (int i = 0; i < 32; ++i) fprintf(stderr, " %d=%u", i, dp[i]);
++        fprintf(stderr, "\n");
++    }
 +    auto pc = [&](int i) { return 100.0 * dp[i] / dp[0]; };
 +    fprintf(stderr,
 +            "[perf] %s: %u cyc busy %.0f%%; tmuInStall %.0f%% fbAccInStall %.0f%%;"
@@ -735,7 +740,7 @@ index d163ab7..b019fb0 100644
  int main(int argc, char **argv) {
      traceReplayInitSrgbLut(srgb_lut);
  
-@@ -275,6 +306,7 @@ int main(int argc, char **argv) {
+@@ -275,6 +311,7 @@ int main(int argc, char **argv) {
      const char *ref_trace_jsonl = nullptr;
      bool ref_only = false;
      bool sim_replay_only = false;
@@ -743,7 +748,7 @@ index d163ab7..b019fb0 100644
      int max_mismatches = 0;
      int max_sim_black_mismatches = -1;
      int max_parity_mismatch_skew = -1;
-@@ -287,6 +319,8 @@ int main(int argc, char **argv) {
+@@ -287,6 +324,8 @@ int main(int argc, char **argv) {
              ref_only = true;
          } else if (strcmp(argv[i], "--sim-replay-only") == 0) {
              sim_replay_only = true;
@@ -752,7 +757,7 @@ index d163ab7..b019fb0 100644
          } else if (strcmp(argv[i], "--output-dir") == 0 && i + 1 < argc) {
              output_dir = argv[++i];
          } else if (strcmp(argv[i], "--profile-json") == 0 && i + 1 < argc) {
-@@ -556,7 +590,8 @@ int main(int argc, char **argv) {
+@@ -556,7 +595,8 @@ int main(int argc, char **argv) {
                      if (reg == 0x128)
                          pre_swap_draw_offset = ref_get_draw_offset();
  
@@ -762,7 +767,7 @@ index d163ab7..b019fb0 100644
  
                      if (!ref_only) {
                          if (reg == 0x128)
-@@ -621,7 +656,8 @@ int main(int argc, char **argv) {
+@@ -621,7 +661,8 @@ int main(int argc, char **argv) {
  
                  case VOODOO_TRACE_WRITE_TEX_L: {
                      uint32_t offset = e->addr & 0x7FFFFF;
@@ -772,7 +777,7 @@ index d163ab7..b019fb0 100644
                      if (!ref_only)
                          sim_write(0x800000 | offset, e->data);
                      tex_write_count++;
-@@ -630,7 +666,8 @@ int main(int argc, char **argv) {
+@@ -630,7 +671,8 @@ int main(int argc, char **argv) {
  
                  case VOODOO_TRACE_WRITE_FB_L: {
                      uint32_t offset = e->addr & 0x3FFFFF;
@@ -782,7 +787,7 @@ index d163ab7..b019fb0 100644
                      if (!ref_only)
                          sim_write(0x400000 | offset, e->data);
                      fb_write_count++;
-@@ -646,15 +683,33 @@ int main(int argc, char **argv) {
+@@ -646,15 +688,36 @@ int main(int argc, char **argv) {
  
                  case VOODOO_TRACE_WRITE_FB_W: {
                      uint32_t offset = e->addr & 0x3FFFFF;
@@ -802,7 +807,10 @@ index d163ab7..b019fb0 100644
 +                     * previous swap, or since the first one). */
 +                    if (!ref_only && getenv("SIM_PERF")) {
 +                        uint32_t cur[32];
-+                        if (perf_read(cur)) {
++                        /* The first swap may come before any triangle (a
++                         * trace cut down to one frame): keep it as the base
++                         * even when the counters still read zero. */
++                        if (perf_read(cur) || !perf_have_prev) {
 +                            if (perf_have_prev) {
 +                                char label[32];
 +                                snprintf(label, sizeof label, "frame %d", ++perf_frame);
@@ -818,7 +826,7 @@ index d163ab7..b019fb0 100644
                  case VOODOO_TRACE_CONFIG:
                  case VOODOO_TRACE_FRAME_END:
                      /* Informational — skip */
-@@ -680,6 +735,14 @@ int main(int argc, char **argv) {
+@@ -680,6 +743,14 @@ int main(int argc, char **argv) {
              break;
      }
  
@@ -833,7 +841,7 @@ index d163ab7..b019fb0 100644
      fprintf(stderr, "[trace_test] Replay %s: %u/%u packed entries (%llu logical commands), %d triangles, %d tex writes, %d fb writes, %d swaps\n",
              replay_truncated ? "truncated" : "complete",
              replay_truncated ? (last_entry_replayed + 1) : num_entries,
-@@ -771,6 +834,15 @@ int main(int argc, char **argv) {
+@@ -771,6 +842,15 @@ int main(int argc, char **argv) {
  
      if (!ref_only) {
          fprintf(stderr, "[trace_test] Sim swap count after replay: %u\n", sim_get_swap_count());
@@ -5589,6 +5597,19 @@ index c6b2ec5..7437fb0 100644
    case class Output(c: Config) extends Bundle {
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
+diff --git a/src/voodoo/raster/FastfillWordWriter.scala b/src/voodoo/raster/FastfillWordWriter.scala
+index 3a41225..31a7ac2 100644
+--- a/src/voodoo/raster/FastfillWordWriter.scala
++++ b/src/voodoo/raster/FastfillWordWriter.scala
+@@ -161,7 +161,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+     .m2sPipe()
+ 
+   val ditherJoined =
+-    StreamJoin(StreamJoin(dither0.io.output, dither1.io.output), metaPipe).halfPipe()
++    StreamJoin(StreamJoin(dither0.io.output, dither1.io.output), metaPipe).m2sPipe().s2mPipe() // full rate (halfPipe: one word per two cycles)
+   val (forColor, forAux) = StreamFork2(ditherJoined, synchronous = true)
+ 
+   io.colorWrite.valid := forColor.valid && forColor.payload._2.rgbWrite && anyLaneEnabled(
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
 index cee86c0..f0b6f7f 100644
 --- a/src/voodoo/raster/Rasterizer.scala
