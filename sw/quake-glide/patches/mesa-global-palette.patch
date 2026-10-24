@@ -1,0 +1,16 @@
+--- a/src/FX/fxddtex.c
++++ b/src/FX/fxddtex.c
+@@ -599,6 +599,13 @@
+       fprintf(stderr, "fxmesa: fxDDTexPalette(global)\n");
+     }
+     convertPalette(fxMesa->glbPalette.data, &ctx->Texture.Palette);
++    /* GL_SHARED_TEXTURE_PALETTE_EXT may already be on (Quake II enables it
++     * before calling glColorTableEXT): the TMUs need the new table now. */
++    if (fxMesa->haveGlobalPaletteTexture) {
++      FX_grTexDownloadTable(GR_TMU0, GR_TEXTABLE_PALETTE, &(fxMesa->glbPalette));
++      if (fxMesa->haveTwoTMUs)
++        FX_grTexDownloadTable(GR_TMU1, GR_TEXTABLE_PALETTE, &(fxMesa->glbPalette));
++    }
+     fxMesa->new_state |= FX_NEW_TEXTURING;
+     ctx->Driver.RenderStart = fxSetupFXUnits;
+   }

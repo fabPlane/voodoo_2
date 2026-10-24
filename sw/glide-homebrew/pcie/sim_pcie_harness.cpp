@@ -15,6 +15,8 @@
  *   VOODOO_PCI_LOG_SYNC=1         fdatasync each line (survives a host power
  *                                 loss; slow - without it the page cache
  *                                 keeps the log if only the process dies)
+ *   VOODOO_REG_HIST=1             per-register write counts (and how many
+ *                                 repeat the previous value) every 100 swaps
  *   VOODOO_PCI_DRYRUN=1           don't touch the board; reads return idle
  *   VOODOO_PCI_NOFLOW=1           disable the flow control below
  *   VOODOO_PCI_MIN_FRAME_MS=N     idle until N ms have passed since the last
@@ -263,7 +265,31 @@ void frameCap() {
   g_lastSwapNs = nowNs();
 }
 
+// VOODOO_REG_HIST: index = chip-select nibble (addr bits 10-13) * 256 + reg.
+int g_regHist = -1;
+uint64_t g_histCnt[16 * 256], g_histSame[16 * 256], g_histSwaps = 0;
+uint32_t g_histLast[16 * 256];
+bool g_histSeen[16 * 256];
+
+void regHist(uint32_t addr, uint32_t data) {
+  if (g_regHist < 0) g_regHist = getenv("VOODOO_REG_HIST") != nullptr;
+  if (!g_regHist || addr >= 0x400000) return;
+  uint32_t i = ((addr >> 10) & 0xf) * 256 + ((addr & 0x3fc) >> 2);
+  g_histCnt[i]++;
+  if (g_histSeen[i] && g_histLast[i] == data) g_histSame[i]++;
+  g_histSeen[i] = true;
+  g_histLast[i] = data;
+  if ((addr & 0x3fc) != 0x128 || ++g_histSwaps % 100) return;
+  fprintf(stderr, "[reghist] swaps %llu:", (unsigned long long)g_histSwaps);
+  for (uint32_t j = 0; j < 16 * 256; j++)
+    if (g_histCnt[j])
+      fprintf(stderr, " %x:%03x=%llu/%llu", j >> 8, (j & 0xff) << 2,
+              (unsigned long long)g_histCnt[j], (unsigned long long)g_histSame[j]);
+  fprintf(stderr, "\n");
+}
+
 extern "C" void sim_write(uint32_t addr, uint32_t data) {
+  regHist(addr, data);
   if (addr < 0x400000 && (addr & 0x3fc) == 0x128) frameCap();
   waitForRoom();
   g_writes++;

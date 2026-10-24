@@ -256,6 +256,11 @@ build_pcie() {
   if ! grep -q glSelectTextureSGIS "$N/Mesa-3.4.2/src/FX/fxdd.c"; then
     patch -d "$N/Mesa-3.4.2" -p1 <"$HERE/patches/mesa-sgis-multitexture.patch" >/dev/null
   fi
+  # Download the shared texture palette when glColorTableEXT changes it while
+  # GL_SHARED_TEXTURE_PALETTE_EXT is already enabled (Quake II's order).
+  if ! grep -q "Quake II enables it" "$N/Mesa-3.4.2/src/FX/fxddtex.c"; then
+    patch -d "$N/Mesa-3.4.2" -p1 <"$HERE/patches/mesa-global-palette.patch" >/dev/null
+  fi
   # libGL + libGLU (the widgets-sgi Motif target failing afterwards is fine).
   make -C "$N/Mesa-3.4.2" -j"$(nproc)" linux-glide >"$N/mesa.log" 2>&1 || true
   [ -f "$N/Mesa-3.4.2/lib/libGL.so" ] || { tail -20 "$N/mesa.log"; return 1; }

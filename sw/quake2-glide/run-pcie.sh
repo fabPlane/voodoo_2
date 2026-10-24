@@ -23,4 +23,4 @@ args=("$@")
 cd "$B"
 exec ./quake2 +set basedir "$HERE/work/demo" +set vid_ref gl \
   +set gl_driver libGL.so.1 +set gl_mode 3 +set vid_fullscreen 1 \
-  +set s_initsound 0 +set cd_nocd 1 +set gl_ext_multitexture 1 +set gl_ext_pointparameters 0 +set gl_ext_palettedtexture 0 "${args[@]}"
+  +set s_initsound 0 +set cd_nocd 1 +set gl_ext_multitexture 1 +set gl_ext_pointparameters 0 "${args[@]}"
