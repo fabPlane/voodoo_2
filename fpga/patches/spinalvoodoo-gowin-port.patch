@@ -5961,7 +5961,7 @@ index cee86c0..f0b6f7f 100644
        }
      )
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..e6e7185 100644
+index 59df4ba..680a9f2 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -5,6 +5,20 @@ import spinal.core.formal._
@@ -6019,7 +6019,7 @@ index 59df4ba..e6e7185 100644
  
    private val lowGradFormats = Seq(
      c.vColorFormat,
-@@ -67,318 +57,267 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -67,318 +57,270 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
      dst.texDy(0) := input.texHi.dSdY
      dst.texDy(1) := input.texHi.dTdY
      dst.alphaDx := input.hiAlpha.dAdX
@@ -6524,7 +6524,10 @@ index 59df4ba..e6e7185 100644
 +      rowVals.hiTex1(1) := i.payload.texHi1.tStart
      }
 +    firstPending := True
-+    genActive := True
++    // No rows at all when the rounded y range is empty (86Box: y from
++    // (Ay + 7) >> 4 while y < (Cy + 7) >> 4). A triangle flatter than a row
++    // used to emit its first row anyway (Quake II: dotted lines).
++    genActive := i.payload.yrange(0) < i.payload.yrange(1)
 +    setupCycle := True
    }
  
@@ -6552,7 +6555,7 @@ index 59df4ba..e6e7185 100644
  }
  
  object SpanWalker {
-@@ -397,6 +336,7 @@ object SpanWalker {
+@@ -397,6 +339,7 @@ object SpanWalker {
      val linear = LinearState(c)
      val tex = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alpha = AFix(c.texCoordsHiFormat)
@@ -6560,7 +6563,7 @@ index 59df4ba..e6e7185 100644
    }
  
    case class TriangleConst(c: Config) extends Bundle {
-@@ -409,6 +349,8 @@ object SpanWalker {
+@@ -409,6 +352,8 @@ object SpanWalker {
      val texDy = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alphaDx = AFix(c.texCoordsHiFormat)
      val alphaDy = AFix(c.texCoordsHiFormat)
@@ -6569,7 +6572,7 @@ index 59df4ba..e6e7185 100644
      val tmuConfig = TriangleSetup.TmuConfig(c)
      val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
      val enableClipping = Bool()
-@@ -416,6 +358,9 @@ object SpanWalker {
+@@ -416,6 +361,9 @@ object SpanWalker {
      val clipRight = UInt(10 bits)
      val clipLowY = UInt(10 bits)
      val clipHighY = UInt(10 bits)
@@ -6579,7 +6582,7 @@ index 59df4ba..e6e7185 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,9 +371,12 @@ object SpanWalker {
+@@ -426,9 +374,12 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -6593,7 +6596,7 @@ index 59df4ba..e6e7185 100644
      val xStart = AFix(c.vertexFormat)
      val xEnd = AFix(c.vertexFormat)
      val y = AFix(c.vertexFormat)
-@@ -436,9 +384,11 @@ object SpanWalker {
+@@ -436,9 +387,11 @@ object SpanWalker {
      val hiS = AFix(c.texCoordsHiFormat)
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
