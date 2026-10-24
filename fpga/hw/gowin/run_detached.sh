@@ -8,6 +8,11 @@ HW=$(cd "$(dirname "$0")/.." && pwd)
 OUT="$HOME/.cache/gowin-builds"; mkdir -p "$OUT"
 . "$HW/gowin/env.sh"
 cd "$HW/$1" || exit 1
+# A full disk truncates the reports and the bitstream copy without failing
+# the build (2026-10-24: a 0-byte .fs and a cut-off timing report). Each
+# build needs ~0.5 GB in impl/ plus the copies.
+free_kb=$(df -Pk . | awk 'NR==2 {print $4}')
+if [ "$free_kb" -lt 5000000 ]; then echo "DONE no disk space ($((free_kb / 1024)) MB free) $(date)" >> "$OUT/$2.status"; exit 1; fi
 # One build per directory: another agent may build elsewhere in parallel.
 exec 8>>.build.lock
 if ! flock -n 8; then echo "build dir $1 busy (another gw_sh build)" >> "$OUT/$2.status"; echo "DONE busy $(date)" >> "$OUT/$2.status"; exit 1; fi
