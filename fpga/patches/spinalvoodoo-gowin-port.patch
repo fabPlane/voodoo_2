@@ -858,7 +858,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..3c0f2c1 100644
+index 1b34fa2..81da237 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -871,10 +871,13 @@ index 1b34fa2..3c0f2c1 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,84 @@ case class Config(
+@@ -31,6 +34,87 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
++    // Samples a TMU lets in flight (allocation to output); bounds how far
++    // texture-line prefetch hints run ahead of the lookups.
++    texMaxOutstanding: Int = 15,
 +    // Lines of the small direct-mapped texture cache used when
 +    // useTexFillCache is off (TmuSmallTextureCache); 0 = no cache.
 +    texSmallCacheLines: Int = 0,
@@ -1236,7 +1239,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..e4974c8 100644
+index 6051025..08488bc 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,37 @@ import spinal.core._
@@ -1283,7 +1286,7 @@ index 6051025..e4974c8 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,24 @@ object CoreSimGen extends App {
+@@ -37,7 +48,25 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1292,6 +1295,7 @@ index 6051025..e4974c8 100644
 +      texSmallCacheLines =
 +        argIntValue("--tex-small-cache-lines").getOrElse(if (gowin) 512 else Config.voodoo1().texSmallCacheLines),
 +      texSmallFillSlots = argIntValue("--tex-small-fill-slots").getOrElse(4),
++      texMaxOutstanding = argIntValue("--tex-max-outstanding").getOrElse(15),
 +      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4),
 +      tmuCount = argIntValue("--tmu-count").getOrElse(1),
 +      texSampleQueueDepth = argIntValue("--tex-sample-queue-depth").getOrElse(16),
@@ -7703,7 +7707,7 @@ index f164007..31832d2 100644
              cmd.mask := prep.mask
              cmd
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..7656e41 100644
+index 8b06179..091233f 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -7721,7 +7725,7 @@ index 8b06179..7656e41 100644
 +  // texture path's request FIFO and lookup / assembly registers, and the
 +  // decoder's three pipe stages are ~9 cycles, so 7 capped a hitting stream
 +  // below one sample per cycle (B99: TMU input stalled 31% of cycles).
-+  val maxOutstanding = 15
++  val maxOutstanding = c.texMaxOutstanding
    val inFlightCount = Reg(UInt(log2Up(maxOutstanding + 1) bits)) init 0
  
    import Tmu._

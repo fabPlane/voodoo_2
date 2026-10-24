@@ -110,6 +110,13 @@ object GowinGenSupport {
       // TMU1 holds GLQuake's lightmaps: 256 lines missed twice as often as
       // 512 (multitexture GLQuake replay: 512 lines -7.3% cycles).
       tmu1SmallCacheLines = 512,
+      // Prefetch lead: the TMU let 15 samples into flight, ~9 of them in its
+      // own pipe, so line-fill hints ran only a few samples ahead of a ~40
+      // cycle fill. 47 in flight (48-entry request FIFO, 8 fills): Quake II
+      // cut-frame replay -13.8% busy cycles, TMU input stall 285k -> 3k.
+      texMaxOutstanding = 47,
+      texFillRequestWindow = 48,
+      texSmallFillSlots = 8,
       // Two TMUs: one data copy per tap pair, split into word-parity banks
       // (half the texture cache data BSRAM; same cycles in replay).
       texCachePairedBanks = sys.env.get("GOWIN_TMU_COUNT").exists(_.toInt > 1),
