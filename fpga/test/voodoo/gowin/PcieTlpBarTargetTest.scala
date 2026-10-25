@@ -413,4 +413,68 @@ class PcieTlpBarTargetTest extends AnyFunSuite {
       assert(dut.bOut.toInt == 0)
     }
   }
+
+  test("posted writes: a multi-dword write TLP becomes one AXI write per dword") {
+    compiledPosted.doSim("posted-burst") { dut =>
+      dut.clockDomain.forkStimulus(10)
+      init(dut)
+      dut.clockDomain.waitSampling()
+      val rnd = new scala.util.Random(7)
+      val seen = scala.collection.mutable.ArrayBuffer[(Long, Long, Int)]()
+      // AW/W ready on random cycles (together), B returned for every write.
+      fork {
+        while (true) {
+          val r = rnd.nextInt(3) != 0
+          dut.io.axi.aw.ready #= r
+          dut.io.axi.w.ready #= r
+          dut.clockDomain.waitSampling()
+          if (dut.io.axi.aw.valid.toBoolean && dut.io.axi.aw.ready.toBoolean) {
+            assert(dut.io.axi.w.valid.toBoolean)
+            seen += ((dut.io.axi.aw.addr.toLong & 0xffffffL, dut.io.axi.w.data.toLong & 0xffffffffL, dut.io.axi.w.strb.toInt))
+          }
+        }
+      }
+      fork {
+        var pend = 0
+        while (true) {
+          dut.clockDomain.waitSampling()
+          if (dut.io.axi.aw.valid.toBoolean && dut.io.axi.aw.ready.toBoolean) pend += 1
+          dut.io.axi.b.valid #= pend > 0
+          if (pend > 0) pend -= 1
+        }
+      }
+      // Send beats in order, each held while tlRxWait is high at the edge.
+      def send(beats: Seq[Seq[Long]]): Unit = {
+        for ((b, k) <- beats.zipWithIndex) {
+          var taken = false
+          var c = 0
+          while (!taken) {
+            dut.io.tlRxSop #= (k == 0)
+            dut.io.tlRxEop #= (k == beats.length - 1)
+            dut.io.tlRxValid #= 0xff
+            dut.io.tlRxData #= pack(b)
+            dut.io.tlRxBardec #= 1
+            sleep(1)
+            taken = !dut.io.tlRxWait.toBoolean
+            dut.clockDomain.waitSampling()
+            c += 1; assert(c < 500, "beat never taken")
+          }
+        }
+        dut.io.tlRxSop #= false; dut.io.tlRxEop #= false; dut.io.tlRxValid #= 0
+      }
+      val d = (0 until 13).map(i => 0x1000L + i)
+      // 3DW header, length 13, last BE 0x3: beat 0 = header + d0-d4, beat 1 = d5-d12.
+      send(Seq(Seq(0x4000000dL, 0x0000003fL, 0x200L) ++ d.take(5).map(pcie), d.drop(5).map(pcie)))
+      // 4DW header, length 4 (first BE 0xc): header + 4 dwords in one beat.
+      val e = (0 until 4).map(i => 0x2000L + i)
+      send(Seq(Seq(0x60000004L, 0x000000fcL, 0x0L, 0x300L) ++ e.map(pcie)))
+      // And an ordinary single-dword write after them.
+      send(Seq(Seq(0x40000001L, 0x0000000fL, 0x400L, pcie(0x3000L))))
+      dut.clockDomain.waitSampling(100)
+      val want = d.indices.map(i => (0x200L + 4 * i, d(i), if (i == 12) 0x3 else 0xf)) ++
+        e.indices.map(i => (0x300L + 4 * i, e(i), if (i == 0) 0xc else 0xf)) :+ ((0x400L, 0x3000L, 0xf))
+      assert(seen.toSeq == want, s"AXI writes ${seen.map(x => f"${x._1}%x=${x._2}%x/${x._3}%x")}")
+      assert(dut.bOut.toInt == 0 && !dut.wedged.toBoolean)
+    }
+  }
 }

@@ -82,7 +82,7 @@ case class PcieTlpBarTarget(
     data(255 - index * 32 downto 224 - index * 32)
 
   object State extends SpinalEnum {
-    val idle, axiWrite, waitB, axiRead, localRead, cpl, drop = newElement()
+    val idle, axiWrite, waitB, axiRead, localRead, cpl, drop, burst = newElement()
   }
 
   val state = RegInit(State.idle)
@@ -98,6 +98,16 @@ case class PcieTlpBarTarget(
   val writeData = Reg(Bits(32 bits)) init (0)
   val readData = Reg(Bits(32 bits)) init (0)
   val lowerAddr = Reg(Bits(7 bits)) init (0)
+  // Multi-dword posted writes (write-combined host stores): the rest of the
+  // payload after the first dword, one AXI write per dword at the next
+  // address. burstBeat holds the current 256-bit beat, burstPos the index of
+  // the next dword in it, burstLeft the dwords still to write.
+  val burstBeat = Reg(Bits(tlpDataWidth bits))
+  val burstPos = Reg(UInt(3 bits)) init (0)
+  val burstLeft = Reg(UInt(10 bits)) init (0)
+  val burstLastBe = Reg(Bits(4 bits)) init (0)
+  val burstNeedBeat = RegInit(False)
+  val burstBeatEop = RegInit(False) // the held beat ends the TLP
   // Timeouts. Every read must complete inside the host root port's
   // completion timeout (50 us - 50 ms, not configurable on the AMD dock
   // slot), and PCIe ordering makes a read wait behind every posted write
@@ -343,7 +353,18 @@ case class PcieTlpBarTarget(
             wPend := True
             if (postedWrites) {
               bOutIncSig := True
-              when(!io.tlRxEop) { state := State.drop }
+              val lengthDw = header0(9 downto 0).asUInt
+              when(lengthDw =/= 1) {
+                // Length 0 encodes 1024 dwords; Gowin hands us TLPs no
+                // longer than the max payload (512 bytes) anyway.
+                burstLeft := lengthDw - 1
+                burstBeat := io.tlRxData
+                burstBeatEop := io.tlRxEop
+                burstPos := Mux(fourDw, U(5, 3 bits), U(4, 3 bits))
+                burstNeedBeat := False
+                burstLastBe := header1(7 downto 4)
+                state := State.burst
+              } elsewhen (!io.tlRxEop) { state := State.drop }
             } else {
               state := State.axiWrite
             }
@@ -425,6 +446,47 @@ case class PcieTlpBarTarget(
           state := State.idle
         }
       }
+    }
+    is(State.burst) {
+      if (postedWrites) {
+        io.tlRxWait := !burstNeedBeat
+        when(burstNeedBeat) {
+          when(rxBeat) {
+            burstBeat := io.tlRxData
+            burstBeatEop := io.tlRxEop
+            burstPos := 0
+            burstNeedBeat := False
+          }
+        } elsewhen (wedged) {
+          // A write timed out meanwhile: drop the rest of this TLP.
+          state := Mux(burstBeatEop, State.idle, State.drop)
+        } elsewhen (!axiIdle || bOutFull) {
+          // As in idle: a core that never takes the write must wedge the
+          // target, not stall the link.
+          when(prescaleTick) { stall := stall + 1 }
+          when(writeTimeout) {
+            wedged := True
+            writeTimeoutSeen := True
+            dropAllOut := True
+          }
+        } otherwise {
+          stall := 0
+          val dw = burstBeat.subdivideIn(32 bits).reverse(burstPos)
+          tlpAddr := tlpAddr + 4
+          writeData := pcieSwap(dw)
+          firstBe := Mux(burstLeft === 1, burstLastBe, B"1111")
+          awPend := True
+          wPend := True
+          bOutIncSig := True
+          burstLeft := burstLeft - 1
+          burstPos := burstPos + 1
+          when(burstLeft === 1) {
+            state := State.idle
+          } elsewhen (burstPos === 7) {
+            burstNeedBeat := True
+          }
+        }
+      } else state := State.idle
     }
     is(State.drop) {
       io.tlRxWait := False
