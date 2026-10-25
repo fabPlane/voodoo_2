@@ -15,6 +15,10 @@
  *   VOODOO_PCI_LOG_SYNC=1         fdatasync each line (survives a host power
  *                                 loss; slow - without it the page cache
  *                                 keeps the log if only the process dies)
+ *   VOODOO_PCI_THREAD=1           queue writes in a 1M-entry ring and feed the
+ *                                 card from a writer thread, so it keeps
+ *                                 drawing while the game runs its logic (like
+ *                                 the card's memory-backed FIFO); reads drain it
  *   VOODOO_PCI_WC=1               write-combined BAR0 writes (B173+, voodoo_dma.ko)
  *   VOODOO_REG_HIST=1             per-register write counts (and how many
  *                                 repeat the previous value) every 100 swaps
@@ -41,10 +45,16 @@
  */
 #include "../../pcie/pci_bar.h"
 
+#include <atomic>
+#include <cstring>
 #include <chrono>
+#include <thread>
+#include <sched.h>
 #include <cstdarg>
 #include <ctime>
 #include <cstdlib>
+
+static inline void _mm_pause_compat() { __asm__ __volatile__("pause" ::: "memory"); }
 
 extern "C" {
 #include "sim_harness.h"
@@ -114,9 +124,16 @@ uint64_t nowNs() {
 
 void logOp(const char *fmt, ...);
 
+// Status as last read by the writer (flow control), and swaps queued in the
+// ring vs. already written to the card: a status read while writes are
+// queued is answered from these instead of draining the ring.
+std::atomic<uint32_t> g_lastStatus{0};
+std::atomic<uint32_t> g_swapsQueued{0}, g_swapsWritten{0};
+
 uint32_t timedRead(uint32_t addr) {
   uint64_t t0 = nowNs();
   uint32_t v = g_bar.read32(addr);
+  if (addr == 0 && v != 0xffffffffu) g_lastStatus.store(v, std::memory_order_relaxed);
   uint64_t dt = nowNs() - t0;
   if (dt > g_maxReadNs) {
     g_maxReadNs = dt;
@@ -139,6 +156,78 @@ bool checkBridge(const char *where) {
     return false;
   }
   return true;
+}
+}  // namespace
+
+static void doWrite32(uint32_t addr, uint32_t data);
+static void doWrite16(uint32_t addr, uint16_t data);
+
+// --- VOODOO_PCI_THREAD: writer thread ------------------------------------
+// Single producer (the game thread) / single consumer (the writer). Every
+// other harness entry point first waits until the ring is empty and the
+// writer has finished its write (drainWrites), so the BAR, the window
+// register and the flow-control budget are only ever used by one thread at
+// a time, in program order.
+namespace {
+struct QOp { uint32_t addr, data; uint32_t wide; };
+constexpr uint32_t kQSize = 1u << 20;
+QOp *g_q = nullptr;
+std::atomic<uint32_t> g_qHead{0}, g_qTail{0}; // head: next write; tail: next read
+std::atomic<bool> g_qBusy{false}, g_qStop{false};
+std::thread g_writer;
+bool g_threaded = false;
+
+void writerLoop() {
+  uint32_t spins = 0;
+  for (;;) {
+    uint32_t t = g_qTail.load(std::memory_order_relaxed);
+    if (t == g_qHead.load(std::memory_order_acquire)) {
+      if (g_qBusy.load(std::memory_order_relaxed)) {
+        g_bar.fenceWc();  // flush this core's write-combining buffers
+        g_qBusy.store(false, std::memory_order_release);
+      }
+      if (g_qStop.load(std::memory_order_acquire)) return;
+      if (++spins > 4096) sched_yield();
+      continue;
+    }
+    spins = 0;
+    g_qBusy.store(true, std::memory_order_relaxed);
+    const QOp &op = g_q[t & (kQSize - 1)];
+    if (op.wide) doWrite32(op.addr, op.data); else doWrite16(op.addr, (uint16_t)op.data);
+    if (op.wide && op.addr < 0x400000 && (op.addr & 0x3fc) == 0x128) g_swapsWritten.fetch_add(1, std::memory_order_release);
+    g_qTail.store(t + 1, std::memory_order_release);
+  }
+}
+
+uint64_t g_drainNs = 0, g_drainCalls = 0, g_qSwaps = 0, g_qMax = 0;
+uint32_t g_rdAddr[8]; uint64_t g_rdCnt[8];
+void drainWrites() {
+  if (!g_threaded) return;
+  g_drainCalls++;
+  uint64_t t0 = nowNs();
+  struct Acc { uint64_t t0; ~Acc() { g_drainNs += nowNs() - t0; } } acc{t0};
+  while (g_qTail.load(std::memory_order_acquire) != g_qHead.load(std::memory_order_relaxed) ||
+         g_qBusy.load(std::memory_order_acquire)) {
+    _mm_pause_compat();
+  }
+}
+
+void enqueue(uint32_t addr, uint32_t data, bool wide) {
+  uint32_t h = g_qHead.load(std::memory_order_relaxed);
+  while (h - g_qTail.load(std::memory_order_acquire) >= kQSize) sched_yield();
+  g_q[h & (kQSize - 1)] = QOp{addr, data, wide ? 1u : 0u};
+  if (wide && addr < 0x400000 && (addr & 0x3fc) == 0x128) g_swapsQueued.fetch_add(1, std::memory_order_relaxed);
+  uint32_t depth = h - g_qTail.load(std::memory_order_relaxed);
+  if (depth > g_qMax) g_qMax = depth;
+  if (wide && addr < 0x400000 && (addr & 0x3fc) == 0x128 && ++g_qSwaps % 100 == 0) {
+    fprintf(stderr, "[pcie] thread: 100 swaps, %llu drains, %.1f ms waiting, max depth %llu\n",
+            (unsigned long long)g_drainCalls, g_drainNs / 1e6, (unsigned long long)g_qMax);
+    for (int i = 0; i < 8 && g_rdCnt[i]; i++) fprintf(stderr, "[pcie]   read %06x x%llu\n", g_rdAddr[i], (unsigned long long)g_rdCnt[i]);
+    memset(g_rdCnt, 0, sizeof g_rdCnt);
+    g_drainCalls = 0; g_drainNs = 0; g_qMax = 0;
+  }
+  g_qBusy.store(true, std::memory_order_relaxed);
+  g_qHead.store(h + 1, std::memory_order_release);
 }
 }  // namespace
 
@@ -177,11 +266,24 @@ extern "C" int sim_init(void) {
   g_open = true;
   fprintf(stderr, "[pcie] Voodoo on %s (%04x:%04x), bridge %s\n", g_dev.bdf.c_str(),
           g_dev.vendor, g_dev.device, pci_bar::statusText(g_bar.status()));
-  return checkBridge("init") ? 0 : -1;
+  if (!checkBridge("init")) return -1;
+  if (getenv("VOODOO_PCI_THREAD") && !g_dry) {
+    g_q = new QOp[kQSize];
+    g_threaded = true;
+    g_writer = std::thread(writerLoop);
+    fprintf(stderr, "[pcie] writer thread on (%u-entry ring)\n", kQSize);
+  }
+  return 0;
 }
 
 extern "C" void sim_shutdown(void) {
   if (!g_open) return;
+  if (g_threaded) {
+    drainWrites();
+    g_qStop.store(true, std::memory_order_release);
+    g_writer.join();
+    g_threaded = false;
+  }
   if (getenv("VOODOO_PCI_STATS"))
     fprintf(stderr, "[pcie] %llu writes, %llu reads, %llu idle polls; bridge %s\n",
             (unsigned long long)g_writes, (unsigned long long)g_reads,
@@ -292,7 +394,7 @@ void regHist(uint32_t addr, uint32_t data) {
   fprintf(stderr, "\n");
 }
 
-extern "C" void sim_write(uint32_t addr, uint32_t data) {
+static void doWrite32(uint32_t addr, uint32_t data) {
   regHist(addr, data);
   if (addr < 0x400000 && (addr & 0x3fc) == 0x128) frameCap();
   waitForRoom();
@@ -309,7 +411,7 @@ extern "C" void sim_write(uint32_t addr, uint32_t data) {
   if (!g_dry) g_bar.write32(addr & 0xfffffcu, data);
 }
 
-extern "C" void sim_write16(uint32_t addr, uint16_t data) {
+static void doWrite16(uint32_t addr, uint16_t data) {
   waitForRoom();
   g_writes++;
   if (g_profile) countWrite(addr);
@@ -317,7 +419,35 @@ extern "C" void sim_write16(uint32_t addr, uint16_t data) {
   if (!g_dry) g_bar.write16(addr & 0xfffffeu, data);
 }
 
+
+
+extern "C" void sim_write(uint32_t addr, uint32_t data) {
+  if (g_threaded) enqueue(addr, data, true); else doWrite32(addr, data);
+}
+
+extern "C" void sim_write16(uint32_t addr, uint16_t data) {
+  if (g_threaded) enqueue(addr, data, false); else doWrite16(addr, data);
+}
+
 extern "C" uint32_t sim_read(uint32_t addr) {
+  if (g_threaded) {
+    for (int i = 0; i < 8; i++) {
+      if (g_rdCnt[i] && g_rdAddr[i] == (addr & 0xfffffc)) { g_rdCnt[i]++; break; }
+      if (!g_rdCnt[i]) { g_rdAddr[i] = addr & 0xfffffc; g_rdCnt[i] = 1; break; }
+    }
+  }
+  // Status while writes are still queued: answer from the writer's last
+  // status read, with the swaps still in the ring added to swapsPending and
+  // the busy bits set, so Glide's swap throttling works without draining.
+  if (g_threaded && (addr & 0xfffffcu) == 0 &&
+      g_qTail.load(std::memory_order_acquire) != g_qHead.load(std::memory_order_relaxed)) {
+    uint32_t st = g_lastStatus.load(std::memory_order_relaxed);
+    uint32_t inRing = g_swapsQueued.load(std::memory_order_relaxed) - g_swapsWritten.load(std::memory_order_acquire);
+    uint32_t pending = ((st >> 28) & 7) + inRing;
+    if (pending > 7) pending = 7;
+    return (st & ~(7u << 28) & ~kPciFifoFreeMask) | (pending << 28) | kSstBusy | (3u << 7) | 0x3fu;
+  }
+  drainWrites();
   g_reads++;
   if (g_logAll) logOp("r32 %06x\n", addr);
   if (g_dry) return (addr & 0xfffffcu) == 0 ? kPciFifoFreeMask : 0;
@@ -331,6 +461,7 @@ extern "C" uint32_t sim_read(uint32_t addr) {
 }
 
 extern "C" uint32_t sim_idle_wait(void) {
+  drainWrites();
   // Wait for the core to drain: SST busy clear and the PCI FIFO empty.
   struct Timer {
     uint64_t t0 = nowNs();

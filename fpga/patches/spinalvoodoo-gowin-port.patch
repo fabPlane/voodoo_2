@@ -399,7 +399,7 @@ index c71ac23..b773156 100644
          sst1CurrentBoard->fbiVideoWidth, sst1CurrentBoard->fbiVideoHeight));
      return(FXTRUE);
 diff --git a/emu/glide/swlibs/newpci/pcilib/fxsim.c b/emu/glide/swlibs/newpci/pcilib/fxsim.c
-index d36865c..c4c27ab 100644
+index d36865c..c1657e3 100644
 --- a/emu/glide/swlibs/newpci/pcilib/fxsim.c
 +++ b/emu/glide/swlibs/newpci/pcilib/fxsim.c
 @@ -298,8 +298,89 @@ static int simGetDebugLevel(void) {
@@ -534,7 +534,7 @@ index d36865c..c4c27ab 100644
  void simWriteReg(volatile void *addr, FxU32 value) {
      FxU32 offset = (FxU32)((char *)addr - (char *)simBasePtr);
      if (simGetDebugLevel() >= 2) {
-@@ -367,10 +465,22 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+@@ -367,18 +465,35 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              simFlushTexture();
          }
  
@@ -559,9 +559,16 @@ index d36865c..c4c27ab 100644
 +            }
          }
  
-         /* Wait for pipeline drain before swapbuffer */
-@@ -378,7 +488,7 @@ void simWriteReg(volatile void *addr, FxU32 value) {
-             sim_idle_wait();
+-        /* Wait for pipeline drain before swapbuffer */
++        /* Wait for pipeline drain before swapbuffer. SIM_NO_SWAP_IDLE=1 (the
++         * PCIe board): the hardware orders the swap itself (Sync=Yes, nothing
++         * drains behind it), and waiting here stops the CPU from building the
++         * next frame while the card draws this one. */
+         if (regOff == 0x128) {
+-            sim_idle_wait();
++            static int noSwapIdle = -1;
++            if (noSwapIdle < 0) noSwapIdle = getenv("SIM_NO_SWAP_IDLE") != NULL;
++            if (!noSwapIdle) sim_idle_wait();
          }
  
 -        sim_write(regOff, value);
@@ -569,7 +576,7 @@ index d36865c..c4c27ab 100644
      } else if (offset < 0x800000) {
          /* LFB space: 0x400000-0x7FFFFF */
          FxU32 lfbAddr = offset & 0x3FFFFF;
-@@ -404,17 +514,17 @@ void simWriteReg(volatile void *addr, FxU32 value) {
+@@ -404,17 +519,17 @@ void simWriteReg(volatile void *addr, FxU32 value) {
              fprintf(stderr, "[fxsim] TEX WRITE stats at #%d: %d non-zero, range 0x%06x-0x%06x\n",
                      texWriteCount, texNonZeroCount, texMinOffset, texMaxOffset);
          }
@@ -598,7 +605,7 @@ index d36865c..c4c27ab 100644
      }
  }
  
-@@ -474,6 +584,7 @@ void simWriteTex(FxU32 offset, const void *data, FxU32 length) {
+@@ -474,6 +589,7 @@ void simWriteTex(FxU32 offset, const void *data, FxU32 length) {
      FxU32 numWords = length / 4;
      FxU32 i;
      for (i = 0; i < numWords; i++) {
