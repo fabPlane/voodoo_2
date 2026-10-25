@@ -4430,10 +4430,10 @@ index c5a4cd8..9bcc95b 100644
      val data = Bits(24 bits)
 diff --git a/src/voodoo/frontend/SetupEngine.scala b/src/voodoo/frontend/SetupEngine.scala
 new file mode 100644
-index 0000000..43d9008
+index 0000000..5b8cc82
 --- /dev/null
 +++ b/src/voodoo/frontend/SetupEngine.scala
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,542 @@
 +package voodoo.frontend
 +
 +import spinal.core._
@@ -4737,32 +4737,36 @@ index 0000000..43d9008
 +  // Datapath.
 +  // ---------------------------------------------------------------------
 +  val temps = Vec(Reg(Bits(32 bits)) init (0), SetupEngineProgram.tempCount.max(1))
-+  val running = state === St.run && pc < romLen
-+  val entry = rom(pc.resize(log2Up(romLen) bits))
++  // Issue pipeline: the ROM word is registered (fetched a cycle ahead of
++  // its operand reads), and the operands are registered again before the
++  // units (SetupEngineProgram counts that stage in each unit's latency).
++  val running = RegNext(state === St.run && pc < romLen) init (False)
++  val entry = RegNext(rom(pc.resize(log2Up(romLen) bits)))
 +  def ramAddrOf(s: SrcSel): UInt = (perm(s.v.resized) @@ s.idx).resize(6 bits)
-+  def read(s: SrcSel, port: Int): Bits = {
-+    val r = Bits(32 bits)
-+    switch(s.kind) {
-+      is(0) { r := ram(port).readAsync(ramAddrOf(s)) }
-+      is(1) { r := temps(s.tmp.resized) }
-+      default { r := B(0x40000000L, 32 bits) } // 2.0f
-+    }
-+    r
++  // Operand read, registered: vertex values from a synchronous RAM read
++  // (block RAM), temps and the constant through a register.
++  def readReg(s: SrcSel, port: Int): Bits = {
++    val ramOut = ram(port).readSync(ramAddrOf(s))
++    val other = RegNext(Mux(s.kind === 1, temps(s.tmp.resized), B(0x40000000L, 32 bits))) // 2.0f
++    val kindR = RegNext(s.kind)
++    Mux(kindR === 0, ramOut, other)
 +  }
 +  val mul = SetupFpMul(DstSel())
-+  mul.io.valid := running && entry.mulV
-+  mul.io.a := read(entry.mulA, 0); mul.io.b := read(entry.mulB, 1); mul.io.tag := entry.mulD
++  mul.io.valid := RegNext(running && entry.mulV) init (False)
++  mul.io.a := readReg(entry.mulA, 0); mul.io.b := readReg(entry.mulB, 1)
++  mul.io.tag := RegNext(entry.mulD)
 +  val add = SetupFpAdd(DstSel())
-+  add.io.valid := running && entry.addV
-+  add.io.a := read(entry.addA, 2); add.io.b := read(entry.addB, 3)
-+  add.io.negB := entry.addNeg; add.io.tag := entry.addD
-+  // Move (latency 1) and reciprocal seed (latency 1).
-+  val movValid = RegNext(running && entry.movV) init (False)
-+  val movData = RegNext(read(entry.movA, 4))
-+  val movTag = RegNext(entry.movD)
-+  val seedValid = RegNext(running && entry.seedV) init (False)
-+  val seedData = RegNext(SetupFpRecip.seed(temps(entry.seedA.tmp.resized)))
-+  val seedTag = RegNext(entry.seedD)
++  add.io.valid := RegNext(running && entry.addV) init (False)
++  add.io.a := readReg(entry.addA, 2); add.io.b := readReg(entry.addB, 3)
++  add.io.negB := RegNext(entry.addNeg); add.io.tag := RegNext(entry.addD)
++  // Move and reciprocal seed (operand register + output register).
++  val movValid = RegNext(RegNext(running && entry.movV) init (False)) init (False)
++  val movData = RegNext(readReg(entry.movA, 4))
++  val movTag = RegNext(RegNext(entry.movD))
++  val seedValid = RegNext(RegNext(running && entry.seedV) init (False)) init (False)
++  val seedIn = RegNext(temps(entry.seedA.tmp.resized))
++  val seedData = RegNext(SetupFpRecip.seed(seedIn))
++  val seedTag = RegNext(RegNext(entry.seedD))
 +  when(state === St.run) { pc := pc + 1 }
 +
 +  def toTemp(v: Bool, d: DstSel, data: Bits): Unit =
@@ -4774,7 +4778,7 @@ index 0000000..43d9008
 +
 +  // The area result: zero area or culled kills the triangle.
 +  // (Its completion cycle is fixed by the schedule; temp ids are reused.)
-+  val areaDone = state === St.run && pc === SetupEngineProgram.areaDoneCycle
++  val areaDone = state === St.run && pc === SetupEngineProgram.areaDoneCycle + 1
 +  when(areaDone) {
 +    val area = add.io.result
 +    val sortedNeg = area(31)
@@ -4823,7 +4827,7 @@ index 0000000..43d9008
 +    outFifo.io.push.data := d
 +  }
 +
-+  when(state === St.run && pc === romLen + 7) { state := St.finish }
++  when(state === St.run && pc === romLen + 10) { state := St.finish }
 +  when(state === St.finish) {
 +    when(!kill) {
 +      outFifo.io.push.valid := True
@@ -4839,7 +4843,8 @@ index 0000000..43d9008
 +}
 +
 +/** The setup computation as a static schedule for one multiplier (latency
-+  * 3), one adder (5), a move path (1) and a reciprocal seed (1).
++  * 3), one adder (5), a move path (1) and a reciprocal seed (1), each behind
++  * an operand register.
 +  */
 +object SetupEngineProgram {
 +  // Staging / slot value order.
@@ -4871,7 +4876,7 @@ index 0000000..43d9008
 +  private case class ST(name: String) extends SSrc
 +  private case object S2 extends SSrc
 +  private val MUL = 0; private val ADD = 1; private val MOV = 2; private val SEED = 3
-+  private val lat = Array(3, 5, 1, 1)
++  private val lat = Array(4, 6, 2, 2) // unit latency + operand register
 +  val X = 0; val Y = 1
 +
 +  private def program: Seq[SOp] = {
