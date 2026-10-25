@@ -79,7 +79,10 @@ object GowinGenSupport {
       // full fill cache does not fit, but without any cache every texel is a
       // DDR3 round trip. 512 lines (16 KiB per tap lane): with 256, fills
       // still held the texture path ~14% of cycles under GLQuake (B118).
-      texSmallCacheLines = 512,
+      // 64-byte texture cache lines, 256 of them (same 16 KB): Quake II
+      // cut-frame replay -3.1% (misses roughly halve; 32 KB would be -4.2%).
+      texSmallCacheLines = 256,
+      texSmallLineWords = 16,
       // Span queue between the walker (which issues the framebuffer prefetch)
       // and the span rasterizer: the prefetch's lead. 16 instead of 4 halved
       // fill waits in trace replay at 120-cycle memory latency.
@@ -113,7 +116,7 @@ object GowinGenSupport {
       texHintValidCheck = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
       // TMU1 holds GLQuake's lightmaps: 256 lines missed twice as often as
       // 512 (multitexture GLQuake replay: 512 lines -7.3% cycles).
-      tmu1SmallCacheLines = 512,
+      tmu1SmallCacheLines = 256,
       // Prefetch lead: the TMU let 15 samples into flight, ~9 of them in its
       // own pipe, so line-fill hints ran only a few samples ahead of a ~40
       // cycle fill. 47 in flight (48-entry request FIFO): Quake II cut-frame
