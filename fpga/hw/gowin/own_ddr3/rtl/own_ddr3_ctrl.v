@@ -645,8 +645,13 @@ module own_ddr3_ctrl #(
                 s1_bank <= rq_bank;
                 s1_col <= rq_col;
                 bank_cnt[rq_bank] <= rq_wr ? 3'd7 : 3'd6;
+                // RD -> WR 3 frames (12 tCK; DDR3 needs 7): at 2 (8 tCK)
+                // the next write's DQ / DQS, driven from 2-3 slots before
+                // its burst, reached the late lanes' read gate and the
+                // FIFO returned the write burst instead (B179d: depth
+                // words in the upper half of colour reads under load).
                 if (rq_wr) wtr_cnt <= 3'd4;
-                else       rtw_cnt <= 3'd2;
+                else       rtw_cnt <= 3'd3;
                 if (!rq_cal) begin
                     cq_head <= ~cq_head;
                 end
