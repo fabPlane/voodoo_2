@@ -83,6 +83,8 @@ object GowinGenSupport {
       // cut-frame replay -3.1% (misses roughly halve; 32 KB would be -4.2%).
       texSmallCacheLines = 256,
       texSmallLineWords = 16,
+      // 8 queued prefetch hints (was 2, dropped when full): -1.3% in replay.
+      texHintQueueDepth = 8,
       // Span queue between the walker (which issues the framebuffer prefetch)
       // and the span rasterizer: the prefetch's lead. 16 instead of 4 halved
       // fill waits in trace replay at 120-cycle memory latency.
