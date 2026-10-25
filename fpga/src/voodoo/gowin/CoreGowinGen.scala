@@ -66,6 +66,10 @@ object GowinGenSupport {
     .copy(
       useFbWriteBuffer = true,
       fbWriteBufferLineWords = 256,
+      // Four write-buffer slots per plane (was 2): a filled run no longer waits
+      // for the previous drain. Quake II depth clear 231k -> 154k busy cycles
+      // (one word = two pixels a clock), cut-frame replay -7.3%.
+      fbWriteBufferCount = 4,
       // Depth writes on their own AXI write port (CoreGowin memAuxW); B115-
       // B121 had the port but nothing drove it.
       separateAuxWriteMem = true,

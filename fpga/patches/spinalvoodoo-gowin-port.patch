@@ -1453,10 +1453,10 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..9759369 100644
+index 6051025..9228164 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
-@@ -5,26 +5,37 @@ import spinal.core._
+@@ -5,26 +5,38 @@ import spinal.core._
  object CoreSimGen extends App {
    val enableTrace = args.contains("--trace-pipeline")
    def argValue(name: String): Option[String] = {
@@ -1492,6 +1492,7 @@ index 6051025..9759369 100644
 +    if (!gowin) b
 +    else b.copy(
 +      fbWriteBufferLineWords = argIntValue("--fb-write-line-words").getOrElse(256),
++      fbWriteBufferCount = argIntValue("--fb-write-slots").getOrElse(2),
 +      separateAuxWriteMem = !args.contains("--no-separate-aux-write-mem"),
 +      hwDebugRegs = true
 +    )
@@ -1500,7 +1501,7 @@ index 6051025..9759369 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +48,26 @@ object CoreSimGen extends App {
+@@ -37,7 +49,26 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -3366,10 +3367,122 @@ index d1bc1f7..da61a2b 100644
    core.io.statusInputs.pciInterrupt := False
    core.io.hdmi.clock := io.hdmi.clock
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala b/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
-index bf8fd33..787dc1c 100644
+index bf8fd33..6e4c2e7 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneBuffer.scala
-@@ -352,10 +352,15 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+@@ -40,7 +40,7 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+   }
+ 
+   require(c.fbWriteBufferLineWords >= 2)
+-  require(c.fbWriteBufferCount == 2)
++  require(c.fbWriteBufferCount >= 2 && isPow2(c.fbWriteBufferCount))
+ 
+   if (!c.useFbWriteBuffer) {
+     val writeReqPipe = io.writeReq.m2sPipe()
+@@ -101,50 +101,30 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+     val physicalIndexWidth = log2Up(runDepth)
+     val lastPhysicalWordIndex = U(runDepth - 1, physicalIndexWidth bits)
+ 
+-    val slot0Fifo = StreamFifo(WriteReq(c), fifoDepth)
+-    val slot1Fifo = StreamFifo(WriteReq(c), fifoDepth)
+-    slot0Fifo.setName("slot0Fifo")
+-    slot1Fifo.setName("slot1Fifo")
++    // Slots fill in ring order and drain in the same order (slotQueued /
++    // drainHead), so writes reach memory in issue order; with more than two
++    // slots a filled run no longer waits for the previous drain to finish.
++    val slotFifos = Seq.tabulate(slotCount)(i => StreamFifo(WriteReq(c), fifoDepth).setName(s"slot${i}Fifo"))
+     val slotFlush = Vec(Bool(), slotCount)
+     slotFlush.foreach(_ := False)
+-    slot0Fifo.io.flush := slotFlush(0)
+-    slot1Fifo.io.flush := slotFlush(1)
+-    val slot0Push = slot0Fifo.io.push
+-    val slot1Push = slot1Fifo.io.push
+-    val slot0Pop = slot0Fifo.io.pop
+-    val slot1Pop = slot1Fifo.io.pop
+-
+-    def slotPush(slot: UInt) = Mux(slot === 0, slot0Fifo.io.push, slot1Fifo.io.push)
+-    def slotPop(slot: UInt) = Mux(slot === 0, slot0Fifo.io.pop, slot1Fifo.io.pop)
+-    def slotPushReady(slot: UInt): Bool =
+-      Mux(slot === 0, slot0Fifo.io.push.ready, slot1Fifo.io.push.ready)
+-    def slotPopValid(slot: UInt): Bool =
+-      Mux(slot === 0, slot0Fifo.io.pop.valid, slot1Fifo.io.pop.valid)
+-    def slotPopData(slot: UInt): Bits =
+-      Mux(slot === 0, slot0Fifo.io.pop.payload.data, slot1Fifo.io.pop.payload.data)
+-    def slotPopMask(slot: UInt): Bits =
+-      Mux(slot === 0, slot0Fifo.io.pop.payload.mask, slot1Fifo.io.pop.payload.mask)
++    for (i <- 0 until slotCount) slotFifos(i).io.flush := slotFlush(i)
++    def sel[T <: Data](slot: UInt, f: Int => T): T = Vec((0 until slotCount).map(f)).apply(slot)
++    def slotPushReady(slot: UInt): Bool = sel(slot, i => slotFifos(i).io.push.ready)
++    def slotPopValid(slot: UInt): Bool = sel(slot, i => slotFifos(i).io.pop.valid)
++    def slotPopData(slot: UInt): Bits = sel(slot, i => slotFifos(i).io.pop.payload.data)
++    def slotPopMask(slot: UInt): Bits = sel(slot, i => slotFifos(i).io.pop.payload.mask)
+ 
+     def driveSlotPush(slot: UInt, address: UInt, data: Bits, mask: Bits): Unit = {
+-      when(slot === 0) {
+-        slot0Push.valid := True
+-        slot0Push.payload.address := address
+-        slot0Push.payload.data := data
+-        slot0Push.payload.mask := mask
+-      }.otherwise {
+-        slot1Push.valid := True
+-        slot1Push.payload.address := address
+-        slot1Push.payload.data := data
+-        slot1Push.payload.mask := mask
++      for (i <- 0 until slotCount) when(slot === i) {
++        slotFifos(i).io.push.valid := True
++        slotFifos(i).io.push.payload.address := address
++        slotFifos(i).io.push.payload.data := data
++        slotFifos(i).io.push.payload.mask := mask
+       }
+     }
+ 
+     def driveSlotPopReady(slot: UInt): Unit = {
+-      when(slot === 0) {
+-        slot0Pop.ready := True
+-      }.otherwise {
+-        slot1Pop.ready := True
+-      }
++      for (i <- 0 until slotCount) when(slot === i) { slotFifos(i).io.pop.ready := True }
+     }
+ 
+     def addrPlusWords(address: UInt, words: UInt): UInt = {
+@@ -173,6 +153,9 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+     val slotPendingAddress = Vec(Reg(UInt(addrWidth bits)) init (0), slotCount)
+     val slotPendingData = Vec(Reg(Bits(32 bits)) init (0), slotCount)
+     val slotPendingMask = Vec(Reg(Bits(4 bits)) init (0), slotCount)
++    val slotQueued = Vec(Reg(Bool()) init (False), slotCount)
++    val slotQueueReason = Vec(Reg(UInt(2 bits)) init (0), slotCount)
++    val drainHead = Reg(UInt(slotIndexWidth bits)) init (0)
+     val activeSlot = Reg(UInt(slotIndexWidth bits)) init (0)
+ 
+     val writeStallCycles = Reg(UInt(32 bits)) init (0)
+@@ -299,13 +282,9 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+       drainState := DrainState.Send
+     }
+ 
+-    slot0Push.valid := False
+-    slot0Push.payload.assignDontCare()
+-    slot1Push.valid := False
+-    slot1Push.payload.assignDontCare()
++    for (f <- slotFifos) { f.io.push.valid := False; f.io.push.payload.assignDontCare() }
+ 
+-    slot0Pop.ready := False
+-    slot1Pop.ready := False
++    for (f <- slotFifos) f.io.pop.ready := False
+ 
+     io.readReq.ready := False
+     io.readRsp.valid := False
+@@ -342,7 +321,8 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+     directWriteQueue.io.push.payload.allowOverride()
+     directWriteQueue.io.pop.ready.allowOverride()
+ 
+-    val otherSlot = activeSlot ^ U(1, slotIndexWidth bits)
++    val nextSlot = activeSlot + 1 // ring (power-of-two slot count)
++    def queueDrain(slot: UInt, reason: UInt): Unit = { slotQueued(slot) := True; slotQueueReason(slot) := reason }
+     val activeValid = slotValid(activeSlot)
+     val activeCount = slotWordCount(activeSlot)
+     val activeStartAddr = slotStartAddr(activeSlot)
+@@ -352,12 +332,17 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
      val activePendingWordComplete = activePendingMask.andR
      val activeNextAddr = addrPlusWords(activeStartAddr, activeCount.resized)
      val sameWordMerge = activeValid && writeReqPipe.payload.address === activePendingAddr
@@ -3384,9 +3497,12 @@ index bf8fd33..787dc1c 100644
 -    ) && writeReqPipe.payload.address === activeNextAddr
 +    ) && writeReqPipe.payload.address === activeNextAddr && !nextStartsPage
      val needsRotate = activeValid && !(sameWordMerge || sequentialAppend)
-     val canRotate = drainState === DrainState.Idle && !slotValid(otherSlot)
+-    val canRotate = drainState === DrainState.Idle && !slotValid(otherSlot)
++    val canRotate = !slotValid(nextSlot)
  
-@@ -385,7 +390,11 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+     val activePushReady = slotPushReady(activeSlot)
+     val activeAppendReady = !activeValid || sameWordMerge || (sequentialAppend && activePushReady)
+@@ -385,7 +370,11 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
          }
  
          io.mem.cmd.valid := drainPending || slotPopValid(drainSlot)
@@ -3399,6 +3515,86 @@ index bf8fd33..787dc1c 100644
          io.mem.cmd.fragment.opcode := Bmb.Cmd.Opcode.WRITE
          io.mem.cmd.fragment.length := drainLength
          io.mem.cmd.fragment.source := 1
+@@ -415,24 +404,25 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+       }
+ 
+       when(
+-        drainState === DrainState.Idle && activeValid && activeCount === U(
++        activeValid && activeCount === U(
+           runDepth,
+           countWidth bits
+-        ) && activePendingWordComplete && !slotValid(otherSlot) && !writeReqPipe.valid
++        ) && activePendingWordComplete && !slotValid(nextSlot) && !writeReqPipe.valid
+       ) {
+-        clearSlotMeta(otherSlot)
+-        startDrain(activeSlot, U(0, 2 bits))
+-        activeSlot := otherSlot
++        queueDrain(activeSlot, U(0, 2 bits))
++        activeSlot := nextSlot
+       }
+ 
+-      when(
+-        drainState === DrainState.Idle && io.flush && activeValid && !slotValid(
+-          otherSlot
+-        ) && !writeReqPipe.valid
+-      ) {
+-        clearSlotMeta(otherSlot)
+-        startDrain(activeSlot, U(2, 2 bits))
+-        activeSlot := otherSlot
++      when(io.flush && activeValid && !slotValid(nextSlot) && !writeReqPipe.valid) {
++        queueDrain(activeSlot, U(2, 2 bits))
++        activeSlot := nextSlot
++      }
++
++      // Start the oldest queued slot's drain.
++      when(drainState === DrainState.Idle && slotQueued(drainHead)) {
++        slotQueued(drainHead) := False
++        startDrain(drainHead, slotQueueReason(drainHead))
++        drainHead := drainHead + 1
+       }
+ 
+       when(writeReqPipe.valid) {
+@@ -485,15 +475,14 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+               writeRotateOtherLineCount := writeRotateOtherLineCount + 1
+             }
+ 
+-            clearSlotMeta(otherSlot)
+-            startDrain(activeSlot, U(1, 2 bits))
++            queueDrain(activeSlot, U(1, 2 bits))
+             initSlotMeta(
+-              otherSlot,
++              nextSlot,
+               writeReqPipe.payload.address,
+               writeReqPipe.payload.data,
+               writeReqPipe.payload.mask
+             )
+-            activeSlot := otherSlot
++            activeSlot := nextSlot
+           }
+         }
+       }
+@@ -540,11 +529,7 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+             when(!slotValid(slot)) {
+               assert(!slotDraining(slot))
+               assert(slotWordCount(slot) === U(0, countWidth bits))
+-              if (slot == 0) {
+-                assert(slot0Fifo.io.occupancy === 0)
+-              } else {
+-                assert(slot1Fifo.io.occupancy === 0)
+-              }
++              assert(slotFifos(slot).io.occupancy === 0)
+             }
+             when(slotValid(slot)) {
+               assert(slotWordCount(slot) =/= U(0, countWidth bits))
+@@ -559,7 +544,7 @@ case class FramebufferPlaneBuffer(c: Config, formalStrong: Boolean = true) exten
+       }
+     }
+ 
+-    io.busy := drainState =/= DrainState.Idle || writeReqPipe.valid || directWriteQueue.io.occupancy =/= 0 || (io.flush && activeValid)
++    io.busy := drainState =/= DrainState.Idle || slotQueued.orR || writeReqPipe.valid || directWriteQueue.io.occupancy =/= 0 || (io.flush && activeValid)
+   }
+ }
+ 
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 index 9d1e15f..4210501 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
