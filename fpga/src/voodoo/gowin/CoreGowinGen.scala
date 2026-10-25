@@ -120,7 +120,7 @@ object GowinGenSupport {
       texSmallFillSlots = 4,
       // Voodoo 2 triangle setup engine (sVx ... sDrawTriCMD); Glide uses it
       // with SST_V2SETUP=1, the old register path keeps working.
-      setupEngine = true,
+      setupEngine = false, // B175/B176: misses timing at current utilisation (86% CLS); sim only for now
       // Two TMUs: one data copy per tap pair, split into word-parity banks
       // (half the texture cache data BSRAM; same cycles in replay).
       texCachePairedBanks = sys.env.get("GOWIN_TMU_COUNT").exists(_.toInt > 1),

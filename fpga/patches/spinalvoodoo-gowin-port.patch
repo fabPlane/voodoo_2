@@ -2449,7 +2449,7 @@ index 2f55df7..58c106f 100644
    val writePath = CoreWritePathMap()
    val pipelineBusySources = Bits(32 bits)
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..5df6bdd 100644
+index c23fa0b..e73df10 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -5,7 +5,7 @@ import spinal.core.sim._
@@ -2681,6 +2681,23 @@ index c23fa0b..5df6bdd 100644
    io.stats.writeStallCycles :=
      (colorWritePort.io.writeStallCycles + auxWritePort.io.writeStallCycles).resized
    io.stats.writeDrainCount := (if (c.useFbWriteBuffer)
+@@ -373,6 +466,16 @@ case class FramebufferMemSubsystem(c: Config) extends Component {
+   io.stats.memColorReadCmdCount := (if (useCachedReaders) memColorReadCmdCount else U(0, 32 bits))
+   io.stats.memAuxReadCmdCount := (if (useCachedReaders) memAuxReadCmdCount else U(0, 32 bits))
+   io.stats.memLfbReadCmdCount := memLfbReadCmdCount
++  // SV_FB_BEATS=1 (sim measurement build): per-port beats instead of the
++  // blocked-cycle counters (5 writes, 6 colour reads, 7 depth reads).
++  if (sys.env.contains("SV_FB_BEATS")) {
++    val wBeat = io.fbColorWriteMem.cmd.fire.asUInt.resize(2 bits) + io.fbAuxWriteMem.cmd.fire.asUInt.resize(2 bits) + io.fbMemWrite.cmd.fire.asUInt.resize(2 bits)
++    for (r <- Seq(memColorWriteBlockedCycles, memAuxWriteBlockedCycles, memColorReadBlockedCycles, memAuxReadBlockedCycles)) r.allowOverride()
++    memColorWriteBlockedCycles := memColorWriteBlockedCycles + wBeat.resized
++    memAuxWriteBlockedCycles := memAuxWriteBlockedCycles + io.fbColorReadMem.rsp.fire.asUInt.resized
++    memColorReadBlockedCycles := memColorReadBlockedCycles + io.fbAuxReadMem.rsp.fire.asUInt.resized
++    memAuxReadBlockedCycles := memAuxReadBlockedCycles + (wBeat =/= 0).asUInt.resized
++  }
+   io.stats.memColorWriteBlockedCycles := memColorWriteBlockedCycles
+   io.stats.memAuxWriteBlockedCycles := memAuxWriteBlockedCycles
+   io.stats.memColorReadBlockedCycles := (if (useCachedReaders) memColorReadBlockedCycles
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
 index 7797711..138ce01 100644
 --- a/src/voodoo/core/PixelPipeline.scala
