@@ -100,14 +100,16 @@ case class PcieTlpBarTarget(
   val lowerAddr = Reg(Bits(7 bits)) init (0)
   // Multi-dword posted writes (write-combined host stores): the rest of the
   // payload after the first dword, one AXI write per dword at the next
-  // address. burstBeat holds the current 256-bit beat, burstPos the index of
-  // the next dword in it, burstLeft the dwords still to write.
-  val burstBeat = Reg(Bits(tlpDataWidth bits))
+  // address. The SOP beat is taken when the TLP starts, so its last four
+  // dwords (4-7) are kept in sopRest; later beats are read in place, held by
+  // tlRxWait until their last dword goes out. burstPos indexes the next
+  // dword in the beat, burstLeft counts the dwords still to write.
+  val sopRest = Reg(Vec(Bits(32 bits), 4))
+  val burstInSop = RegInit(False) // next dword comes from sopRest
   val burstPos = Reg(UInt(3 bits)) init (0)
   val burstLeft = Reg(UInt(10 bits)) init (0)
   val burstLastBe = Reg(Bits(4 bits)) init (0)
-  val burstNeedBeat = RegInit(False)
-  val burstBeatEop = RegInit(False) // the held beat ends the TLP
+  val sopEop = RegInit(False) // the SOP beat ended the TLP
   // Timeouts. Every read must complete inside the host root port's
   // completion timeout (50 us - 50 ms, not configurable on the AMD dock
   // slot), and PCIe ordering makes a read wait behind every posted write
@@ -358,10 +360,10 @@ case class PcieTlpBarTarget(
                 // Length 0 encodes 1024 dwords; Gowin hands us TLPs no
                 // longer than the max payload (512 bytes) anyway.
                 burstLeft := lengthDw - 1
-                burstBeat := io.tlRxData
-                burstBeatEop := io.tlRxEop
+                for (k <- 0 until 4) sopRest(k) := dword(io.tlRxData, 4 + k)
+                burstInSop := True
+                sopEop := io.tlRxEop
                 burstPos := Mux(fourDw, U(5, 3 bits), U(4, 3 bits))
-                burstNeedBeat := False
                 burstLastBe := header1(7 downto 4)
                 state := State.burst
               } elsewhen (!io.tlRxEop) { state := State.drop }
@@ -449,17 +451,14 @@ case class PcieTlpBarTarget(
     }
     is(State.burst) {
       if (postedWrites) {
-        io.tlRxWait := !burstNeedBeat
-        when(burstNeedBeat) {
-          when(rxBeat) {
-            burstBeat := io.tlRxData
-            burstBeatEop := io.tlRxEop
-            burstPos := 0
-            burstNeedBeat := False
-          }
-        } elsewhen (wedged) {
-          // A write timed out meanwhile: drop the rest of this TLP.
-          state := Mux(burstBeatEop, State.idle, State.drop)
+        // A later beat stays on the bus (wait high) until its last dword.
+        io.tlRxWait := True
+        val inPlace = !burstInSop
+        val haveDw = burstInSop || rxBeat
+        when(wedged) {
+          // A write timed out meanwhile: drop the rest of this TLP (a held
+          // beat is consumed by drop).
+          state := Mux(burstInSop && sopEop, State.idle, State.drop)
         } elsewhen (!axiIdle || bOutFull) {
           // As in idle: a core that never takes the write must wedge the
           // target, not stall the link.
@@ -469,9 +468,10 @@ case class PcieTlpBarTarget(
             writeTimeoutSeen := True
             dropAllOut := True
           }
-        } otherwise {
+        } elsewhen (haveDw) {
           stall := 0
-          val dw = burstBeat.subdivideIn(32 bits).reverse(burstPos)
+          val dw = Mux(burstInSop, sopRest(burstPos(1 downto 0)),
+            io.tlRxData.subdivideIn(32 bits).reverse(burstPos))
           tlpAddr := tlpAddr + 4
           writeData := pcieSwap(dw)
           firstBe := Mux(burstLeft === 1, burstLastBe, B"1111")
@@ -480,11 +480,10 @@ case class PcieTlpBarTarget(
           bOutIncSig := True
           burstLeft := burstLeft - 1
           burstPos := burstPos + 1
-          when(burstLeft === 1) {
-            state := State.idle
-          } elsewhen (burstPos === 7) {
-            burstNeedBeat := True
-          }
+          val beatDone = burstPos === 7 || burstLeft === 1
+          when(inPlace && beatDone) { io.tlRxWait := False } // take the beat
+          when(burstPos === 7) { burstInSop := False }
+          when(burstLeft === 1) { state := State.idle }
         }
       } else state := State.idle
     }
