@@ -4213,6 +4213,549 @@ index c5a4cd8..9bcc95b 100644
    case class PaletteWrite() extends Bundle {
      val address = UInt(8 bits)
      val data = Bits(24 bits)
+diff --git a/src/voodoo/frontend/SetupEngine.scala b/src/voodoo/frontend/SetupEngine.scala
+new file mode 100644
+index 0000000..43d9008
+--- /dev/null
++++ b/src/voodoo/frontend/SetupEngine.scala
+@@ -0,0 +1,537 @@
++package voodoo.frontend
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo.math._
++
++/** Voodoo 2 triangle setup engine (sSetupMode, sVx ... sT1, sDrawTriCMD,
++  * sBeginTriCMD at 0x260-0x2a4).
++  *
++  * Sits on the register bus between AddressRemapper and the PCI FIFO. Writes
++  * to the setup registers are consumed: they load a staging vertex, and
++  * sBeginTriCMD / sDrawTriCMD move it into one of three vertex slots (strip:
++  * replace the oldest, fan: the second oldest, as 86Box's
++  * vid_voodoo_reg.c). Once three vertices are in, the engine computes the
++  * triangle as 86Box's voodoo_triangle_setup does (sort by y, area, cull,
++  * per-parameter dP/dX and dP/dY in float) and sends it on as ordinary
++  * float-register writes (fvertexAx ... fdWdY, chip-select tagged per TMU)
++  * plus triangleCMD, so the PCI FIFO's float conversion and everything
++  * after it are unchanged. Reads of 0x280-0x29c still return the perf
++  * counters (setup registers are write-only).
++  *
++  * The arithmetic runs on one pipelined FP32 multiplier and one adder (plus
++  * a move path and a reciprocal seed) from a static schedule built at
++  * elaboration (SetupEngineProgram); results flagged as outputs go to a
++  * 64-entry write FIFO. Everything else on the bus passes through, in order:
++  * a write or read is only forwarded once the engine is idle and its
++  * output FIFO has drained.
++  */
++case class SetupEngine(p: BmbParameter) extends Component {
++  import SetupEngineProgram._
++
++  val io = new Bundle {
++    val input = slave(Bmb(p))
++    val output = master(Bmb(p))
++    val busy = out Bool ()
++    val triangles = out UInt (32 bits) // triangles sent (after cull)
++  }
++
++  // ---------------------------------------------------------------------
++  // Program (static schedule) and output map.
++  // ---------------------------------------------------------------------
++  val prog = SetupEngineProgram.compiled
++  val romLen = prog.length
++  val pcWidth = log2Up(romLen + 16)
++
++  case class SrcSel() extends Bundle {
++    val kind = UInt(2 bits) // 0 vertex, 1 temp, 2 constant 2.0
++    val v = UInt(2 bits)
++    val idx = UInt(4 bits)
++    val tmp = UInt(5 bits)
++  }
++  case class DstSel() extends Bundle {
++    val isOut = Bool()
++    val id = UInt(6 bits) // temp id or output id
++  }
++  case class RomEntry() extends Bundle {
++    val mulV, addV, movV, seedV = Bool()
++    val mulA, mulB, addA, addB, movA, seedA = SrcSel()
++    val addNeg = Bool()
++    val mulD, addD, movD, seedD = DstSel()
++  }
++  def srcLit(s: Option[Src]): SrcSel = {
++    val (kind, v, idx, tmp) = s match {
++      case Some(Vtx(vv, i)) => (0, vv, i, 0)
++      case Some(Tmp(id)) => (1, 0, 0, id)
++      case Some(Two) => (2, 0, 0, 0)
++      case None => (0, 0, 0, 0)
++    }
++    val r = SrcSel()
++    r.kind := kind; r.v := v; r.idx := idx; r.tmp := tmp
++    r
++  }
++  def dstLit(d: Option[Dst]): DstSel = {
++    val (isOut, id) = d match {
++      case Some(DTmp(i)) => (false, i)
++      case Some(DOut(o)) => (true, o)
++      case None => (false, 0)
++    }
++    val r = DstSel()
++    r.isOut := Bool(isOut); r.id := id
++    r
++  }
++  val rom = Vec(prog.map { c =>
++    val e = RomEntry()
++    e.mulV := Bool(c.mul.isDefined); e.addV := Bool(c.add.isDefined)
++    e.movV := Bool(c.mov.isDefined); e.seedV := Bool(c.seed.isDefined)
++    e.mulA := srcLit(c.mul.map(_.a)); e.mulB := srcLit(c.mul.flatMap(_.b))
++    e.addA := srcLit(c.add.map(_.a)); e.addB := srcLit(c.add.flatMap(_.b))
++    e.movA := srcLit(c.mov.map(_.a)); e.seedA := srcLit(c.seed.map(_.a))
++    e.addNeg := Bool(c.add.exists(_.neg))
++    e.mulD := dstLit(c.mul.map(_.dst)); e.addD := dstLit(c.add.map(_.dst))
++    e.movD := dstLit(c.mov.map(_.dst)); e.seedD := dstLit(c.seed.map(_.dst))
++    e
++  })
++
++  // ---------------------------------------------------------------------
++  // State.
++  // ---------------------------------------------------------------------
++  object St extends SpinalEnum { val idle, copy, sort, run, finish = newElement() }
++  val state = RegInit(St.idle)
++  val mode = Reg(Bits(20 bits)) init (0)
++  val stage = Vec(Reg(Bits(32 bits)) init (0), vertexParams)
++  val ram = Seq.fill(5)(Mem(Bits(32 bits), 64)) // mulA, mulB, addA, addB, mov
++  val slotY = Vec(Reg(Bits(32 bits)) init (0), 3)
++  val order = Vec(Reg(UInt(2 bits)) init (0), 3) // slots, oldest first
++  val filled = Reg(UInt(2 bits)) init (0)       // vertex_next_age, saturating at 3
++  val numVerts = Reg(UInt(2 bits)) init (0)
++  val pingpong = RegInit(False)
++  val copySlot = Reg(UInt(2 bits)) init (0)
++  val copyIdx = Reg(UInt(4 bits)) init (0)
++  val copyThenTri = RegInit(False)
++  val perm = Vec(Reg(UInt(2 bits)) init (0), 3) // logical A, B, C -> slot
++  val parity = RegInit(False)
++  val kill = RegInit(False)
++  val triSign = RegInit(False)
++  val pc = Reg(UInt(pcWidth bits)) init (0)
++  val triangles = Reg(UInt(32 bits)) init (0)
++  io.triangles := triangles
++
++  // Output write FIFO (engine-generated register writes).
++  case class OutWrite() extends Bundle {
++    val addr = UInt(p.access.addressWidth bits)
++    val data = Bits(32 bits)
++  }
++  val outFifo = StreamFifo(OutWrite(), 64)
++  outFifo.io.push.valid := False
++  outFifo.io.push.payload.assignDontCare()
++
++  // ---------------------------------------------------------------------
++  // Bus: decode, pass-through, response ownership.
++  // ---------------------------------------------------------------------
++  val cmd = io.input.cmd
++  val off = cmd.address(9 downto 0)
++  val isWrite = cmd.opcode === Bmb.Cmd.Opcode.WRITE
++  val isSetup = isWrite && off >= 0x260 && off <= 0x2a4
++  // Responses owed upstream for commands sent downstream (true) or dropped
++  // (engine writes, false), in order.
++  val owner = StreamFifo(Bool(), 8)
++  val localRsp = RegInit(False)
++  val localSource = Reg(UInt(p.access.sourceWidth bits))
++  val idleNoOut = state === St.idle && outFifo.io.occupancy === 0 && !outFifo.io.pop.valid
++
++  val passValid = cmd.valid && !isSetup && idleNoOut
++  val engineValid = outFifo.io.pop.valid
++  io.output.cmd.valid := (passValid || engineValid) && owner.io.push.ready
++  when(engineValid) {
++    io.output.cmd.opcode := Bmb.Cmd.Opcode.WRITE
++    io.output.cmd.address := outFifo.io.pop.addr
++    io.output.cmd.data := outFifo.io.pop.data
++    io.output.cmd.mask := B"1111"
++    io.output.cmd.length := 3
++    io.output.cmd.last := True
++    io.output.cmd.source := 0
++  } otherwise {
++    io.output.cmd.opcode := cmd.opcode
++    io.output.cmd.address := cmd.address
++    io.output.cmd.data := cmd.data
++    io.output.cmd.mask := cmd.mask
++    io.output.cmd.length := cmd.length
++    io.output.cmd.last := cmd.last
++    io.output.cmd.source := cmd.source
++  }
++  if (p.access.contextWidth > 0) io.output.cmd.context := cmd.context
++  outFifo.io.pop.ready := engineValid && io.output.cmd.ready && owner.io.push.ready
++  owner.io.push.valid := io.output.cmd.fire
++  owner.io.push.payload := !engineValid
++
++  val takeSetup = cmd.valid && isSetup && state === St.idle && owner.io.occupancy === 0 &&
++    !owner.io.pop.valid && !localRsp && !outFifo.io.pop.valid
++  cmd.ready := (passValid && !engineValid && io.output.cmd.ready && owner.io.push.ready) || takeSetup
++
++  when(takeSetup) {
++    localRsp := True
++    localSource := cmd.source
++  }
++  io.input.rsp.valid := False
++  io.input.rsp.last := True
++  io.input.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
++  io.input.rsp.source := localSource
++  io.input.rsp.data := 0
++  if (p.access.contextWidth > 0) io.input.rsp.context := 0
++  io.output.rsp.ready := False
++  owner.io.pop.ready := False
++  when(localRsp) {
++    io.input.rsp.valid := True
++    when(io.input.rsp.ready) { localRsp := False }
++  } elsewhen (io.output.rsp.valid && owner.io.pop.valid) {
++    when(owner.io.pop.payload) {
++      io.input.rsp.valid := True
++      io.input.rsp.payload := io.output.rsp.payload
++      io.output.rsp.ready := io.input.rsp.ready
++      owner.io.pop.ready := io.input.rsp.ready
++    } otherwise {
++      io.output.rsp.ready := True // engine write: drop
++      owner.io.pop.ready := True
++    }
++  }
++
++  // ---------------------------------------------------------------------
++  // Setup register writes.
++  // ---------------------------------------------------------------------
++  def byteToFloat(b: Bits): Bits = {
++    val v = b.asUInt
++    val lz = SetupFp.lzc(v) // 0..8
++    val norm = (v |<< lz).resize(8 bits) // leading one at bit 7
++    val r = Bits(32 bits)
++    when(v === 0) { r := 0 } otherwise {
++      r := B"0" ## (U(134, 8 bits) - lz.resize(8 bits)) ## norm(6 downto 0) ## B(0, 16 bits)
++    }
++    r
++  }
++  val writeData = cmd.data
++  def startCopy(slot: UInt, tri: Bool): Unit = {
++    copySlot := slot
++    copyIdx := 0
++    copyThenTri := tri
++    state := St.copy
++  }
++  when(takeSetup) {
++    switch(off) {
++      is(0x260) { mode := writeData(19 downto 0) }
++      is(0x264) { stage(0) := writeData }
++      is(0x268) { stage(1) := writeData }
++      is(0x26c) {
++        stage(2) := byteToFloat(writeData(23 downto 16))
++        stage(3) := byteToFloat(writeData(15 downto 8))
++        stage(4) := byteToFloat(writeData(7 downto 0))
++        stage(5) := byteToFloat(writeData(31 downto 24))
++      }
++      for ((a, i) <- Seq(0x270, 0x274, 0x278, 0x27c, 0x280, 0x284, 0x288, 0x28c, 0x290, 0x294, 0x298, 0x29c).zipWithIndex)
++        is(a) { stage(i + 2) := writeData }
++      is(0x2a4) { // sBeginTriCMD
++        filled := 1
++        order(0) := 0
++        numVerts := 1
++        pingpong := False
++        startCopy(U(0, 2 bits), False)
++      }
++      is(0x2a0) { // sDrawTriCMD
++        val slot = UInt(2 bits)
++        when(filled =/= 3) {
++          slot := filled
++          order(filled) := filled
++          filled := filled + 1
++        } otherwise {
++          when(!mode(16)) { // strip: replace the oldest
++            slot := order(0)
++            order(0) := order(1); order(1) := order(2); order(2) := order(0)
++          } otherwise { // fan: replace the second oldest
++            slot := order(1)
++            order(1) := order(2); order(2) := order(1)
++          }
++        }
++        val n = numVerts + 1
++        val tri = n === 3
++        numVerts := Mux(tri, U(2, 2 bits), n)
++        startCopy(slot, tri)
++      }
++    }
++  }
++
++  // Copy the staging vertex into its slot (all RAM copies), one value a cycle.
++  val ramWrite = state === St.copy
++  val ramAddr = (copySlot @@ copyIdx).resize(6 bits)
++  val ramData = stage(copyIdx.resized)
++  for (m <- ram) m.write(ramAddr, ramData, ramWrite)
++  when(state === St.copy) {
++    when(copyIdx === 1) { slotY(copySlot) := ramData }
++    copyIdx := copyIdx + 1
++    when(copyIdx === vertexParams - 1) {
++      state := Mux(copyThenTri, St.sort, St.idle)
++    }
++  }
++
++  // ---------------------------------------------------------------------
++  // Sort by y (86Box's branch order) -> logical A, B, C.
++  // ---------------------------------------------------------------------
++  def key(f: Bits): UInt = Mux(f(31), ~f.asUInt, f.asUInt | U(0x80000000L, 32 bits))
++  def less(a: Bits, b: Bits): Bool = key(a) < key(b)
++  when(state === St.sort) {
++    val c01 = less(slotY(0), slotY(1))
++    val c12 = less(slotY(1), slotY(2))
++    val c02 = less(slotY(0), slotY(2))
++    def setPerm(a: Int, b: Int, c: Int, odd: Boolean): Unit = {
++      perm(0) := a; perm(1) := b; perm(2) := c; parity := Bool(odd)
++    }
++    when(c01) {
++      when(c12) { setPerm(0, 1, 2, false) } elsewhen (c02) { setPerm(0, 2, 1, true) } otherwise { setPerm(2, 0, 1, false) }
++    } otherwise {
++      when(c12) {
++        when(c02) { setPerm(1, 0, 2, true) } otherwise { setPerm(1, 2, 0, false) }
++      } otherwise { setPerm(2, 1, 0, true) }
++    }
++    kill := False
++    pc := 0
++    state := St.run
++  }
++
++  // ---------------------------------------------------------------------
++  // Datapath.
++  // ---------------------------------------------------------------------
++  val temps = Vec(Reg(Bits(32 bits)) init (0), SetupEngineProgram.tempCount.max(1))
++  val running = state === St.run && pc < romLen
++  val entry = rom(pc.resize(log2Up(romLen) bits))
++  def ramAddrOf(s: SrcSel): UInt = (perm(s.v.resized) @@ s.idx).resize(6 bits)
++  def read(s: SrcSel, port: Int): Bits = {
++    val r = Bits(32 bits)
++    switch(s.kind) {
++      is(0) { r := ram(port).readAsync(ramAddrOf(s)) }
++      is(1) { r := temps(s.tmp.resized) }
++      default { r := B(0x40000000L, 32 bits) } // 2.0f
++    }
++    r
++  }
++  val mul = SetupFpMul(DstSel())
++  mul.io.valid := running && entry.mulV
++  mul.io.a := read(entry.mulA, 0); mul.io.b := read(entry.mulB, 1); mul.io.tag := entry.mulD
++  val add = SetupFpAdd(DstSel())
++  add.io.valid := running && entry.addV
++  add.io.a := read(entry.addA, 2); add.io.b := read(entry.addB, 3)
++  add.io.negB := entry.addNeg; add.io.tag := entry.addD
++  // Move (latency 1) and reciprocal seed (latency 1).
++  val movValid = RegNext(running && entry.movV) init (False)
++  val movData = RegNext(read(entry.movA, 4))
++  val movTag = RegNext(entry.movD)
++  val seedValid = RegNext(running && entry.seedV) init (False)
++  val seedData = RegNext(SetupFpRecip.seed(temps(entry.seedA.tmp.resized)))
++  val seedTag = RegNext(entry.seedD)
++  when(state === St.run) { pc := pc + 1 }
++
++  def toTemp(v: Bool, d: DstSel, data: Bits): Unit =
++    when(v && !d.isOut) { temps(d.id.resized) := data }
++  toTemp(mul.io.outValid, mul.io.outTag, mul.io.result)
++  toTemp(add.io.outValid, add.io.outTag, add.io.result)
++  toTemp(movValid, movTag, movData)
++  toTemp(seedValid, seedTag, seedData)
++
++  // The area result: zero area or culled kills the triangle.
++  // (Its completion cycle is fixed by the schedule; temp ids are reused.)
++  val areaDone = state === St.run && pc === SetupEngineProgram.areaDoneCycle
++  when(areaDone) {
++    val area = add.io.result
++    val sortedNeg = area(31)
++    val zero = area(30 downto 23) === 0
++    val unsortedNeg = sortedNeg ^ parity
++    val cullSign = Bool()
++    cullSign := mode(18)
++    when(mode(17) && !mode(19) && pingpong) { cullSign := !mode(18) }
++    val culled = mode(17) && (unsortedNeg === cullSign)
++    kill := zero || culled
++    triSign := sortedNeg
++  }
++
++  // Output id -> register address / enable.
++  def outAddr(id: UInt): (UInt, Bool) = {
++    val a = UInt(10 bits)
++    val tag = UInt(2 bits)
++    val en = Bool()
++    a := 0; tag := 1; en := False
++    switch(id) {
++      for (o <- 0 until outputCount) is(o) {
++        val m = SetupEngineProgram.outMap(o)
++        a := m.addr
++        m.cls match {
++          case "vtx" => en := True
++          case "rgb" => en := mode(0)
++          case "a" => en := mode(1)
++          case "z" => en := mode(2)
++          case "wb" => en := mode(3) && !mode(4); tag := Mux(mode(6), U(0, 2 bits), U(1, 2 bits))
++          case "w0" => en := mode(4); tag := Mux(mode(6), U(0, 2 bits), U(1, 2 bits))
++          case "st0" => en := mode(5); tag := Mux(mode(7), U(0, 2 bits), U(1, 2 bits))
++          case "w1" => en := mode(6); tag := 3
++          case "st1" => en := mode(7); tag := 3
++        }
++      }
++    }
++    ((tag @@ a).resize(p.access.addressWidth bits), en)
++  }
++  val outSrc = Seq((mul.io.outValid, mul.io.outTag, mul.io.result), (add.io.outValid, add.io.outTag, add.io.result),
++    (movValid, movTag, movData))
++  // The schedule never completes two outputs in one cycle.
++  for ((v, t, d) <- outSrc) when(v && t.isOut) {
++    val (a, en) = outAddr(t.id)
++    outFifo.io.push.valid := en && !kill
++    outFifo.io.push.addr := a
++    outFifo.io.push.data := d
++  }
++
++  when(state === St.run && pc === romLen + 7) { state := St.finish }
++  when(state === St.finish) {
++    when(!kill) {
++      outFifo.io.push.valid := True
++      outFifo.io.push.addr := U(0x480, p.access.addressWidth bits) // triangleCMD, both banks
++      outFifo.io.push.data := triSign ## B(0, 31 bits)
++      triangles := triangles + 1
++    }
++    pingpong := !pingpong
++    state := St.idle
++  }
++
++  io.busy := state =/= St.idle || outFifo.io.occupancy =/= 0
++}
++
++/** The setup computation as a static schedule for one multiplier (latency
++  * 3), one adder (5), a move path (1) and a reciprocal seed (1).
++  */
++object SetupEngineProgram {
++  // Staging / slot value order.
++  val vertexParams = 14 // X, Y, R, G, B, A, Z, Wb, W0, S0, T0, W1, S1, T1
++  sealed trait Src
++  case class Vtx(v: Int, idx: Int) extends Src
++  case class Tmp(id: Int) extends Src
++  case object Two extends Src
++  sealed trait Dst
++  case class DTmp(id: Int) extends Dst
++  case class DOut(o: Int) extends Dst
++  case class Issue(a: Src, b: Option[Src], neg: Boolean, dst: Dst)
++  case class Cycle(mul: Option[Issue], add: Option[Issue], mov: Option[Issue], seed: Option[Issue])
++
++  case class OutDef(addr: Int, cls: String)
++  // Outputs 0-5 vertices, then per parameter start / dX / dY.
++  private val paramRegs = Seq(
++    (0xa0, "rgb"), (0xa4, "rgb"), (0xa8, "rgb"), (0xb0, "a"), (0xac, "z"), (0xbc, "wb"),
++    (0xbc, "w0"), (0xb4, "st0"), (0xb8, "st0"), (0xbc, "w1"), (0xb4, "st1"), (0xb8, "st1"))
++  val outMap: Seq[OutDef] =
++    Seq(0x088, 0x08c, 0x090, 0x094, 0x098, 0x09c).map(OutDef(_, "vtx")) ++
++      paramRegs.flatMap { case (s, c) => Seq(OutDef(s, c), OutDef(s + 0x20, c), OutDef(s + 0x40, c)) }
++  val outputCount = outMap.length
++
++  // Symbolic program.
++  private case class SOp(unit: Int, a: SSrc, b: Option[SSrc], neg: Boolean, dst: String, out: Int, after: Seq[String])
++  private sealed trait SSrc
++  private case class SV(v: Int, idx: Int) extends SSrc
++  private case class ST(name: String) extends SSrc
++  private case object S2 extends SSrc
++  private val MUL = 0; private val ADD = 1; private val MOV = 2; private val SEED = 3
++  private val lat = Array(3, 5, 1, 1)
++  val X = 0; val Y = 1
++
++  private def program: Seq[SOp] = {
++    val ops = scala.collection.mutable.ArrayBuffer[SOp]()
++    def sub(d: String, a: SSrc, b: SSrc, out: Int = -1, after: Seq[String] = Nil) = ops += SOp(ADD, a, Some(b), true, d, out, after)
++    def mul(d: String, a: SSrc, b: SSrc) = ops += SOp(MUL, a, Some(b), false, d, -1, Nil)
++    val A = 0; val B = 1; val C = 2
++    sub("dxAB", SV(A, X), SV(B, X)); sub("dxBC", SV(B, X), SV(C, X))
++    sub("dyAB", SV(A, Y), SV(B, Y)); sub("dyBC", SV(B, Y), SV(C, Y))
++    mul("t1", ST("dxAB"), ST("dyBC")); mul("t2", ST("dxBC"), ST("dyAB"))
++    sub("area", ST("t1"), ST("t2"))
++    ops += SOp(SEED, ST("area"), None, false, "x0", -1, Nil)
++    mul("e1", ST("area"), ST("x0")); sub("f1", S2, ST("e1")); mul("x1", ST("x0"), ST("f1"))
++    mul("e2", ST("area"), ST("x1")); sub("f2", S2, ST("e2")); mul("inv", ST("x1"), ST("f2"))
++    mul("sdxAB", ST("dxAB"), ST("inv")); mul("sdxBC", ST("dxBC"), ST("inv"))
++    mul("sdyAB", ST("dyAB"), ST("inv")); mul("sdyBC", ST("dyBC"), ST("inv"))
++    // Vertices (after the area so a killed triangle sends nothing).
++    for ((v, i) <- Seq((A, X), (A, Y), (B, X), (B, Y), (C, X), (C, Y)).zipWithIndex)
++      ops += SOp(MOV, SV(v._1, v._2), None, false, "", i, Seq("area"))
++    for (j <- 0 until 12) {
++      val k = j + 2
++      val o = 6 + 3 * j
++      ops += SOp(MOV, SV(A, k), None, false, "", o, Seq("area"))
++      sub(s"d1_$j", SV(A, k), SV(B, k)); sub(s"d2_$j", SV(B, k), SV(C, k))
++      mul(s"m1_$j", ST(s"d1_$j"), ST("sdyBC")); mul(s"m2_$j", ST(s"d2_$j"), ST("sdyAB"))
++      sub("", ST(s"m1_$j"), ST(s"m2_$j"), o + 1)
++      mul(s"m3_$j", ST(s"d2_$j"), ST("sdxAB")); mul(s"m4_$j", ST(s"d1_$j"), ST("sdxBC"))
++      sub("", ST(s"m3_$j"), ST(s"m4_$j"), o + 2)
++    }
++    ops.toSeq
++  }
++
++  // List scheduling with critical-path priority, then temp allocation.
++  lazy val (compiled: Seq[Cycle], tempCount: Int, areaDoneCycle: Int) = {
++    val ops = program
++    val n = ops.length
++    val producer = ops.zipWithIndex.filter(_._1.dst.nonEmpty).map { case (o, i) => o.dst -> i }.toMap
++    def deps(o: SOp): Seq[Int] = (Seq(o.a) ++ o.b).collect { case ST(nm) => producer(nm) } ++ o.after.map(producer)
++    val succ = Array.fill(n)(scala.collection.mutable.ArrayBuffer[Int]())
++    for ((o, i) <- ops.zipWithIndex; d <- deps(o)) succ(d) += i
++    val prio = Array.fill(n)(-1)
++    def p(i: Int): Int = {
++      if (prio(i) < 0) prio(i) = lat(ops(i).unit) + 1 + (if (succ(i).isEmpty) 0 else succ(i).map(p).max)
++      prio(i)
++    }
++    (0 until n).foreach(p)
++    val issueAt = Array.fill(n)(-1)
++    val readyAt = Array.fill(n)(Int.MaxValue) // when the result can be read
++    val outCycles = scala.collection.mutable.Set[Int]()
++    var t = 0
++    var left = n
++    while (left > 0) {
++      for (u <- 0 until 4) {
++        val cands = (0 until n).filter { i =>
++          issueAt(i) < 0 && ops(i).unit == u && deps(ops(i)).forall(d => issueAt(d) >= 0 && readyAt(d) <= t) &&
++          (ops(i).out < 0 || !outCycles.contains(t + lat(u)))
++        }
++        if (cands.nonEmpty) {
++          val i = cands.maxBy(c => (prio(c), -c))
++          issueAt(i) = t
++          readyAt(i) = t + lat(u) + 1
++          if (ops(i).out >= 0) outCycles += t + lat(u)
++          left -= 1
++        }
++      }
++      t += 1
++      require(t < 2000, "setup schedule did not converge")
++    }
++    val len = issueAt.max + 1
++    // Temp lifetimes: written at completion, last read at the latest
++    // consumer's issue.
++    val named = (0 until n).filter(i => ops(i).dst.nonEmpty)
++    val start = named.map(i => i -> (issueAt(i) + lat(ops(i).unit))).toMap
++    val end = named.map(i => i -> (succ(i).map(issueAt).foldLeft(start(i))(scala.math.max))).toMap
++    val regOf = scala.collection.mutable.Map[Int, Int]()
++    val busyUntil = scala.collection.mutable.ArrayBuffer[Int]()
++    for (i <- named.sortBy(start)) {
++      val free = busyUntil.indexWhere(_ < start(i))
++      val r = if (free >= 0) free else { busyUntil += 0; busyUntil.length - 1 }
++      busyUntil(r) = end(i)
++      regOf(i) = r
++    }
++    require(busyUntil.length <= 32, s"setup schedule needs ${busyUntil.length} temps")
++    def src(s: SSrc): Src = s match {
++      case SV(v, k) => Vtx(v, k)
++      case ST(nm) => Tmp(regOf(producer(nm)))
++      case S2 => Two
++    }
++    def dst(i: Int): Dst = if (ops(i).out >= 0) DOut(ops(i).out) else DTmp(regOf(i))
++    val cycles = (0 until len).map { c =>
++      def at(u: Int): Option[Issue] = (0 until n).find(i => issueAt(i) == c && ops(i).unit == u).map { i =>
++        Issue(src(ops(i).a), ops(i).b.map(src), ops(i).neg, dst(i))
++      }
++      Cycle(at(MUL), at(ADD), at(MOV), at(SEED))
++    }
++    val areaOp = producer("area")
++    (cycles, busyUntil.length, issueAt(areaOp) + lat(ops(areaOp).unit))
++  }
++}
 diff --git a/src/voodoo/frontend/SwapBuffer.scala b/src/voodoo/frontend/SwapBuffer.scala
 index 8da950d..4ee5a39 100644
 --- a/src/voodoo/frontend/SwapBuffer.scala
@@ -4663,7 +5206,7 @@ index de14d02..4b945ff 100644
    io.status.y := BufferCC(hdmi.scan.io.y.resize(10 bits), U(0, 10 bits))
 diff --git a/src/voodoo/math/SetupFp.scala b/src/voodoo/math/SetupFp.scala
 new file mode 100644
-index 0000000..83759e0
+index 0000000..338f384
 --- /dev/null
 +++ b/src/voodoo/math/SetupFp.scala
 @@ -0,0 +1,191 @@
@@ -4821,7 +5364,7 @@ index 0000000..83759e0
 +  val carry = sum3(27)
 +  val lz = lzc(sum3(26 downto 0)) // 0..27
 +  val isZero = sum3 === 0
-+  val normCarry = (sum3 >> 1) | (sum3(0).asUInt.resize(28 bits))
++  val normCarry = (sum3 >> 1).resize(28 bits) | sum3(0).asUInt.resize(28 bits)
 +  val normLeft = (sum3 |<< lz).resize(28 bits)
 +  val v4 = RegNext(v3) init (False)
 +  val t4 = RegNext(t3); val xs4 = RegNext(xs3)
@@ -4847,7 +5390,7 @@ index 0000000..83759e0
 +  def tableValue(i: Int): BigInt = {
 +    val f = (i + 0.5) / (1 << tableBits)
 +    val v = 2.0 / (1.0 + f) - 1.0 // (0, 1)
-+    BigInt(math.min((1 << 23) - 1, math.round(v * (1 << 23)).toInt))
++    BigInt(scala.math.min((1 << 23) - 1, scala.math.round(v * (1 << 23)).toInt))
 +  }
 +  def seed(a: Bits): Bits = {
 +    val table = Vec((0 until (1 << tableBits)).map(i => U(tableValue(i), 23 bits)))
