@@ -4643,10 +4643,10 @@ index c5a4cd8..9bcc95b 100644
      val data = Bits(24 bits)
 diff --git a/src/voodoo/frontend/SetupEngine.scala b/src/voodoo/frontend/SetupEngine.scala
 new file mode 100644
-index 0000000..feb984d
+index 0000000..d37f1c9
 --- /dev/null
 +++ b/src/voodoo/frontend/SetupEngine.scala
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,551 @@
 +package voodoo.frontend
 +
 +import spinal.core._
@@ -4690,6 +4690,8 @@ index 0000000..feb984d
 +  // Program (static schedule) and output map.
 +  // ---------------------------------------------------------------------
 +  val prog = SetupEngineProgram.compiled
++  require(prog.forall(c => c.mul.forall(i => (Seq(i.a) ++ i.b).forall(_.isInstanceOf[Tmp]))), "mul reads temps only")
++  require(prog.forall(c => c.mov.forall(_.a.isInstanceOf[Vtx])), "mov reads vertices only")
 +  val romLen = prog.length
 +  val pcWidth = log2Up(romLen + 16)
 +
@@ -4753,7 +4755,7 @@ index 0000000..feb984d
 +  val state = RegInit(St.idle)
 +  val mode = Reg(Bits(20 bits)) init (0)
 +  val stage = Vec(Reg(Bits(32 bits)) init (0), vertexParams)
-+  val ram = Seq.fill(5)(Mem(Bits(32 bits), 64)) // mulA, mulB, addA, addB, mov
++  val ram = Seq.fill(3)(Mem(Bits(32 bits), 64)) // addA, addB, mov
 +  val slotY = Vec(Reg(Bits(32 bits)) init (0), 3)
 +  val order = Vec(Reg(UInt(2 bits)) init (0), 3) // slots, oldest first
 +  val filled = Reg(UInt(2 bits)) init (0)       // vertex_next_age, saturating at 3
@@ -4967,17 +4969,21 @@ index 0000000..feb984d
 +    val kindR = RegNext(s.kind)
 +    Mux(kindR === 0, ramOut, other)
 +  }
++  // Multiplies only read temps and moves only vertex values (the program
++  // never does otherwise), so those ports skip the other source.
++  def readTemp(s: SrcSel): Bits = RegNext(temps(s.tmp.resized))
++  def readVertex(s: SrcSel, port: Int): Bits = ram(port).readSync(ramAddrOf(s))
 +  val mul = SetupFpMul(DstSel())
 +  mul.io.valid := RegNext(running && entry.mulV) init (False)
-+  mul.io.a := readReg(entry.mulA, 0); mul.io.b := readReg(entry.mulB, 1)
++  mul.io.a := readTemp(entry.mulA); mul.io.b := readTemp(entry.mulB)
 +  mul.io.tag := RegNext(entry.mulD)
 +  val add = SetupFpAdd(DstSel())
 +  add.io.valid := RegNext(running && entry.addV) init (False)
-+  add.io.a := readReg(entry.addA, 2); add.io.b := readReg(entry.addB, 3)
++  add.io.a := readReg(entry.addA, 0); add.io.b := readReg(entry.addB, 1)
 +  add.io.negB := RegNext(entry.addNeg); add.io.tag := RegNext(entry.addD)
 +  // Move and reciprocal seed (operand register + output register).
 +  val movValid = RegNext(RegNext(running && entry.movV) init (False)) init (False)
-+  val movData = RegNext(readReg(entry.movA, 4))
++  val movData = RegNext(readVertex(entry.movA, 2))
 +  val movTag = RegNext(RegNext(entry.movD))
 +  val seedValid = RegNext(RegNext(running && entry.seedV) init (False)) init (False)
 +  val seedIn = RegNext(temps(entry.seedA.tmp.resized))
