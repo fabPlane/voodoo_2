@@ -1152,7 +1152,7 @@ index 1b34fa2..33fb386 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..19f02a9 100644
+index 100f1c6..0ecd5e4 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -1,5 +1,7 @@
@@ -1342,11 +1342,13 @@ index 100f1c6..19f02a9 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -200,9 +262,50 @@ case class Core(c: Config) extends Component {
+@@ -199,10 +261,51 @@ case class Core(c: Config) extends Component {
+   hdmiScanout.io.hdmiClock := io.hdmi.clock
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
-   regBank.io.statistics := pixelPipeline.io.stats
+-  regBank.io.statistics := pixelPipeline.io.stats
 -  regBank.io.debug := pixelPipeline.io.debug
++  regBank.io.statistics := RegNext(pixelPipeline.io.stats) // registered: far from the read mux
 +  // Pipeline debug plus the framebuffer readers' state (hwDebugRegs 0x260+).
 +  val regDebug = voodoo.core.CoreDebug()
 +  regDebug := pixelPipeline.io.debug
@@ -1376,12 +1378,12 @@ index 100f1c6..19f02a9 100644
 +    // 27: cycles a Sync=Yes / texture write waits at the FIFO head for the
 +    // pipeline to drain (was post-TMU queue full, always 0).
 +    val syncWaitCycles = Reg(UInt(32 bits)) init (0)
-+    when(pciFifo.io.syncWait) { syncWaitCycles := syncWaitCycles + 1 }
++    when(RegNext(pciFifo.io.syncWait) init (False)) { syncWaitCycles := syncWaitCycles + 1 }
 +    regDebug.perf(27) := syncWaitCycles
 +    // 12: PCI FIFO under 64 free (the host is about to wait for room); was
 +    // the read-hazard guard hold, ~0% since B92.
 +    val fifoNearlyFull = Reg(UInt(32 bits)) init (0)
-+    when(pciFifo.io.pciFifoFree < 64) { fifoNearlyFull := fifoNearlyFull + 1 }
++    when(RegNext(pciFifo.io.pciFifoFree < 64) init (False)) { fifoNearlyFull := fifoNearlyFull + 1 }
 +    regDebug.perf(12) := fifoNearlyFull
 +  }
 +  regBank.io.debug := regDebug
@@ -2700,7 +2702,7 @@ index c23fa0b..e73df10 100644
    io.stats.memAuxWriteBlockedCycles := memAuxWriteBlockedCycles
    io.stats.memColorReadBlockedCycles := (if (useCachedReaders) memColorReadBlockedCycles
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..138ce01 100644
+index 7797711..e1fb041 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,8 @@ object PixelPipeline {
@@ -3203,7 +3205,7 @@ index 7797711..138ce01 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +1013,48 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +1013,49 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -3213,7 +3215,8 @@ index 7797711..138ce01 100644
 +  val rasterIdleNoTriangle = !rasterizer.running && !triangleSetup.busy && !triangleSetup.o.valid
 +  private def cycleCounter(cond: Bool): UInt = {
 +    val r = Reg(UInt(32 bits)) init (0)
-+    when(cond) { r := r + 1 }
++    // Condition registered: several are wide ORs across the pipeline.
++    when(RegNext(cond) init (False)) { r := r + 1 }
 +    r
 +  }
 +  val perfOwn: Map[Int, UInt] =
@@ -4083,7 +4086,7 @@ index aeba713..0c8673a 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..9bcc95b 100644
+index c5a4cd8..cb8476e 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -51,7 +51,7 @@ case class RegisterBank(config: Config) extends Component {
@@ -4481,7 +4484,7 @@ index c5a4cd8..9bcc95b 100644
      val fbiInit2_swapAlgorithm = fbiInit2Reg
        .fieldAt(
          9,
-@@ -1095,13 +1100,34 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1100,36 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -4511,13 +4514,15 @@ index c5a4cd8..9bcc95b 100644
 +        val r = busif
 +          .newRegAt(0x280 + 4 * i, s"perfCounter$i")
 +          .field(UInt(32 bits), AccessType.RO, 0, "Performance counter")
-+        r := io.debug.perf(i)
++        // Registered here: the counters sit all over the die, and their wires
++        // straight into the read mux were the worst clk_core paths (B177).
++        r := RegNext(io.debug.perf(i))
 +      }
 +    }
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1146,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1148,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -4526,7 +4531,7 @@ index c5a4cd8..9bcc95b 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1158,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1160,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -4535,7 +4540,7 @@ index c5a4cd8..9bcc95b 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1218,64 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1220,64 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -4615,7 +4620,7 @@ index c5a4cd8..9bcc95b 100644
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
-@@ -1250,6 +1321,25 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1250,6 +1323,25 @@ case class RegisterBank(config: Config) extends Component {
  }
  
  object RegisterBank {
