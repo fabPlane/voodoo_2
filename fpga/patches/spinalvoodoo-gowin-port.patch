@@ -4661,6 +4661,203 @@ index de14d02..4b945ff 100644
    io.status.active := BufferCC(hdmi.contentActive, False)
    io.status.x := BufferCC(hdmi.scan.io.x.resize(10 bits), U(0, 10 bits))
    io.status.y := BufferCC(hdmi.scan.io.y.resize(10 bits), U(0, 10 bits))
+diff --git a/src/voodoo/math/SetupFp.scala b/src/voodoo/math/SetupFp.scala
+new file mode 100644
+index 0000000..83759e0
+--- /dev/null
++++ b/src/voodoo/math/SetupFp.scala
+@@ -0,0 +1,191 @@
++package voodoo.math
++
++import spinal.core._
++import spinal.lib._
++
++/** Small IEEE-754 binary32 units for the Voodoo 2 triangle setup engine.
++  *
++  * Denormal inputs read as zero and denormal results flush to zero; results
++  * round to nearest even; overflow saturates to infinity. No NaN handling
++  * (setup inputs are finite). Each unit is a fixed-latency pipeline with an
++  * issue valid and a tag carried alongside the operands.
++  */
++object SetupFp {
++  case class Unpacked() extends Bundle {
++    val sign = Bool()
++    val exp = UInt(8 bits)
++    val mant = UInt(24 bits) // hidden bit included; 0 for zero / denormal
++    val zero = Bool()
++  }
++
++  def unpack(f: Bits): Unpacked = {
++    val u = Unpacked()
++    u.sign := f(31)
++    u.exp := f(30 downto 23).asUInt
++    u.zero := u.exp === 0
++    u.mant := Mux(u.zero, U(0, 24 bits), (True ## f(22 downto 0)).asUInt)
++    u
++  }
++
++  def pack(sign: Bool, exp: UInt, mant23: UInt): Bits = sign ## exp.resize(8 bits) ## mant23.resize(23 bits)
++
++  /** Round a normalised mantissa (hidden bit at the top of `mant`, then the
++    * 23 kept bits) given guard and sticky; exponent is signed and biased.
++    * Returns the packed float with flush-to-zero / saturation.
++    */
++  def roundPack(sign: Bool, expBiased: SInt, mant24: UInt, guard: Bool, sticky: Bool): Bits = {
++    val roundUp = guard && (sticky || mant24(0))
++    val m = (mant24.resize(25 bits) + roundUp.asUInt.resize(25 bits))
++    val carry = m(24)
++    val e2 = expBiased + Mux(carry, S(1, expBiased.getWidth bits), S(0, expBiased.getWidth bits))
++    val mant23 = Mux(carry, m(23 downto 1), m(22 downto 0))
++    val out = Bits(32 bits)
++    when(e2 <= 0) {
++      out := sign ## B(0, 31 bits)
++    } elsewhen (e2 >= 255) {
++      out := sign ## B"8'xff" ## B(0, 23 bits)
++    } otherwise {
++      out := pack(sign, e2.asUInt.resize(8 bits), mant23)
++    }
++    out
++  }
++
++  /** Leading-zero count of a value (counted from the MSB). */
++  def lzc(v: UInt): UInt = {
++    val w = v.getWidth
++    val r = UInt(log2Up(w + 1) bits)
++    r := w
++    for (i <- 0 until w) when(v(i)) { r := w - 1 - i } // highest set bit wins (last assignment)
++    r
++  }
++
++  def toFloat(f: Float): BigInt = BigInt(java.lang.Float.floatToRawIntBits(f).toLong & 0xffffffffL)
++}
++
++/** a * b, latency 3. */
++case class SetupFpMul[T <: Data](tagType: HardType[T]) extends Component {
++  import SetupFp._
++  val io = new Bundle {
++    val valid = in Bool ()
++    val a, b = in Bits (32 bits)
++    val tag = in(tagType())
++    val outValid = out Bool ()
++    val result = out Bits (32 bits)
++    val outTag = out(tagType())
++  }
++  // Stage 1: unpack, exponent sum.
++  val ua = unpack(io.a); val ub = unpack(io.b)
++  val v1 = RegNext(io.valid) init (False)
++  val t1 = RegNext(io.tag)
++  val s1 = RegNext(ua.sign ^ ub.sign)
++  val z1 = RegNext(ua.zero || ub.zero)
++  val e1 = RegNext(ua.exp.resize(10 bits).asSInt + ub.exp.resize(10 bits).asSInt - 127)
++  val ma1 = RegNext(ua.mant)
++  val mb1 = RegNext(ub.mant)
++  // Stage 2: mantissa product.
++  val v2 = RegNext(v1) init (False)
++  val t2 = RegNext(t1); val s2 = RegNext(s1); val z2 = RegNext(z1); val e2 = RegNext(e1)
++  val p2 = RegNext(ma1 * mb1) // 48 bits
++  // Stage 3: normalise, round, pack.
++  val top = p2(47)
++  val mant24 = Mux(top, p2(47 downto 24), p2(46 downto 23))
++  val guard = Mux(top, p2(23), p2(22))
++  val sticky = Mux(top, p2(22 downto 0).orR, p2(21 downto 0).orR)
++  val eN = e2 + Mux(top, S(1, 10 bits), S(0, 10 bits))
++  val packed = roundPack(s2, eN, mant24, guard, sticky)
++  io.outValid := RegNext(v2) init (False)
++  io.result := RegNext(Mux(z2, s2 ## B(0, 31 bits), packed))
++  io.outTag := RegNext(t2)
++}
++
++/** a + (negB ? -b : b), latency 5. */
++case class SetupFpAdd[T <: Data](tagType: HardType[T]) extends Component {
++  import SetupFp._
++  val io = new Bundle {
++    val valid = in Bool ()
++    val a, b = in Bits (32 bits)
++    val negB = in Bool ()
++    val tag = in(tagType())
++    val outValid = out Bool ()
++    val result = out Bits (32 bits)
++    val outTag = out(tagType())
++  }
++  // Stage 1: unpack, order by magnitude (x = larger).
++  val ua = unpack(io.a); val ub = unpack(io.b)
++  val bSign = ub.sign ^ io.negB
++  val aMag = io.a(30 downto 0).asUInt
++  val bMag = io.b(30 downto 0).asUInt
++  val swap = Mux(ub.zero, False, Mux(ua.zero, True, bMag > aMag))
++  val v1 = RegNext(io.valid) init (False)
++  val t1 = RegNext(io.tag)
++  val xs1 = RegNext(Mux(swap, bSign, ua.sign))
++  val xe1 = RegNext(Mux(swap, ub.exp, ua.exp))
++  val xm1 = RegNext(Mux(swap, ub.mant, ua.mant))
++  val ye1 = RegNext(Mux(swap, ua.exp, ub.exp))
++  val ym1 = RegNext(Mux(swap, ua.mant, ub.mant))
++  val sub1 = RegNext(ua.sign ^ bSign)
++  val bothZero1 = RegNext(ua.zero && ub.zero)
++  // Stage 2: align the smaller mantissa (3 extra bits: guard, round, sticky).
++  val d = (xe1 - ye1)
++  val yExt = (ym1 ## B"000").asUInt // 27 bits
++  val shifted = UInt(27 bits)
++  val stickyOut = Bool()
++  when(d >= 27) {
++    shifted := 0
++    stickyOut := ym1 =/= 0
++  } otherwise {
++    val dd = d.resize(5 bits)
++    shifted := yExt >> dd
++    val mask = ((U(1, 28 bits) |<< dd) - 1).resize(27 bits)
++    stickyOut := (yExt & mask) =/= 0
++  }
++  val v2 = RegNext(v1) init (False)
++  val t2 = RegNext(t1); val xs2 = RegNext(xs1); val xe2 = RegNext(xe1); val sub2 = RegNext(sub1)
++  val bz2 = RegNext(bothZero1)
++  val xm2 = RegNext((xm1 ## B"000").asUInt) // 27 bits
++  val ym2 = RegNext(shifted | stickyOut.asUInt.resize(27 bits))
++  // Stage 3: add / subtract (28 bits for the carry).
++  val v3 = RegNext(v2) init (False)
++  val t3 = RegNext(t2); val xs3 = RegNext(xs2); val xe3 = RegNext(xe2); val bz3 = RegNext(bz2)
++  val sum3 = RegNext(Mux(sub2, xm2.resize(28 bits) - ym2.resize(28 bits), xm2.resize(28 bits) + ym2.resize(28 bits)))
++  // Stage 4: normalise.
++  val carry = sum3(27)
++  val lz = lzc(sum3(26 downto 0)) // 0..27
++  val isZero = sum3 === 0
++  val normCarry = (sum3 >> 1) | (sum3(0).asUInt.resize(28 bits))
++  val normLeft = (sum3 |<< lz).resize(28 bits)
++  val v4 = RegNext(v3) init (False)
++  val t4 = RegNext(t3); val xs4 = RegNext(xs3)
++  val zero4 = RegNext(isZero || bz3)
++  val norm4 = RegNext(Mux(carry, normCarry, normLeft)) // hidden bit at bit 26
++  val e4 = RegNext(Mux(carry, xe3.resize(10 bits).asSInt + 1, xe3.resize(10 bits).asSInt - lz.resize(10 bits).asSInt))
++  // Stage 5: round and pack.
++  val mant24 = norm4(26 downto 3)
++  val guard = norm4(2)
++  val sticky = norm4(1) || norm4(0)
++  val packed = roundPack(xs4, e4, mant24, guard, sticky)
++  io.outValid := RegNext(v4) init (False)
++  io.result := RegNext(Mux(zero4, B(0, 32 bits), packed))
++  io.outTag := RegNext(t4)
++}
++
++object SetupFpRecip {
++  /** Seed for 1/a: sign of a, exponent 253 - e, mantissa from a 128-entry
++    * table of 2 / (1 + f) - 1 at each interval's midpoint (~2^-8 error, two
++    * Newton steps x' = x (2 - a x) bring it to float precision).
++    */
++  val tableBits = 7
++  def tableValue(i: Int): BigInt = {
++    val f = (i + 0.5) / (1 << tableBits)
++    val v = 2.0 / (1.0 + f) - 1.0 // (0, 1)
++    BigInt(math.min((1 << 23) - 1, math.round(v * (1 << 23)).toInt))
++  }
++  def seed(a: Bits): Bits = {
++    val table = Vec((0 until (1 << tableBits)).map(i => U(tableValue(i), 23 bits)))
++    val e = a(30 downto 23).asUInt
++    val idx = a(22 downto 23 - tableBits).asUInt
++    val m = table(idx)
++    val eOut = U(253, 9 bits) - e.resize(9 bits)
++    a(31) ## eOut.resize(8 bits) ## m
++  }
++}
 diff --git a/src/voodoo/pixel/ColorCombine.scala b/src/voodoo/pixel/ColorCombine.scala
 index 049fbed..7f10b67 100644
 --- a/src/voodoo/pixel/ColorCombine.scala
