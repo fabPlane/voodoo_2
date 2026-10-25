@@ -277,8 +277,10 @@ case class TangMega138kPro(c: Config) extends Component {
   // address per burst needs no more than every other cycle): with a full
   // pipe the adapter's ready still fed the skid buffer's enables, a common
   // failing ddr_clk_out path (B107 / B108).
+  // B registered too: auxWCc B ready -> CDC push pointers was the worst
+  // ddr_clk_out path in B178a (-2.4 ns).
   private def staged(a: Axi4): Axi4 =
-    a.pipelined(aw = StreamPipe.HALF, w = StreamPipe.FULL, b = StreamPipe.NONE, ar = StreamPipe.HALF, r = StreamPipe.FULL)
+    a.pipelined(aw = StreamPipe.HALF, w = StreamPipe.FULL, b = StreamPipe.FULL, ar = StreamPipe.HALF, r = StreamPipe.FULL)
   ddr.io.fb << staged(fbCc.io.output)
   ddr.io.tex << staged(texCc.io.output)
   if (c.separateScanoutMem) ddr.io.scan << staged(scanCc.io.output)
