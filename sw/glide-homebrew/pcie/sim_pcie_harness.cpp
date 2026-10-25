@@ -15,6 +15,7 @@
  *   VOODOO_PCI_LOG_SYNC=1         fdatasync each line (survives a host power
  *                                 loss; slow - without it the page cache
  *                                 keeps the log if only the process dies)
+ *   VOODOO_PCI_WC=1               write-combined BAR0 writes (B173+, voodoo_dma.ko)
  *   VOODOO_REG_HIST=1             per-register write counts (and how many
  *                                 repeat the previous value) every 100 swaps
  *   VOODOO_PCI_DRYRUN=1           don't touch the board; reads return idle
@@ -170,6 +171,9 @@ extern "C" int sim_init(void) {
     return -1;
   }
   g_bar.setFlowControl(false);  // the harness does its own flow control (above)
+  // VOODOO_PCI_WC=1: write through the write-combined BAR0 mapping
+  // (/dev/voodoo_bar0 from voodoo_dma.ko; needs a B173+ bitstream).
+  if (getenv("VOODOO_PCI_WC") && !g_bar.openWc()) return -1;
   g_open = true;
   fprintf(stderr, "[pcie] Voodoo on %s (%04x:%04x), bridge %s\n", g_dev.bdf.c_str(),
           g_dev.vendor, g_dev.device, pci_bar::statusText(g_bar.status()));

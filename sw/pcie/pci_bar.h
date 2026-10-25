@@ -130,7 +130,32 @@ public:
     return true;
   }
 
+  // Write-combined BAR0 mapping (/dev/voodoo_bar0, voodoo_dma.ko; needs a
+  // B173+ bitstream that takes multi-dword write TLPs). Writes into the
+  // Voodoo map then go through it: ascending stores within a 64-byte line
+  // merge into one TLP. Order is kept by an sfence before any store that is
+  // not above the previous one in the same line, around command registers
+  // (triangle / fastfill / swap / nop) and before every uncached access.
+  bool openWc() {
+    wcFd_ = ::open("/dev/voodoo_bar0", O_RDWR);
+    if (wcFd_ < 0) { perror("/dev/voodoo_bar0"); return false; }
+    void *raw = mmap(nullptr, kBarBytes, PROT_READ | PROT_WRITE, MAP_SHARED, wcFd_, 0);
+    if (raw == MAP_FAILED) { perror("mmap voodoo_bar0"); ::close(wcFd_); wcFd_ = -1; return false; }
+    wc_ = static_cast<volatile uint8_t *>(raw);
+    return true;
+  }
+
+  void fenceWc() const {
+    if (wcDirty_) { __asm__ __volatile__("sfence" ::: "memory"); wcDirty_ = false; wcLast_ = 0xffffffffu; }
+  }
+
   void close() {
+    fenceWc();
+    if (wc_) {
+      munmap(const_cast<uint8_t *>(reinterpret_cast<volatile uint8_t *>(wc_)), kBarBytes);
+      wc_ = nullptr;
+    }
+    if (wcFd_ >= 0) { ::close(wcFd_); wcFd_ = -1; }
     if (base_) {
       munmap(const_cast<uint8_t *>(reinterpret_cast<volatile uint8_t *>(base_)), kBarBytes);
       base_ = nullptr;
@@ -145,25 +170,30 @@ public:
   bool ok() const { return base_ != nullptr; }
 
   uint32_t readLocal32(uint32_t offset) const {
+    fenceWc();
     return *reinterpret_cast<volatile uint32_t *>(base_ + offset);
   }
 
   void writeLocal32(uint32_t offset, uint32_t value) {
+    fenceWc();
     *reinterpret_cast<volatile uint32_t *>(base_ + offset) = value;
     __sync_synchronize();
   }
 
   uint16_t readLocal16(uint32_t offset) const {
+    fenceWc();
     return *reinterpret_cast<volatile uint16_t *>(base_ + offset);
   }
 
   void writeLocal16(uint32_t offset, uint16_t value) {
+    fenceWc();
     *reinterpret_cast<volatile uint16_t *>(base_ + offset) = value;
     __sync_synchronize();
   }
 
   void selectWindow(uint32_t index) {
     if (window_ == index) return;
+    fenceWc();
     // Byte store: the target treats an 8-bit write at 0x250 as "select
     // window" in every window (the Voodoo never takes byte writes), so the
     // LFB / texture word at offset 0x250 of each megabyte stays usable.
@@ -202,7 +232,19 @@ public:
   void write32(uint32_t voodooAddr, uint32_t value) {
     waitForRoom(voodooAddr);
     selectWindow(windowIndex(voodooAddr));
-    writeLocal32(windowOffset(voodooAddr), value);
+    if (!wc_ || voodooAddr >= kRawBase) {
+      writeLocal32(windowOffset(voodooAddr), value);
+      return;
+    }
+    uint32_t off = windowOffset(voodooAddr);
+    uint32_t reg = voodooAddr & 0x3fcu;
+    bool cmd = voodooAddr < 0x400000u &&
+               (reg == 0x080 || reg == 0x100 || reg == 0x120 || reg == 0x124 || reg == 0x128);
+    if (cmd || off <= wcLast_ || (off >> 6) != (wcLast_ >> 6)) fenceWc();
+    *reinterpret_cast<volatile uint32_t *>(wc_ + off) = value;
+    wcDirty_ = true;
+    wcLast_ = off;
+    if (cmd) fenceWc();
   }
 
   uint16_t read16(uint32_t voodooAddr) {
@@ -239,6 +281,10 @@ public:
 private:
   int fd_ = -1;
   volatile uint8_t *base_ = nullptr;
+  int wcFd_ = -1;
+  volatile uint8_t *wc_ = nullptr;
+  mutable bool wcDirty_ = false;
+  mutable uint32_t wcLast_ = 0xffffffffu;
   uint32_t window_ = 0xffffffffu;
   bool flow_ = true;
   uint32_t budget_ = 0;

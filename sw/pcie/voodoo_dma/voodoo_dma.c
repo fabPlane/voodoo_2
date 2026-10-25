@@ -5,6 +5,11 @@
  * (the writer uses 3-DW MWr headers) and exposes it as /dev/voodoo_dma.
  * read() returns struct voodoo_dma_info (bus address, size); mmap() maps
  * the buffer. BAR0 is left alone so sysfs resource0 mmap keeps working.
+ *
+ * /dev/voodoo_bar0 maps BAR0 write-combined (the BAR is non-prefetchable,
+ * so sysfs only offers an uncached mapping). Stores then reach the dock as
+ * multi-dword write TLPs (B173+ target); the user must fence to keep
+ * register order (see sw/pcie/pci_bar.h).
  */
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -60,6 +65,30 @@ static struct miscdevice vd_misc = {
 	.mode = 0600,
 };
 
+static int vb_mmap(struct file *f, struct vm_area_struct *vma)
+{
+	size_t len = vma->vm_end - vma->vm_start;
+	resource_size_t start = pci_resource_start(vdev, 0);
+
+	if (vma->vm_pgoff || len > pci_resource_len(vdev, 0))
+		return -EINVAL;
+	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	return io_remap_pfn_range(vma, vma->vm_start, start >> PAGE_SHIFT, len,
+				  vma->vm_page_prot);
+}
+
+static const struct file_operations vb_fops = {
+	.owner = THIS_MODULE,
+	.mmap = vb_mmap,
+};
+
+static struct miscdevice vb_misc = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "voodoo_bar0",
+	.fops = &vb_fops,
+	.mode = 0600,
+};
+
 static int vd_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	int ret;
@@ -84,6 +113,11 @@ static int vd_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	ret = misc_register(&vd_misc);
 	if (ret)
 		goto err_free;
+	ret = misc_register(&vb_misc);
+	if (ret) {
+		misc_deregister(&vd_misc);
+		goto err_free;
+	}
 	dev_info(&pdev->dev, "voodoo_dma: %zu MiB at bus %pad\n", buf_size >> 20, &bus_buf);
 	return 0;
 
@@ -97,6 +131,7 @@ err_disable:
 
 static void vd_remove(struct pci_dev *pdev)
 {
+	misc_deregister(&vb_misc);
 	misc_deregister(&vd_misc);
 	/* The writer may still be enabled: stop bus mastering before freeing. */
 	pci_clear_master(pdev);
