@@ -159,3 +159,12 @@ misses a frame; bigger caches change nothing, 8 fill slots -1.1%), the
 clear ~231k (write-buffer stalls behind 2 x 256-word slots), span overhead
 58k, setup 40k. With 1-cycle memory the frame still takes ~2.1 cycles per
 pixel, so the pipeline itself is the main limit.
+
+### B172a (2026-10-25): deeper texture prefetch
+
+TMU in-flight cap 15 -> 47, 48-entry request FIFO, 4 fill slots (8 slots
+failed timing on all six B171 placements). gowin-q33 TNS 0 (48.9 / 80.8 /
+103.7 MHz). Quake II **34.5 fps** (33.6), GLQuake **49.5 fps** (48.2),
+picture clean. The board gains (~+2.7% each) are smaller than the replay's
+busy-cycle cuts (-10.6% Quake II, -4% GLQuake): DDR and host-side stalls
+the sim does not model take a bigger share there.
