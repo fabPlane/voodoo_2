@@ -39,13 +39,15 @@ object CoreGowin {
   // Colour / depth fill reads cut at 32-byte lines without padding
   // (GOWIN_FB_LINESPLIT; BmbToAxi4Mem lineSplit).
   def fbLineSplit: Boolean = sys.env.contains("GOWIN_FB_LINESPLIT")
+  // Render / depth write drains the same way (GOWIN_FB_WLINESPLIT).
+  def fbWriteLineSplit: Boolean = sys.env.contains("GOWIN_FB_WLINESPLIT")
 
   // The 5-way fb arbiter appends its input index to the BMB source, so the
   // shared side (and the AXI ID) must be the wider fbMemSharedBmbParams;
   // with fbMemBmbParams the upper source bits were dropped and responses
   // went to the wrong reader (e.g. LFB reads into scanout), wedging the port.
   def fbAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
-    BmbToAxi4Mem.axiConfig(Core.fbMemSharedBmbParams(c), burstLog2)
+    BmbToAxi4Mem.axiConfig(Core.fbMemSharedBmbParams(c), burstLog2, fbWriteLineSplit)
   def texAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
     BmbToAxi4Mem.axiConfig(Core.texMemBmbParams(c), burstLog2)
   def scanAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
@@ -64,7 +66,7 @@ object CoreGowin {
   // write port: colour and depth writes shared memFb's one 32-bit W channel
   // at the core clock, and the depth writes waited ~20% of cycles (B115).
   def auxWAxiConfig(c: Config, burstLog2: Int = axiBurstLog2) =
-    BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2)
+    BmbToAxi4Mem.axiConfig(Core.fbMemBmbParams(c), burstLog2, fbWriteLineSplit)
 }
 
 case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) extends Component {
@@ -131,7 +133,8 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // Render writes (colour + depth write buffers, LFB): 16 pieces in flight
   // like the fill ports; with 8 the write ports were blocked 11% / 19% of
   // cycles once reads dropped (B114).
-  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax)
+  val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax,
+    lineSplit = CoreGowin.fbWriteLineSplit)
   // Two TMUs x 4 fills x two 32-byte pieces = 16: the old cap exactly
   // (GOWIN_TEX_PENDING).
   val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false,
@@ -161,7 +164,8 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   unusedFbIn.rsp.ready := True
   renderArbiter.io.inputs(0) <> cut(core.io.fbMemWrite)
   renderArbiter.io.inputs(1) <> cut(core.io.fbColorWriteMem)
-  val auxWAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax)
+  val auxWAxi = BmbToAxi4Mem(Core.fbMemBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax,
+    lineSplit = CoreGowin.fbWriteLineSplit)
   auxWAxi.io.input <> cut(core.io.fbAuxWriteMem)
   io.memAuxW << auxWAxi.io.output
   fbArbiter.io.inputs(1) <> renderArbiter.io.output

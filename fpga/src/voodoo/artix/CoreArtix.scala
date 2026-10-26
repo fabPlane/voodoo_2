@@ -6,7 +6,7 @@ import spinal.lib.bus.amba4.axi._
 import spinal.lib.bus.amba4.axilite._
 import spinal.lib.bus.bmb._
 import voodoo.{Config, Core}
-import voodoo.bus.BmbPageSplitter
+import voodoo.bus.{BmbPageSplitter, BmbWriteLineSplitter}
 import voodoo.hdmi.HdmiScanoutPort
 
 /** Artix-7 wrapper around Core. This is the port of voodoo.de10.CoreDe10.
@@ -225,8 +225,8 @@ object BmbToAxi4Mem {
 /** `pendingMax`: transactions in flight per source in the AXI bridge; its
   * response-info queues are flip-flops, so the default 31 cost ~1.3k
   * registers per port on Gowin. The DDR adapter keeps 8 reads in flight. */
-/** `lineSplit` (read-only ports): cut at pages, then at 2^burstLog2-byte
-  * lines without padding, so a short span costs its own beats on the R
+/** `lineSplit`: cut at pages, then at 2^burstLog2-byte lines without
+  * padding (reads and writes), so a short span costs its own beats on the R
   * channel instead of a whole padded line (framebuffer fill readers: the
   * padding filled the depth port's R channel, B186a waits ~10%). */
 case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = true, pendingMax: Int = 31,
@@ -237,13 +237,16 @@ case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = t
   }
 
   if (lineSplit) new Area {
-    // (Writes would pass the splitters whole: use it on read-only ports.)
+    // Reads: pages, then lines (BmbPageSplitter); writes (which never cross
+    // a page here) pass those and are cut at lines by BmbWriteLineSplitter.
     val pageSplit = BmbPageSplitter(p)
     val lineSplitter = BmbPageSplitter(p, pageBits = burstLog2)
+    val writeSplitter = BmbWriteLineSplitter(p, lineBits = burstLog2, pendingMax = pendingMax)
     val bridge = BmbToAxi4SharedBridge(p, pendingMax = pendingMax)
     pageSplit.io.input <> io.input
     lineSplitter.io.input <> pageSplit.io.output
-    bridge.io.input <> lineSplitter.io.output
+    writeSplitter.io.input <> lineSplitter.io.output
+    bridge.io.input <> writeSplitter.io.output
     io.output << bridge.io.output.toAxi4()
   } else new Area {
   val aligner = BmbAligner(p, burstLog2)

@@ -1455,14 +1455,14 @@ index 100f1c6..c86c2c9 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..e93b03d 100644
+index 9effb48..0af5fca 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
  import spinal.core._
  import spinal.lib._
  import spinal.lib.bus.bmb._
-+import voodoo.bus.BmbPageSplitter
++import voodoo.bus.{BmbPageSplitter, BmbWriteLineSplitter}
  
  /** CoreSim: Simulation wrapper for Core with embedded BRAM and unified CPU bus.
    *
@@ -1479,7 +1479,7 @@ index 9effb48..e93b03d 100644
  ) extends Component {
    val io = new Bundle {
      // Unified CPU bus (24-bit address covers 16MB PCI BAR)
-@@ -31,22 +36,80 @@ case class CoreSim(
+@@ -31,22 +36,91 @@ case class CoreSim(
  
    def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
  
@@ -1503,6 +1503,15 @@ index 9effb48..e93b03d 100644
 +        ls.io.input <> ps.io.output
 +        ls.io.output
 +      }
++    // SIM_BUS_WLINESPLIT: write ports cut at 32-byte lines without padding.
++    def bridgedWrite(b: Bmb): Bmb =
++      if (!(boardBus && sys.env.contains("SIM_BUS_WLINESPLIT"))) bridged(b)
++      else {
++        val cut = b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
++        val ws = BmbWriteLineSplitter(b.p)
++        ws.io.input <> cut
++        ws.io.output
++      }
 +    def bridged(b: Bmb, splitPages: Boolean = true): Bmb =
 +      if (!boardBus) b
 +      else {
@@ -1524,8 +1533,10 @@ index 9effb48..e93b03d 100644
 +      fillPort = if (fill) c else null)
 +    // The harness reaches the arrays by these instance names.
 +    val lineSplit = boardBus && sys.env.contains("SIM_BUS_LINESPLIT")
++    val wLineSplit = boardBus && sys.env.contains("SIM_BUS_WLINESPLIT")
 +    val fbPorts = Seq.tabulate(Core.fbMemPortCount)(i =>
-+      if (lineSplit && (i == 3 || i == 4)) Core.fbMemBmbParams(c) else pieceParams(Core.fbMemBmbParams(c)))
++      if ((lineSplit && (i == 3 || i == 4)) || (wLineSplit && i <= 2)) Core.fbMemBmbParams(c)
++      else pieceParams(Core.fbMemBmbParams(c)))
 +    val fbWriteRam = multiRam(fbPorts, 4 * 1024 * 1024,
 +      fill = c.fbFillOffload)
 +      .setName("fbWriteRam")
@@ -1534,9 +1545,9 @@ index 9effb48..e93b03d 100644
 +      core.io.fillDone := fbWriteRam.io.fillDone
 +    }
 +    val texRam = multiRam(Seq(pieceParams(Core.texMemBmbParams(c))), 8 * 1024 * 1024).setName("texRam")
-+    fbWriteRam.io.buses(0) <> bridged(core.io.fbMemWrite)
-+    fbWriteRam.io.buses(1) <> bridged(core.io.fbColorWriteMem)
-+    fbWriteRam.io.buses(2) <> bridged(core.io.fbAuxWriteMem)
++    fbWriteRam.io.buses(0) <> bridgedWrite(core.io.fbMemWrite)
++    fbWriteRam.io.buses(1) <> bridgedWrite(core.io.fbColorWriteMem)
++    fbWriteRam.io.buses(2) <> bridgedWrite(core.io.fbAuxWriteMem)
 +    fbWriteRam.io.buses(3) <> bridgedRead(core.io.fbColorReadMem)
 +    fbWriteRam.io.buses(4) <> bridgedRead(core.io.fbAuxReadMem)
 +    texRam.io.buses(0) <> bridged(core.io.texMem, splitPages = false)
@@ -2058,6 +2069,88 @@ index 0000000..c1c6bbd
 +  io.input.rsp.last := io.output.rsp.last && finals.io.pop.payload
 +  io.output.rsp.ready := io.input.rsp.ready
 +  finals.io.pop.ready := io.output.rsp.fire && io.output.rsp.last
++}
+diff --git a/src/voodoo/bus/BmbWriteLineSplitter.scala b/src/voodoo/bus/BmbWriteLineSplitter.scala
+new file mode 100644
+index 0000000..a68563d
+--- /dev/null
++++ b/src/voodoo/bus/BmbWriteLineSplitter.scala
+@@ -0,0 +1,76 @@
++package voodoo.bus
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++
++/** Cuts write bursts at 2^lineBits-byte boundaries without padding them to
++  * whole lines (BmbAligner pads with masked beats, which still take a cycle
++  * each on a 32-bit W channel). Every output piece is a burst of its own
++  * (address of its first beat, its own length); only the input burst's
++  * last piece's response is passed on. Reads pass through untouched (cut
++  * them with BmbPageSplitter). The memory side must answer in order.
++  */
++case class BmbWriteLineSplitter(p: BmbParameter, lineBits: Int = 5, pendingMax: Int = 16) extends Component {
++  val io = new Bundle {
++    val input = slave(Bmb(p))
++    val output = master(Bmb(p))
++  }
++  require(p.access.dataWidth == 32)
++  val lineWords = 1 << (lineBits - 2)
++  // Per output burst: is it the input burst's final piece?
++  val finals = StreamFifo(Bool(), pendingMax)
++
++  val inBurst = RegInit(False)           // mid-input-burst
++  val wordAddr = Reg(UInt(p.access.addressWidth bits)) init (0) // this beat's address
++  val wordsLeft = Reg(UInt(p.access.lengthWidth + 1 bits)) init (0) // input words left incl. this beat
++  val pieceStart = RegInit(True)         // this beat starts an output piece
++  val pieceAddr = Reg(UInt(p.access.addressWidth bits)) init (0)
++  val pieceLen = Reg(UInt(p.access.lengthWidth bits)) init (0)
++
++  val cmd = io.input.cmd
++  val isWrite = cmd.isWrite
++  // This beat's address and remaining words (first beat: from the command).
++  val addrNow = Mux(inBurst, wordAddr, cmd.address)
++  val leftNow = Mux(inBurst, wordsLeft, ((cmd.length.resize(p.access.lengthWidth + 1 bits) + 1) >> 2).resized)
++  val offInLine = addrNow(lineBits - 1 downto 2)
++  val toLineEnd = U(lineWords, lineBits bits) - offInLine.resize(lineBits)
++  val pieceWordsNow = Mux(leftNow < toLineEnd.resized, leftNow, toLineEnd.resize(leftNow.getWidth))
++  val startHere = !inBurst || pieceStart
++  val pieceBeatsLeft = Reg(UInt(lineBits bits)) init (0)
++  val beatsLeftNow = Mux(startHere, pieceWordsNow.resize(lineBits), pieceBeatsLeft)
++  val endPiece = beatsLeftNow === 1
++  val endInput = leftNow === 1
++
++  io.output.cmd.valid := cmd.valid && (!isWrite || !startHere || finals.io.push.ready)
++  io.output.cmd.payload := cmd.payload
++  when(isWrite) {
++    io.output.cmd.address := Mux(startHere, addrNow, pieceAddr)
++    io.output.cmd.length := Mux(startHere, ((pieceWordsNow << 2) - 1).resized, pieceLen)
++    io.output.cmd.last := endPiece
++  }
++  cmd.ready := io.output.cmd.ready && (!isWrite || !startHere || finals.io.push.ready)
++
++  when(cmd.fire && isWrite) {
++    when(startHere) {
++      pieceAddr := addrNow
++      pieceLen := ((pieceWordsNow << 2) - 1).resized
++    }
++    pieceBeatsLeft := beatsLeftNow - 1
++    pieceStart := endPiece
++    wordAddr := addrNow + 4
++    wordsLeft := leftNow - 1
++    inBurst := !endInput
++    when(endInput) { pieceStart := True }
++  }
++  finals.io.push.valid := cmd.fire && isWrite && startHere
++  finals.io.push.payload := pieceWordsNow === leftNow // this piece runs to the input's end
++
++  // Responses: reads pass; a write piece's response is passed only if final.
++  // (Reads and writes do not share these ports.)
++  val rspIsWrite = finals.io.pop.valid
++  io.input.rsp.valid := io.output.rsp.valid && (!rspIsWrite || finals.io.pop.payload)
++  io.input.rsp.payload := io.output.rsp.payload
++  io.output.rsp.ready := io.input.rsp.ready || (rspIsWrite && !finals.io.pop.payload)
++  finals.io.pop.ready := io.output.rsp.fire && rspIsWrite
 +}
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
 index 226d60e..cef9671 100644
