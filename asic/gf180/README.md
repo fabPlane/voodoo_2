@@ -1,0 +1,84 @@
+# GF180 ASIC study (wafer.space / Tiny Tapeout)
+
+Feasibility study, 2026-10-26/27: can the SpinalVoodoo core be taped out on
+an open-PDK shuttle, and how fast would it be? Nothing here is a tape-out
+flow yet; it is synthesis + placement-level estimates and simulation.
+
+## Shuttle facts (research, 2026-10)
+
+- wafer.space GF180MCU full slot: 3.93 x 5.12 mm die, **12.92 mm² core inside
+  the pad ring**, 56 I/O by default (40 bidir, 14 input, 2 analog); ~1000 bare
+  dies, ~$7-8k (+$1.5k chip-on-board). Run 3: buy by 2026-12-09, GDS by
+  2026-12-16. Default cell library gf180mcu_fd_sc_mcu7t5v0, default clock 25 MHz.
+- Tiny Tapeout GF180: max 4x4 tiles ≈ 1.06 mm², 24 user I/O. Far too small.
+- GF180 SRAM: foundry 5 V 512x8 = 0.209 mm² (4 kbit), 4.9 ns clock-to-Q,
+  6.6 ns min cycle (tt). Community 3.3 V 1024x8 ≈ 0.155 mm² per KB.
+
+## Area and timing (dual-TMU B182 core, Yosys + OpenROAD + OpenSTA)
+
+Scripts: `synth_ks.ys` (memories → register boundaries via `memmodel.v`,
+Kogge-Stone adders, Booth multipliers), `flow_ks.tcl` (50% floorplan, global
+placement, repair_design, repair_timing, placement RC), `hist_ks.tcl`,
+`run_ks.sh`. Typical corner, 5 V 7-track cells.
+
+- Logic: 6.7 mm² cells (≈7.1 mm² after buffering), ~11 mm² placed.
+- On-chip RAM: 1.47 Mbit (180 KiB) in the dock config; must mostly go off-chip.
+- Core clock: 22.6 ns (44 MHz) with ripple adders, **20.2 ns (~50 MHz)** with
+  Kogge-Stone; slow corner ~1.5-2x worse. 682 endpoints > 17.5 ns, 2664 > 15 ns.
+  Slowest: span walker interpolators, TMU stageRecip productS/T, triangle
+  setup s1Px/s1Py/LOD squares, 32-bit perf counters. HDMI domain 8.8 ns.
+- FO4 of the 5 V library ≈ 0.24 ns (thick-oxide devices: ~0.5 µm-class speed).
+
+## Performance with external RAM and SLI (GLQuake frame 1923, 640x480)
+
+Sim additions (port patch): `--sli-count N --sli-index k` (chip k renders rows
+y % N == k; offloaded fills too) and bandwidth-limited channels for the
+framebuffer and texture memories (`--sim-{fb,tex}-chan-bpc16`, `-overhead`).
+Runner: `asim.sh` / `apar.sh`. Single TMU, read/write latency 4/2 on top of
+channel time. HR66 = one x8 HyperRAM at 66 MHz DDR (133 MB/s, bpc16 53,
+overhead 6 core cycles at 40 MHz); 2xHR66 = two ganged (bpc16 107).
+
+| config | cycles/frame | fps @33 | @40 | @50 MHz |
+|---|---|---|---|---|
+| ideal memory, dock caches (sim of dock) | 890,584 | 37 | 45 | 56 |
+| HR66 fb + HR66 tex | 1,905,640 | 17 | 21 | 26 |
+| HR66 fb only limited (tex unlimited) | 1,920,599 | 17 | 21 | 26 |
+| 2xHR66 fb + HR66 tex ("split"), tex cache 64 | 1,380,580 | 24 | 29 | 36 |
+| split, tex 64, fb write slots 2x64 ("mid") | 1,390,613 | 24 | 29 | 36 |
+| HR66, tex 64, SLI 2 | 1,060,587 | 31 | 38 | 47 |
+| HR66, tex 64, SLI 4 | 605,641 | 54 | 66 | 83 |
+| **mid, SLI 4** | **470,581** | **70** | **85** | **106** |
+| mini (tex 32, slots 2x64), SLI 4 (worst chip) | 585,614 | 56 | 68 | 85 |
+| ideal memory, SLI 4 (SLI ceiling) | 375,601 | 88 | 106 | 133 |
+| HR66, tex 64, SLI 8 | 360,589 | 92 | 111 | 139 |
+
+Findings:
+- The framebuffer channel is the bottleneck; the texture channel barely
+  matters (fb-only limit ≈ both limited). Give the fb channel the pins.
+- Texture cache 64 → 32 lines costs 17-23%; fb write slots 4 → 2 (64 words)
+  cost nothing.
+- SLI chips are balanced (k0 vs k3 within 1%). Scaling flattens (ideal memory:
+  2.4x at N=4) because every chip does all triangle setup, its own texture
+  misses and steps skipped rows.
+- Correctness: channel-limited runs are pixel-identical to the baseline; SLI
+  chips match the baseline on their rows (bottom-up row numbering) except 4
+  pixels on chip 0 (two adjacent pairs, timing-dependent fb hazard, not
+  investigated).
+
+Not modelled: scanout reads (≈37/N MB/s per chip), host broadcast link
+(~230 KB of commands per frame), multi-frame behaviour, the 4-pixel issue.
+
+## On-chip RAM of a single-TMU ASIC config
+
+`mid` config: ~42 KiB (mini, tex 32: 38.3 KiB). Reducible: HDMI pixel FIFO
+8.5 KiB → ~1.3 KiB line buffer, 4 palette copies → 1 (-2.3 KiB), fb reader lane
+FIFOs 3 x 3.7 KiB. Target ~25 KiB ≈ 3.9 mm² of 3.3 V macros next to ~9-10 mm²
+of single-TMU logic: fits 12.92 mm² only with dense placement. Needs a trial
+floorplan before committing.
+
+## Suggested chip
+
+One die design, N copies (SLI): single-TMU core, 2xHyperRAM (16-bit) on the
+framebuffer, 1xHyperRAM on textures (~32 memory pins), narrow broadcast input
+from the host FPGA (Tang dock: PCIe + HDMI), scan-line output back to it.
+4 chips ≈ 70-85 fps GLQuake at 33-40 MHz (dock today: 50.5 fps).
