@@ -42,6 +42,13 @@ case class TangMega138kPro(c: Config) extends Component {
     val tlCfgBusdev = in UInt (13 bits)
 
     val ddr = master(GowinDdrNative())
+    // Own DDR3 controller's debug port (calibration readout / manual gate
+    // and latency), DDR clock domain; host access through window 31
+    // 0x98 / 0x9C.
+    val ddrDbgAddr = out Bits (8 bits)
+    val ddrDbgWdata = out Bits (32 bits)
+    val ddrDbgWe = out Bool ()
+    val ddrDbgRdata = in Bits (32 bits)
 
     val hdmiClk = in Bool ()
     val hdmiReset = in Bool ()
@@ -149,6 +156,16 @@ case class TangMega138kPro(c: Config) extends Component {
     // stage: without it the BAR read mux was placed toward the DDR-domain
     // registers and the PCIe address decode -> readData path missed 75 MHz.
     val ddrStats = ddrStatsIn.map(BufferCC(_, init = B(0, 32 bits), bufferDepth = Some(1)))
+    // 0x98: DDR3 debug write data. 0x9C write: [7:0] debug address, [8]
+    // write strobe (the DDR side applies it once per 0x9C write); 0x9C read:
+    // debug read data for the last address (~1 us after the 0x9C write).
+    val ddrDbgWdata = Reg(Bits(32 bits)) init (0)
+    val ddrDbgCmd = Reg(Bits(9 bits)) init (0)
+    val ddrDbgToggle = RegInit(False)
+    when(localWrite && localAddr === 0x98) { ddrDbgWdata := localWdata }
+    when(localWrite && localAddr === 0x9c) { ddrDbgCmd := localWdata(8 downto 0); ddrDbgToggle := !ddrDbgToggle }
+    val ddrDbgRdataIn = Bits(32 bits)
+    val ddrDbgRdata = BufferCC(ddrDbgRdataIn, init = B(0, 32 bits), bufferDepth = Some(1))
     // On-chip supply / temperature monitor. Also sent with every frame-DMA
     // status write, so the host logs it without touching the BAR:
     // 0x68 / extra 0: vcc [15:0] | temp [31:16]; 0x6C / extra 1: vccMin |
@@ -170,6 +187,7 @@ case class TangMega138kPro(c: Config) extends Component {
     when(bar.io.localRaddr === 0x6c) { bar.io.localRdata := adcExtremes }
     when(bar.io.localRaddr === 0x70) { bar.io.localRdata := adcSamples }
     for (i <- 0 until 8) when(bar.io.localRaddr === 0x78 + 4 * i) { bar.io.localRdata := ddrStats(i) }
+    when(bar.io.localRaddr === 0x9c) { bar.io.localRdata := ddrDbgRdata }
   }
 
   val adcMon = new ClockingArea(coreCd) {
@@ -305,6 +323,15 @@ case class TangMega138kPro(c: Config) extends Component {
   ddr.io.col << staged(colCc.io.output)
   ddr.io.auxW << staged(auxWCc.io.output)
   io.ddr <> ddr.io.ddr
+  // DDR3 debug port: address / data are set before the toggle and stable
+  // after; the toggle is delayed two more stages so they have settled.
+  private val dbgToggleSync = BufferCC(pcie.ddrDbgToggle, init = False, bufferDepth = Some(4))
+  private val dbgTogglePrev = RegNext(dbgToggleSync, init = False)
+  private val dbgCmd = BufferCC(pcie.ddrDbgCmd, init = B(0, 9 bits))
+  io.ddrDbgAddr := dbgCmd(7 downto 0)
+  io.ddrDbgWdata := BufferCC(pcie.ddrDbgWdata, init = B(0, 32 bits))
+  io.ddrDbgWe := RegNext(dbgToggleSync =/= dbgTogglePrev && dbgCmd(8), init = False)
+  pcie.ddrDbgRdataIn := RegNext(io.ddrDbgRdata)
   private val throttle = BufferCC(pcie.ddrThrottle, init = B(8, 32 bits))
   ddr.io.cmdGap := throttle(7 downto 0).asUInt
   ddr.io.maxReads := throttle(11 downto 8).asUInt

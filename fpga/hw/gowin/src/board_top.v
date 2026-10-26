@@ -147,6 +147,9 @@ module board_top #(
     wire        sr_ack, ref_ack;
 
     wire ddr_odt_ip;
+    wire [7:0]  ddr_dbg_addr;
+    wire [31:0] ddr_dbg_wdata;
+    wire        ddr_dbg_we;
     assign O_ddr_odt = DDR_ODT_ENABLE ? ddr_odt_ip : 1'b0;
 
     // DDR3 controller: fpga/hw/gowin/own_ddr3 by default (Gowin IP's native
@@ -156,9 +159,9 @@ module board_top #(
 `ifndef USE_GOWIN_DDR3_IP
     wire [31:0] own_ddr3_dbg;
     own_ddr3 u_ddr3 (
-        .dbg_addr            (8'h00),
-        .dbg_wdata           (32'h0),
-        .dbg_we              (1'b0),
+        .dbg_addr            (ddr_dbg_addr),
+        .dbg_wdata           (ddr_dbg_wdata),
+        .dbg_we              (ddr_dbg_we),
         .dbg_rdata           (own_ddr3_dbg),
 `else
     DDR3_Memory_Interface_Top u_ddr3 (
@@ -261,6 +264,14 @@ module board_top #(
         .ddr_rdDataValid     (rd_data_valid),
         .ddr_rdDataEnd       (rd_data_end),
         .ddr_initCalibComplete(init_calib_complete),
+        .ddrDbgAddr          (ddr_dbg_addr),
+        .ddrDbgWdata         (ddr_dbg_wdata),
+        .ddrDbgWe            (ddr_dbg_we),
+`ifndef USE_GOWIN_DDR3_IP
+        .ddrDbgRdata         (own_ddr3_dbg),
+`else
+        .ddrDbgRdata         (32'h0),
+`endif
         .hdmiClk             (clk_hdmi_pixel),
         .hdmiReset           (hdmi_rst),
         .hdmiR               (hdmi_r),
