@@ -22,3 +22,7 @@ report_timing -setup -max_paths 100 -max_common_paths 1 -to_clock [get_clocks {c
 # The DDR PHY's init-complete flop releases the DDR-domain reset once, after
 # calibration, while nothing is in flight: not a timed path.
 set_false_path -from [get_regs {u_ddr3/u_ctrl/cal_done_s*}]
+# Own DDR3 debug port: address / data are set long before the host reads
+# back or strobes a write (window 31 0x98 / 0x9C): not timed paths.
+set_false_path -from [get_regs {u_voodoo/pcie_ddrDbgCmd_buffercc/*}]
+set_false_path -from [get_regs {u_voodoo/pcie_ddrDbgWdata_buffercc/*}]

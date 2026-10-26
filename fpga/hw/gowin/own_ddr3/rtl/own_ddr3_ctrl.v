@@ -953,7 +953,11 @@ module own_ddr3_ctrl #(
                     ck <= 4'd0;
                     ldone <= 0;
                     for (i = 0; i < LANES; i = i + 1)
-                        lg[i] <= sc_bstart[i] + sc_blen[i][7:1];
+                        // Early half of the centre: on the dock the late
+                        // edge of the gate window failed under back-to-back
+                        // traffic (odd-pixel dashes at the run's centre + 0
+                        // and + 1, clean at - 1 and - 2; 4-wide runs, 2026-10-26).
+                        lg[i] <= sc_bstart[i] + ((sc_blen[i] - 8'd1) >> 1);
                     cstate <= C_HOLD;
                 end
                 C_FINISH: begin
