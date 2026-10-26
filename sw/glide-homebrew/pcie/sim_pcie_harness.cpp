@@ -173,11 +173,16 @@ struct QOp { uint32_t addr, data; uint32_t wide; };
 constexpr uint32_t kQSize = 1u << 20;
 QOp *g_q = nullptr;
 std::atomic<uint32_t> g_qHead{0}, g_qTail{0}; // head: next write; tail: next read
-std::atomic<bool> g_qBusy{false}, g_qStop{false};
-std::thread g_writer;
+std::atomic<bool> g_qBusy{false}, g_qStop{false}, g_writerDone{false};
+// Heap-held and never destroyed: a joinable std::thread destroyed at exit
+// terminates the process (seen when GLQuake quits on SIGTERM).
+std::thread *g_writer = nullptr;
+std::thread::id g_writerId;
 bool g_threaded = false;
 
 void writerLoop() {
+  g_writerId = std::this_thread::get_id();
+  struct Done { ~Done() { g_writerDone.store(true, std::memory_order_release); } } done;
   uint32_t spins = 0;
   for (;;) {
     uint32_t t = g_qTail.load(std::memory_order_relaxed);
@@ -202,7 +207,9 @@ void writerLoop() {
 uint64_t g_drainNs = 0, g_drainCalls = 0, g_qSwaps = 0, g_qMax = 0;
 uint32_t g_rdAddr[8]; uint64_t g_rdCnt[8];
 void drainWrites() {
-  if (!g_threaded) return;
+  // The writer itself reaches here through a swap's profile report
+  // (reportFrame -> sim_idle_wait): its queue drains as it returns.
+  if (!g_threaded || std::this_thread::get_id() == g_writerId) return;
   g_drainCalls++;
   uint64_t t0 = nowNs();
   struct Acc { uint64_t t0; ~Acc() { g_drainNs += nowNs() - t0; } } acc{t0};
@@ -210,6 +217,16 @@ void drainWrites() {
          g_qBusy.load(std::memory_order_acquire)) {
     _mm_pause_compat();
   }
+}
+
+// Stop the writer once its queue is written, waiting at most `ms`; it is
+// detached if it does not finish (a wedged card), so exit never hangs here.
+void stopWriter(int ms) {
+  if (!g_threaded || !g_writer) return;
+  g_qStop.store(true, std::memory_order_release);
+  for (int i = 0; i < ms * 10 && !g_writerDone.load(std::memory_order_acquire); i++) usleep(100);
+  if (g_writerDone.load(std::memory_order_acquire)) g_writer->join(); else g_writer->detach();
+  g_threaded = false;
 }
 
 void enqueue(uint32_t addr, uint32_t data, bool wide) {
@@ -270,7 +287,11 @@ extern "C" int sim_init(void) {
   if (getenv("VOODOO_PCI_THREAD") && !g_dry) {
     g_q = new QOp[kQSize];
     g_threaded = true;
-    g_writer = std::thread(writerLoop);
+    g_writer = new std::thread(writerLoop);
+    // Runs before the static destructors (registered after g_bar was
+    // constructed): the writer must not touch the BAR once it is unmapped
+    // (segfault on exit without this).
+    atexit([] { stopWriter(200); });
     fprintf(stderr, "[pcie] writer thread on (%u-entry ring)\n", kQSize);
   }
   return 0;
@@ -278,12 +299,7 @@ extern "C" int sim_init(void) {
 
 extern "C" void sim_shutdown(void) {
   if (!g_open) return;
-  if (g_threaded) {
-    drainWrites();
-    g_qStop.store(true, std::memory_order_release);
-    g_writer.join();
-    g_threaded = false;
-  }
+  if (g_threaded) stopWriter(2000);
   if (getenv("VOODOO_PCI_STATS"))
     fprintf(stderr, "[pcie] %llu writes, %llu reads, %llu idle polls; bridge %s\n",
             (unsigned long long)g_writes, (unsigned long long)g_reads,
