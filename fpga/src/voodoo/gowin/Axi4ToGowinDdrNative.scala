@@ -489,6 +489,9 @@ case class Axi4ToGowinDdrNative(
     val words = Vec(Reg(Bits(32 bits)) init (0), nativeWords)
     val strbs = Vec(Reg(Bits(4 bits)) init (0), nativeWords)
     val iHasData = RegInit(False)
+    // The issued line is a fill line: data and mask come from the fill
+    // engine's registers (keeps the fill off the words / strbs enables).
+    val iFill = RegInit(False)
     val wantsCmd = iValid && !iResp && iHasData && io.ddr.wrDataRdy
     val issue = Bool() // driven by the command arbiter below
 
@@ -604,6 +607,7 @@ case class Axi4ToGowinDdrNative(
           strbs(k) := Mux(here, wStrb, cStrbs(k))
         }
         iHasData := cHasData || wStrb.orR
+        iFill := False
         val last = beatsLeft === 1
         iLast := last
         groupIdx := 0
@@ -660,6 +664,7 @@ case class Axi4ToGowinDdrNative(
       val isLast = linesLeft === 0
       val lo = Mux(firstOfRow, lowCut, U(0, 5 bits))
       val hi = Mux(isLast, highCut, U(31, 5 bits))
+      val mask = Reg(Bits(32 bits)) init (0) // byte write enables of the issued fill line
       when(lineReady && !iValid) {
         iValid := True
         iResp := False
@@ -667,13 +672,8 @@ case class Axi4ToGowinDdrNative(
         iPortOh := 0
         addr := line
         iHasData := True
-        for (k <- 0 until nativeWords) {
-          words(k) := cmd.value ## cmd.value
-          for (l <- 0 until 4) {
-            val b = U(4 * k + l, 5 bits)
-            strbs(k)(l) := b >= lo && b <= hi
-          }
-        }
+        iFill := True
+        for (b <- 0 until 32) mask(b) := U(b, 5 bits) >= lo && U(b, 5 bits) <= hi
         firstOfRow := False
         line := line + 32
         linesLeft := linesLeft - 1
@@ -736,8 +736,13 @@ case class Axi4ToGowinDdrNative(
   io.ddr.burst := False
   // Cat(Iterable) places the first element at the least-significant end:
   // write lane i is symmetric with read word i.
-  io.ddr.wrData := Cat(wr.words)
+  if (withFill) {
+    io.ddr.wrData := Mux(wr.iFill, Cat(Seq.fill(2 * nativeWords)(wr.fillEngine.cmd.value)), Cat(wr.words))
+    io.ddr.wrDataMask := ~Mux(wr.iFill, wr.fillEngine.mask, Cat(wr.strbs))
+  } else {
+    io.ddr.wrData := Cat(wr.words)
+    io.ddr.wrDataMask := ~Cat(wr.strbs)
+  }
   io.ddr.wrDataEn := grantWrite
   io.ddr.wrDataEnd := True
-  io.ddr.wrDataMask := ~Cat(wr.strbs)
 }

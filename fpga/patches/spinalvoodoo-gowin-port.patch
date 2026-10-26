@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..7656996 100644
+index 1b34fa2..57d9067 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..7656996 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,97 @@ case class Config(
+@@ -31,6 +34,100 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1081,6 +1081,9 @@ index 1b34fa2..7656996 100644
 +    // as one rectangle command (Core io.fillOffload) for the memory side to
 +    // write whole lines (Gowin: Axi4ToGowinDdrNative withFill).
 +    fbFillOffload: Boolean = false,
++    // The span rasterizer takes the next span as the last pixel of one
++    // leaves (was one idle cycle per span).
++    spanBackToBack: Boolean = false,
 +    // Lines of the small direct-mapped texture cache used when
 +    // useTexFillCache is off (TmuSmallTextureCache); 0 = no cache.
 +    texSmallCacheLines: Int = 0,
@@ -1517,7 +1520,7 @@ index 9effb48..5bd7ede 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..ddc7864 100644
+index 6051025..ec15502 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1565,7 +1568,7 @@ index 6051025..ddc7864 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,29 @@ object CoreSimGen extends App {
+@@ -37,7 +49,30 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1579,6 +1582,7 @@ index 6051025..ddc7864 100644
 +      texMaxOutstanding = argIntValue("--tex-max-outstanding").getOrElse(15),
 +      setupEngine = args.contains("--setup-engine"),
 +      fbFillOffload = args.contains("--fill-offload"),
++      spanBackToBack = args.contains("--span-back-to-back"),
 +      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4),
 +      tmuCount = argIntValue("--tmu-count").getOrElse(1),
 +      texSampleQueueDepth = argIntValue("--tex-sample-queue-depth").getOrElse(16),
@@ -2474,6 +2478,63 @@ index 226d60e..cef9671 100644
  
        val fTrackIdx0 = anyconst(UInt(3 bits))
        val fTrackIdx1 = anyconst(UInt(3 bits))
+diff --git a/src/voodoo/bus/StreamWhile.scala b/src/voodoo/bus/StreamWhile.scala
+index 8f83262..87ed1bd 100644
+--- a/src/voodoo/bus/StreamWhile.scala
++++ b/src/voodoo/bus/StreamWhile.scala
+@@ -38,7 +38,10 @@ object StreamWhile {
+       outputType: HardType[TOut],
+       maxIterations: Int,
+       init: TIn => TState, // Initialize loop state from trigger
+-      step: (UInt, TState, TOut) => (TState, Bool) // Assign output, return (next state, isLast)
++      step: (UInt, TState, TOut) => (TState, Bool), // Assign output, return (next state, isLast)
++      // Take the next trigger in the cycle the last output fires (no idle
++      // cycle between iterations; trigger.ready then depends on output.ready).
++      overlapTrigger: Boolean = false
+   ): StreamWhileResult[TOut] = {
+     val composite = new Composite(trigger, "streamWhile") {
+ 
+@@ -49,13 +52,6 @@ object StreamWhile {
+ 
+       val output = Stream(outputType)
+ 
+-      // Start new loop iteration
+-      when(trigger.fire) {
+-        running := True
+-        state := init(trigger.payload)
+-        counter.clear()
+-      }
+-
+       // Call step to get output, next state, and last flag
+       val (nextState, isLast) = step(counter.value, state, output.payload)
+ 
+@@ -77,7 +73,16 @@ object StreamWhile {
+         }
+       }
+ 
+-      trigger.ready := !running
++      if (overlapTrigger) trigger.ready := !running || (output.fire && isLast)
++      else trigger.ready := !running
++
++      // Start new loop iteration (after the stop above: an overlapped
++      // trigger keeps it running).
++      when(trigger.fire) {
++        running := True
++        state := init(trigger.payload)
++        counter.clear()
++      }
+ 
+       // Formal verification invariants
+       GenerationFlags.formal {
+@@ -86,7 +91,7 @@ object StreamWhile {
+         assert(output.valid === running)
+ 
+         // Invariant 2: trigger.ready is inverse of running
+-        assert(trigger.ready === !running)
++        if (!overlapTrigger) assert(trigger.ready === !running)
+       }
+ 
+     }
 diff --git a/src/voodoo/core/CoreCpuFrontdoor.scala b/src/voodoo/core/CoreCpuFrontdoor.scala
 index f8d33d6..a6111b8 100644
 --- a/src/voodoo/core/CoreCpuFrontdoor.scala
@@ -7073,7 +7134,7 @@ index 3a41225..a2e4035 100644
      val baseX = UInt(10 bits)
      val y = UInt(10 bits)
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
-index cee86c0..f0b6f7f 100644
+index cee86c0..feaf894 100644
 --- a/src/voodoo/raster/Rasterizer.scala
 +++ b/src/voodoo/raster/Rasterizer.scala
 @@ -17,31 +17,151 @@ case class Rasterizer(c: Config, formalStrong: Boolean = false) extends Componen
@@ -7375,15 +7436,17 @@ index cee86c0..f0b6f7f 100644
      val o = master Stream (Output(c))
      val running = out(Bool())
  
-@@ -146,6 +333,7 @@ object Rasterizer {
+@@ -145,7 +332,9 @@ object Rasterizer {
+       stateType = HardType(SpanState(c)),
        outputType = HardType(Output(c)),
        maxIterations = c.maxFbDims._1,
++      overlapTrigger = c.spanBackToBack,
        init = (input: SpanWalker.Output) => {
 +        val slots = c.pixelConfigSlots
          val state = cloneOf(SpanState(c))
          state.x := input.xStart
          state.y := input.y
-@@ -153,10 +341,14 @@ object Rasterizer {
+@@ -153,10 +342,14 @@ object Rasterizer {
          state.hiS := input.hiS
          state.hiT := input.hiT
          state.hiAlpha := input.hiAlpha
@@ -7400,7 +7463,7 @@ index cee86c0..f0b6f7f 100644
          if (c.trace.enabled) {
            state.trace := input.trace
          }
-@@ -174,8 +366,15 @@ object Rasterizer {
+@@ -174,8 +367,15 @@ object Rasterizer {
          output.grads.sGrad := state.hiS.fixTo(c.texCoordsAccumFormat)
          output.grads.tGrad := state.hiT.fixTo(c.texCoordsAccumFormat)
          output.alphaGradHi := state.hiAlpha
@@ -7418,7 +7481,7 @@ index cee86c0..f0b6f7f 100644
          if (c.trace.enabled) {
            output.trace.primitive := state.trace
            output.trace.pixelSeq := currentPixelSeq
-@@ -185,8 +384,11 @@ object Rasterizer {
+@@ -185,8 +385,11 @@ object Rasterizer {
          next.y := state.y
          next.xEnd := state.xEnd
          next.stepX := state.stepX
@@ -7432,7 +7495,7 @@ index cee86c0..f0b6f7f 100644
          if (c.trace.enabled) {
            next.trace := state.trace
          }
-@@ -212,8 +414,9 @@ object Rasterizer {
+@@ -212,8 +415,9 @@ object Rasterizer {
          next.hiS := (state.hiS + state.stepX.tex(0)).fixTo(c.texCoordsHiFormat)
          next.hiT := (state.hiT + state.stepX.tex(1)).fixTo(c.texCoordsHiFormat)
          next.hiAlpha := (state.hiAlpha + state.stepX.alpha).fixTo(c.texCoordsHiFormat)
