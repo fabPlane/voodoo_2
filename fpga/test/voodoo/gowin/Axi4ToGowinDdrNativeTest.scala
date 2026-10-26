@@ -786,4 +786,69 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       println(s"[fill] ok, ${want.size} bytes checked")
     }
   }
+
+  test("short unaligned in-line reads on the aux port (line-split fill reads) return exactly their words") {
+    compiledAuxW.doSim("shortreads", seed = 11) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      val rnd = new scala.util.Random(5)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      dut.io.policy #= 0
+      for (axi <- Seq(dut.io.fb, dut.io.tex, dut.io.scan, dut.io.aux, dut.io.col, dut.io.auxW)) {
+        axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
+        axi.ar.valid #= false; axi.r.ready #= true
+      }
+      // DDR model preloaded: word at byte address a = a * 2654435761.
+      def word(a: Long): Long = (a * 2654435761L) & 0xffffffffL
+      val pending = mutable.Queue[(BigInt, Long)]()
+      var cycle = 0L
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        dut.io.ddr.cmdReady #= rnd.nextInt(4) != 0
+        if (dut.io.ddr.cmdEn.toBoolean && dut.io.ddr.cmd.toInt != 0) {
+          val due = cycle + 6 + rnd.nextInt(10)
+          pending.enqueue((dut.io.ddr.addr.toBigInt, pending.lastOption.map(_._2 max due).getOrElse(due)))
+        }
+        dut.io.ddr.rdDataValid #= false
+        if (pending.nonEmpty && pending.head._2 <= cycle) {
+          val (na, _) = pending.dequeue()
+          val base = (na.toLong >> 3) << 5
+          var line = BigInt(0)
+          for (k <- 0 until 8) line |= BigInt(word(base + 4 * k)) << (32 * k)
+          dut.io.ddr.rdData #= line
+          dut.io.ddr.rdDataValid #= true
+          dut.io.ddr.rdDataEnd #= true
+        }
+      }
+      val aux = dut.io.aux
+      val got = mutable.Queue[Long]()
+      dut.clockDomain.onSamplings { if (aux.r.valid.toBoolean && aux.r.ready.toBoolean) got.enqueue(aux.r.data.toLong) }
+      val want = mutable.Queue[Long]()
+      // Issue back to back; the R side drains concurrently.
+      for (n <- 0 until 300) {
+        val lineBase = 0x40000L + 32L * rnd.nextInt(512)
+        val first = rnd.nextInt(8)
+        val beats = 1 + rnd.nextInt(8 - first)
+        val a = lineBase + 4 * first
+        aux.ar.valid #= true; aux.ar.addr #= a; aux.ar.len #= beats - 1
+        aux.ar.size #= 2; aux.ar.burst #= 1; aux.ar.id #= 1
+        dut.clockDomain.waitSamplingWhere(aux.ar.ready.toBoolean)
+        for (k <- 0 until beats) want.enqueue(word(a + 4 * k))
+      }
+      aux.ar.valid #= false
+      dut.clockDomain.waitSamplingWhere(got.size >= want.size)
+      dut.clockDomain.waitSampling(50)
+      assert(got.size == want.size, s"${got.size} words for ${want.size}")
+      var bad = 0
+      for ((g, w) <- got.zip(want)) if (g != w) bad += 1
+      assert(bad == 0, s"$bad wrong words")
+      println(s"[shortreads] ${want.size} words ok")
+    }
+  }
 }

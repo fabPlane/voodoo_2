@@ -1455,10 +1455,31 @@ index 100f1c6..c86c2c9 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..5bd7ede 100644
+index 9effb48..e93b03d 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
-@@ -31,22 +31,46 @@ case class CoreSim(
+@@ -3,6 +3,7 @@ package voodoo
+ import spinal.core._
+ import spinal.lib._
+ import spinal.lib.bus.bmb._
++import voodoo.bus.BmbPageSplitter
+ 
+ /** CoreSim: Simulation wrapper for Core with embedded BRAM and unified CPU bus.
+   *
+@@ -13,7 +14,11 @@ import spinal.lib.bus.bmb._
+   */
+ case class CoreSim(
+     c: Config = Config.voodoo1(),
+-    memTiming: SimMemoryTiming = SimMemoryTiming()
++    memTiming: SimMemoryTiming = SimMemoryTiming(),
++    // Gowin dock's memory bridges (CoreGowin: register cuts, BmbPageSplitter,
++    // BmbAligner / BmbLengthFixer into 32-byte pieces) between the core and
++    // the memory ports.
++    boardBus: Boolean = false
+ ) extends Component {
+   val io = new Bundle {
+     // Unified CPU bus (24-bit address covers 16MB PCI BAR)
+@@ -31,22 +36,80 @@ case class CoreSim(
  
    def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
  
@@ -1467,24 +1488,58 @@ index 9effb48..5bd7ede 100644
 +  if (memTiming.mode == "pipelined") {
 +    // Every framebuffer client on its own pipelined port (board-like).
 +    require(!c.separateScanoutMem)
++    def pieceParams(p: BmbParameter): BmbParameter =
++      if (!boardBus) p
++      else BmbLengthFixer.outputParameter(BmbAligner.outputParameter(p.access, 5), 5).toBmbParameter()
++    // SIM_BUS_LINESPLIT: read-only ports cut at pages, then at 32-byte lines
++    // without padding (no aligner / length fixer).
++    def bridgedRead(b: Bmb): Bmb =
++      if (!boardBus || !sys.env.contains("SIM_BUS_LINESPLIT")) bridged(b)
++      else {
++        val cut = b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
++        val ps = BmbPageSplitter(b.p)
++        val ls = BmbPageSplitter(b.p, pageBits = 5)
++        ps.io.input <> cut
++        ls.io.input <> ps.io.output
++        ls.io.output
++      }
++    def bridged(b: Bmb, splitPages: Boolean = true): Bmb =
++      if (!boardBus) b
++      else {
++        // SIM_BUS_NOCUT / SIM_BUS_NOSPLIT (generation time): drop the
++        // register cuts / the page splitter to see what each costs.
++        val cut = if (sys.env.contains("SIM_BUS_NOCUT")) b else b.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
++        val aligner = BmbAligner(b.p, 5)
++        val fixer = BmbLengthFixer(aligner.op.toBmbParameter(), 5)
++        if (splitPages && !sys.env.contains("SIM_BUS_NOSPLIT")) {
++          val ps = BmbPageSplitter(b.p)
++          ps.io.input <> cut
++          aligner.io.input <> ps.io.output
++        } else aligner.io.input <> cut
++        fixer.io.input <> aligner.io.output
++        fixer.io.output
++      }
 +    def multiRam(ps: Seq[BmbParameter], size: Int, fill: Boolean = false) = SimBmbMultiPortMemory(
 +      ps, size, readLatency = memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency,
 +      fillPort = if (fill) c else null)
 +    // The harness reaches the arrays by these instance names.
-+    val fbWriteRam = multiRam(Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)), 4 * 1024 * 1024,
++    val lineSplit = boardBus && sys.env.contains("SIM_BUS_LINESPLIT")
++    val fbPorts = Seq.tabulate(Core.fbMemPortCount)(i =>
++      if (lineSplit && (i == 3 || i == 4)) Core.fbMemBmbParams(c) else pieceParams(Core.fbMemBmbParams(c)))
++    val fbWriteRam = multiRam(fbPorts, 4 * 1024 * 1024,
 +      fill = c.fbFillOffload)
 +      .setName("fbWriteRam")
 +    if (c.fbFillOffload) {
 +      fbWriteRam.io.fill << core.io.fillOffload
 +      core.io.fillDone := fbWriteRam.io.fillDone
 +    }
-+    val texRam = multiRam(Seq(Core.texMemBmbParams(c)), 8 * 1024 * 1024).setName("texRam")
-+    fbWriteRam.io.buses(0) <> core.io.fbMemWrite
-+    fbWriteRam.io.buses(1) <> core.io.fbColorWriteMem
-+    fbWriteRam.io.buses(2) <> core.io.fbAuxWriteMem
-+    fbWriteRam.io.buses(3) <> core.io.fbColorReadMem
-+    fbWriteRam.io.buses(4) <> core.io.fbAuxReadMem
-+    texRam.io.buses(0) <> core.io.texMem
++    val texRam = multiRam(Seq(pieceParams(Core.texMemBmbParams(c))), 8 * 1024 * 1024).setName("texRam")
++    fbWriteRam.io.buses(0) <> bridged(core.io.fbMemWrite)
++    fbWriteRam.io.buses(1) <> bridged(core.io.fbColorWriteMem)
++    fbWriteRam.io.buses(2) <> bridged(core.io.fbAuxWriteMem)
++    fbWriteRam.io.buses(3) <> bridgedRead(core.io.fbColorReadMem)
++    fbWriteRam.io.buses(4) <> bridgedRead(core.io.fbAuxReadMem)
++    texRam.io.buses(0) <> bridged(core.io.texMem, splitPages = false)
 +  } else {
 +    val fbWriteRam = simRam(Core.fbMemSharedBmbParams(c), 4 * 1024 * 1024).setName("fbWriteRam")
 +    require(!c.fbFillOffload, "fbFillOffload needs --sim-mem-mode pipelined")
@@ -1520,7 +1575,7 @@ index 9effb48..5bd7ede 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..ec15502 100644
+index 6051025..df55393 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1600,6 +1655,14 @@ index 6051025..ec15502 100644
      )
  
    val memTiming = SimMemoryTiming(
+@@ -48,6 +83,6 @@ object CoreSimGen extends App {
+     writeLatency = argIntValue("--sim-mem-write-latency").getOrElse(0)
+   )
+ 
+-  val report = GenSupport.simVerilog().generate(CoreSim(config, memTiming))
++  val report = GenSupport.simVerilog().generate(CoreSim(config, memTiming, boardBus = args.contains("--board-bus")))
+   GenSupport.mirrorRomSidecars("emu/sim/rtl", report.toplevelName)
+ }
 diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
 index 1bfe40c..06e63fe 100644
 --- a/src/voodoo/SimBmbMemory.scala
@@ -1920,6 +1983,82 @@ index 3a197b9..2731d3b 100644
  }
  
  /** Register write metadata bundle */
+diff --git a/src/voodoo/bus/BmbPageSplitter.scala b/src/voodoo/bus/BmbPageSplitter.scala
+new file mode 100644
+index 0000000..c1c6bbd
+--- /dev/null
++++ b/src/voodoo/bus/BmbPageSplitter.scala
+@@ -0,0 +1,70 @@
++package voodoo.bus
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++
++/** Splits read bursts at 4 KiB pages. BMB and AXI bursts may not cross a
++  * page, and the library bridges (BmbAligner, BmbLengthFixer, even
++  * BmbAlignedSpliter via Bmb.addToAddress) only increment in-page address
++  * bits, so a crossing burst wrapped to the page start. The core's write
++  * buffer never crosses, but framebuffer reader spans (scanout lines, pixel
++  * spans) can: on the Gowin board every 640-pixel scanline crossing a page
++  * showed data from 4 KiB earlier. Writes pass through. Pieces keep the
++  * input's source/context; the memory side must answer in order (it does on
++  * the fb/tex ports here), and only the final piece's response is `last`.
++  */
++// pageBits = 5: cut reads at 32-byte (DDR native line) boundaries without
++// padding them out to whole lines (BmbAligner's way), so a short span costs
++// its own words on the response channel, not eight.
++case class BmbPageSplitter(p: BmbParameter, pendingMax: Int = 16, pageBits: Int = 12) extends Component {
++  val io = new Bundle {
++    val input = slave(Bmb(p))
++    val output = master(Bmb(p))
++  }
++  private val totalWidth = p.access.lengthWidth + 1
++
++  // A read is taken into registers and cut into pieces from there, so no
++  // address arithmetic reaches input.cmd.ready (that path closed timing badly
++  // on the congested Gowin build). Writes pass straight through.
++  val busy = RegInit(False)
++  val cur = Reg(Fragment(BmbCmd(p)))
++  val remaining = Reg(UInt(totalWidth bits))
++  val toPageEnd = U(1 << pageBits, pageBits + 1 bits) - cur.address(pageBits - 1 downto 0).resize(pageBits + 1)
++  val finalPiece = remaining.resize(totalWidth max (pageBits + 1)) <= toPageEnd.resized
++  val pieceBytes = finalPiece ? remaining | toPageEnd.resize(totalWidth)
++
++  // One entry per output command: is it the input burst's final piece?
++  val finals = StreamFifo(Bool(), pendingMax)
++
++  val passWrite = !busy && io.input.cmd.isWrite
++  io.output.cmd.valid := finals.io.push.ready && (busy || (io.input.cmd.valid && io.input.cmd.isWrite))
++  io.output.cmd.payload := io.input.cmd.payload
++  when(busy) {
++    io.output.cmd.payload := cur
++    io.output.cmd.length.allowOverride()
++    io.output.cmd.length := (pieceBytes - 1).resized
++  }
++  io.input.cmd.ready := !busy && (io.input.cmd.isRead || (io.output.cmd.ready && finals.io.push.ready))
++
++  when(!busy && io.input.cmd.valid && io.input.cmd.isRead) {
++    busy := True
++    cur := io.input.cmd.payload
++    remaining := io.input.cmd.length.resize(totalWidth) + 1
++  }
++  when(busy && io.output.cmd.fire) {
++    cur.address := cur.address + pieceBytes.resized
++    remaining := remaining - pieceBytes
++    when(finalPiece) { busy := False }
++  }
++
++  finals.io.push.valid := io.output.cmd.fire && io.output.cmd.last
++  finals.io.push.payload := !busy || finalPiece
++
++  io.input.rsp.valid := io.output.rsp.valid
++  io.input.rsp.payload := io.output.rsp.payload
++  io.input.rsp.last.allowOverride()
++  io.input.rsp.last := io.output.rsp.last && finals.io.pop.payload
++  io.output.rsp.ready := io.input.rsp.ready
++  finals.io.pop.ready := io.output.rsp.fire && io.output.rsp.last
++}
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
 index 226d60e..cef9671 100644
 --- a/src/voodoo/bus/PciFifo.scala

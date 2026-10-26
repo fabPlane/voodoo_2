@@ -6,6 +6,7 @@ import spinal.lib.bus.amba4.axi._
 import spinal.lib.bus.amba4.axilite._
 import spinal.lib.bus.bmb._
 import voodoo.{Config, Core}
+import voodoo.bus.BmbPageSplitter
 import voodoo.hdmi.HdmiScanoutPort
 
 /** Artix-7 wrapper around Core. This is the port of voodoo.de10.CoreDe10.
@@ -207,69 +208,6 @@ case class AxiLite4ToBmbBridge(
 /** BMB master to AXI4 master for MIG: aligns and splits every burst to 2^burstLog2 bytes so
   * nothing crosses a 4 KiB boundary or exceeds AXI's 256-beat limit, then bridges to AXI4.
   */
-/** Splits read bursts at 4 KiB pages. BMB and AXI bursts may not cross a
-  * page, and the library bridges (BmbAligner, BmbLengthFixer, even
-  * BmbAlignedSpliter via Bmb.addToAddress) only increment in-page address
-  * bits, so a crossing burst wrapped to the page start. The core's write
-  * buffer never crosses, but framebuffer reader spans (scanout lines, pixel
-  * spans) can: on the Gowin board every 640-pixel scanline crossing a page
-  * showed data from 4 KiB earlier. Writes pass through. Pieces keep the
-  * input's source/context; the memory side must answer in order (it does on
-  * the fb/tex ports here), and only the final piece's response is `last`.
-  */
-case class BmbPageSplitter(p: BmbParameter, pendingMax: Int = 16) extends Component {
-  val io = new Bundle {
-    val input = slave(Bmb(p))
-    val output = master(Bmb(p))
-  }
-  private val pageBits = 12
-  private val totalWidth = p.access.lengthWidth + 1
-
-  // A read is taken into registers and cut into pieces from there, so no
-  // address arithmetic reaches input.cmd.ready (that path closed timing badly
-  // on the congested Gowin build). Writes pass straight through.
-  val busy = RegInit(False)
-  val cur = Reg(Fragment(BmbCmd(p)))
-  val remaining = Reg(UInt(totalWidth bits))
-  val toPageEnd = U(1 << pageBits, pageBits + 1 bits) - cur.address(pageBits - 1 downto 0).resize(pageBits + 1)
-  val finalPiece = remaining.resize(totalWidth max (pageBits + 1)) <= toPageEnd.resized
-  val pieceBytes = finalPiece ? remaining | toPageEnd.resize(totalWidth)
-
-  // One entry per output command: is it the input burst's final piece?
-  val finals = StreamFifo(Bool(), pendingMax)
-
-  val passWrite = !busy && io.input.cmd.isWrite
-  io.output.cmd.valid := finals.io.push.ready && (busy || (io.input.cmd.valid && io.input.cmd.isWrite))
-  io.output.cmd.payload := io.input.cmd.payload
-  when(busy) {
-    io.output.cmd.payload := cur
-    io.output.cmd.length.allowOverride()
-    io.output.cmd.length := (pieceBytes - 1).resized
-  }
-  io.input.cmd.ready := !busy && (io.input.cmd.isRead || (io.output.cmd.ready && finals.io.push.ready))
-
-  when(!busy && io.input.cmd.valid && io.input.cmd.isRead) {
-    busy := True
-    cur := io.input.cmd.payload
-    remaining := io.input.cmd.length.resize(totalWidth) + 1
-  }
-  when(busy && io.output.cmd.fire) {
-    cur.address := cur.address + pieceBytes.resized
-    remaining := remaining - pieceBytes
-    when(finalPiece) { busy := False }
-  }
-
-  finals.io.push.valid := io.output.cmd.fire && io.output.cmd.last
-  finals.io.push.payload := !busy || finalPiece
-
-  io.input.rsp.valid := io.output.rsp.valid
-  io.input.rsp.payload := io.output.rsp.payload
-  io.input.rsp.last.allowOverride()
-  io.input.rsp.last := io.output.rsp.last && finals.io.pop.payload
-  io.output.rsp.ready := io.input.rsp.ready
-  finals.io.pop.ready := io.output.rsp.fire && io.output.rsp.last
-}
-
 object BmbToAxi4Mem {
   // Input bursts may cross 4 KiB pages: BmbPageSplitter cuts reads first, so
   // BmbAligner and BmbLengthFixer (in-page increments only) are safe.
@@ -278,8 +216,8 @@ object BmbToAxi4Mem {
     BmbLengthFixer.outputParameter(aligned, burstLog2).toBmbParameter()
   }
 
-  def axiConfig(p: BmbParameter, burstLog2: Int): Axi4Config =
-    BmbToAxi4SharedBridge.getAxi4Config(alignedParameter(p, burstLog2))
+  def axiConfig(p: BmbParameter, burstLog2: Int, lineSplit: Boolean = false): Axi4Config =
+    BmbToAxi4SharedBridge.getAxi4Config(if (lineSplit) p else alignedParameter(p, burstLog2))
 }
 
 /** `splitPages`: needed where bursts can cross a 4 KiB page (framebuffer
@@ -287,12 +225,27 @@ object BmbToAxi4Mem {
 /** `pendingMax`: transactions in flight per source in the AXI bridge; its
   * response-info queues are flip-flops, so the default 31 cost ~1.3k
   * registers per port on Gowin. The DDR adapter keeps 8 reads in flight. */
-case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = true, pendingMax: Int = 31) extends Component {
+/** `lineSplit` (read-only ports): cut at pages, then at 2^burstLog2-byte
+  * lines without padding, so a short span costs its own beats on the R
+  * channel instead of a whole padded line (framebuffer fill readers: the
+  * padding filled the depth port's R channel, B186a waits ~10%). */
+case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = true, pendingMax: Int = 31,
+    lineSplit: Boolean = false) extends Component {
   val io = new Bundle {
     val input = slave(Bmb(p))
-    val output = master(Axi4(BmbToAxi4Mem.axiConfig(p, burstLog2)))
+    val output = master(Axi4(BmbToAxi4Mem.axiConfig(p, burstLog2, lineSplit)))
   }
 
+  if (lineSplit) new Area {
+    // (Writes would pass the splitters whole: use it on read-only ports.)
+    val pageSplit = BmbPageSplitter(p)
+    val lineSplitter = BmbPageSplitter(p, pageBits = burstLog2)
+    val bridge = BmbToAxi4SharedBridge(p, pendingMax = pendingMax)
+    pageSplit.io.input <> io.input
+    lineSplitter.io.input <> pageSplit.io.output
+    bridge.io.input <> lineSplitter.io.output
+    io.output << bridge.io.output.toAxi4()
+  } else new Area {
   val aligner = BmbAligner(p, burstLog2)
   val fixer = BmbLengthFixer(aligner.op.toBmbParameter(), burstLog2)
   val bridge = BmbToAxi4SharedBridge(fixer.op.toBmbParameter(), pendingMax = pendingMax)
@@ -307,6 +260,7 @@ case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = t
   fixer.io.input <> aligner.io.output
   bridge.io.input <> fixer.io.output
   io.output << bridge.io.output.toAxi4()
+  }
 }
 
 object CoreArtix {
