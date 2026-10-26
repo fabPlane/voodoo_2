@@ -1,0 +1,18 @@
+read_verilog -sv /home/hyper/.cache/gowin-builds/rtl_b182/TangMega138kPro.v
+hierarchy -top Core
+synth -top Core -flatten -booth -run begin:fine
+tee -o memports_ks.txt select -count t:$mem_v2
+techmap -autoproc -map memmodel.v
+opt -fast -full
+techmap -map +/techmap.v -map +/choices/kogge-stone.v
+opt -fast
+dfflibmap -liberty /home/hyper/.cache/asic-est/gf180_7t_tt5v.lib
+abc -liberty /home/hyper/.cache/asic-est/gf180_7t_tt5v.lib -D 10000
+opt_clean
+hilomap -singleton -hicell gf180mcu_fd_sc_mcu7t5v0__tieh Z -locell gf180mcu_fd_sc_mcu7t5v0__tiel ZN
+setundef -zero
+splitnets
+opt_clean -purge
+insbuf -buf gf180mcu_fd_sc_mcu7t5v0__buf_1 I Z
+tee -o area_ks.txt stat -liberty /home/hyper/.cache/asic-est/gf180_7t_tt5v.lib
+write_verilog -noattr -noexpr -nohex -nodec core_gf180_ks.v

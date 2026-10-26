@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..57d9067 100644
+index 1b34fa2..6a2582c 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..57d9067 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,100 @@ case class Config(
+@@ -31,6 +34,106 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1143,6 +1143,12 @@ index 1b34fa2..57d9067 100644
 +    // at swap interval 1 lost ~1/4 of the frame time waiting (B164e: 34.1 fps,
 +    // 46.2 with vsync off).
 +    tripleBuffering: Boolean = false,
++    // Scan-line interleave (3dfx SLI): sliCount chips each render the logical
++    // rows y with y % sliCount == sliIndex (spans and offloaded fills); the
++    // others are dropped. sliCount must be a power of two. ASIC study: one
++    // die design, N chips, each with its own memory.
++    sliCount: Int = 1,
++    sliIndex: Int = 0,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -1455,7 +1461,7 @@ index 100f1c6..c86c2c9 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..0af5fca 100644
+index 9effb48..4f33d0a 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
@@ -1479,7 +1485,7 @@ index 9effb48..0af5fca 100644
  ) extends Component {
    val io = new Bundle {
      // Unified CPU bus (24-bit address covers 16MB PCI BAR)
-@@ -31,22 +36,91 @@ case class CoreSim(
+@@ -31,22 +36,94 @@ case class CoreSim(
  
    def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
  
@@ -1528,9 +1534,11 @@ index 9effb48..0af5fca 100644
 +        fixer.io.input <> aligner.io.output
 +        fixer.io.output
 +      }
-+    def multiRam(ps: Seq[BmbParameter], size: Int, fill: Boolean = false) = SimBmbMultiPortMemory(
-+      ps, size, readLatency = memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency,
-+      fillPort = if (fill) c else null)
++    def multiRam(ps: Seq[BmbParameter], size: Int, fill: Boolean = false, chanBpc: Int = 0, chanOverhead: Int = 0) =
++      SimBmbMultiPortMemory(
++        ps, size, readLatency = memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency,
++        fillPort = if (fill) c else null,
++        chanBytesPerCycleX16 = chanBpc, chanOverhead = chanOverhead)
 +    // The harness reaches the arrays by these instance names.
 +    val lineSplit = boardBus && sys.env.contains("SIM_BUS_LINESPLIT")
 +    val wLineSplit = boardBus && sys.env.contains("SIM_BUS_WLINESPLIT")
@@ -1538,13 +1546,14 @@ index 9effb48..0af5fca 100644
 +      if ((lineSplit && (i == 3 || i == 4)) || (wLineSplit && i <= 2)) Core.fbMemBmbParams(c)
 +      else pieceParams(Core.fbMemBmbParams(c)))
 +    val fbWriteRam = multiRam(fbPorts, 4 * 1024 * 1024,
-+      fill = c.fbFillOffload)
++      fill = c.fbFillOffload, chanBpc = memTiming.fbChanBytesPerCycleX16, chanOverhead = memTiming.fbChanOverhead)
 +      .setName("fbWriteRam")
 +    if (c.fbFillOffload) {
 +      fbWriteRam.io.fill << core.io.fillOffload
 +      core.io.fillDone := fbWriteRam.io.fillDone
 +    }
-+    val texRam = multiRam(Seq(pieceParams(Core.texMemBmbParams(c))), 8 * 1024 * 1024).setName("texRam")
++    val texRam = multiRam(Seq(pieceParams(Core.texMemBmbParams(c))), 8 * 1024 * 1024,
++      chanBpc = memTiming.texChanBytesPerCycleX16, chanOverhead = memTiming.texChanOverhead).setName("texRam")
 +    fbWriteRam.io.buses(0) <> bridgedWrite(core.io.fbMemWrite)
 +    fbWriteRam.io.buses(1) <> bridgedWrite(core.io.fbColorWriteMem)
 +    fbWriteRam.io.buses(2) <> bridgedWrite(core.io.fbAuxWriteMem)
@@ -1586,7 +1595,7 @@ index 9effb48..0af5fca 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..df55393 100644
+index 6051025..fc32c28 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1634,7 +1643,7 @@ index 6051025..df55393 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,30 @@ object CoreSimGen extends App {
+@@ -37,7 +49,32 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1662,12 +1671,22 @@ index 6051025..df55393 100644
 +      fbzModePerTriangle = args.contains("--fbz-per-triangle"),
 +      skipRedundantFbzSync = args.contains("--skip-redundant-fbz-sync"),
 +      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64),
-+      tripleBuffering = args.contains("--triple-buffering")
++      tripleBuffering = args.contains("--triple-buffering"),
++      sliCount = argIntValue("--sli-count").getOrElse(1),
++      sliIndex = argIntValue("--sli-index").getOrElse(0)
      )
  
    val memTiming = SimMemoryTiming(
-@@ -48,6 +83,6 @@ object CoreSimGen extends App {
-     writeLatency = argIntValue("--sim-mem-write-latency").getOrElse(0)
+@@ -45,9 +82,13 @@ object CoreSimGen extends App {
+     fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
+     burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
+     burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
+-    writeLatency = argIntValue("--sim-mem-write-latency").getOrElse(0)
++    writeLatency = argIntValue("--sim-mem-write-latency").getOrElse(0),
++    fbChanBytesPerCycleX16 = argIntValue("--sim-fb-chan-bpc16").getOrElse(0),
++    fbChanOverhead = argIntValue("--sim-fb-chan-overhead").getOrElse(0),
++    texChanBytesPerCycleX16 = argIntValue("--sim-tex-chan-bpc16").getOrElse(0),
++    texChanOverhead = argIntValue("--sim-tex-chan-overhead").getOrElse(0)
    )
  
 -  val report = GenSupport.simVerilog().generate(CoreSim(config, memTiming))
@@ -1675,12 +1694,23 @@ index 6051025..df55393 100644
    GenSupport.mirrorRomSidecars("emu/sim/rtl", report.toplevelName)
  }
 diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
-index 1bfe40c..06e63fe 100644
+index 1bfe40c..a819515 100644
 --- a/src/voodoo/SimBmbMemory.scala
 +++ b/src/voodoo/SimBmbMemory.scala
-@@ -11,7 +11,10 @@ case class SimMemoryTiming(
+@@ -9,9 +9,20 @@ case class SimMemoryTiming(
+     fixedReadLatency: Int = 0,
+     burstSetupLatency: Int = 12,
      burstBeatLatency: Int = 1,
-     writeLatency: Int = 0
+-    writeLatency: Int = 0
++    writeLatency: Int = 0,
++    // Bandwidth-limited channels for "pipelined" mode (ASIC external-RAM
++    // study): all ports of one memory (framebuffer / texture) share a
++    // channel that serves one transaction at a time, each occupying it for
++    // overhead + ceil(bytes * 16 / bytesPerCycleX16) cycles. 0 = unlimited.
++    fbChanBytesPerCycleX16: Int = 0,
++    fbChanOverhead: Int = 0,
++    texChanBytesPerCycleX16: Int = 0,
++    texChanOverhead: Int = 0
  ) {
 -  require(Set("onchip", "ideal", "fixed", "burst").contains(mode))
 +  // "pipelined": one independent port per memory client (SimBmbMultiPortMemory),
@@ -1690,7 +1720,7 @@ index 1bfe40c..06e63fe 100644
    require(fixedReadLatency >= 0)
    require(burstSetupLatency >= 0)
    require(burstBeatLatency >= 0)
-@@ -96,9 +99,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
+@@ -96,9 +107,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
      }
    }
  
@@ -1708,10 +1738,10 @@ index 1bfe40c..06e63fe 100644
      )
 diff --git a/src/voodoo/SimBmbMultiPortMemory.scala b/src/voodoo/SimBmbMultiPortMemory.scala
 new file mode 100644
-index 0000000..f6d1376
+index 0000000..3478c00
 --- /dev/null
 +++ b/src/voodoo/SimBmbMultiPortMemory.scala
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,190 @@
 +package voodoo
 +
 +import spinal.core._
@@ -1742,7 +1772,16 @@ index 0000000..f6d1376
 +    // cycle (the board's DDR fill engine writes a native line per DDR
 +    // command), done `fillDoneLatency` cycles after the last line.
 +    fillPort: Config = null,
-+    fillDoneLatency: Int = 16
++    fillDoneLatency: Int = 16,
++    // SimMemoryTiming.*ChanBytesPerCycleX16 / *ChanOverhead: every port and
++    // the fill engine share one channel (e.g. an external HyperRAM / SRAM
++    // bus) that serves one transaction at a time: it starts when the channel
++    // is free and holds it for overhead + ceil(bytes * 16 / bytesPerCycleX16)
++    // cycles; read data / write responses are due readLatency / writeLatency
++    // cycles after that. At most one port starts a transaction per cycle
++    // (lowest port first). 0 = no channel limit (independent ports).
++    chanBytesPerCycleX16: Int = 0,
++    chanOverhead: Int = 0
 +) extends Component {
 +  require(size > 0 && (size % 4) == 0)
 +  require(ports.forall(p => p.access.dataWidth == 32))
@@ -1765,7 +1804,19 @@ index 0000000..f6d1376
 +  val cycle = Reg(UInt(32 bits)) init (0)
 +  cycle := cycle + 1
 +
-+  for ((bus, p) <- io.buses.zip(ports)) new Area {
++  val chan = chanBytesPerCycleX16 > 0
++  // Cycles a transaction of `words` 32-bit words holds the channel.
++  def occupancyTable(lengthWidth: Int) =
++    Vec((0 until (1 << lengthWidth)).map { w =>
++      val words = if (w == 0) (1 << lengthWidth) else w
++      U(chanOverhead + (words * 4 * 16 + chanBytesPerCycleX16 - 1) / chanBytesPerCycleX16, 16 bits)
++    })
++  val chanBusyUntil = Reg(UInt(32 bits)) init (0)
++  val chanStart = Mux(chanBusyUntil > cycle, chanBusyUntil, cycle)
++  val wants = Bits(ports.length bits)
++  val grants = if (chan) OHMasking.first(wants) else B(0, ports.length bits)
++
++  for (((bus, p), portIdx) <- io.buses.zip(ports).zipWithIndex) new Area {
 +    val lengthWidth = p.access.lengthWidth
 +    case class Entry() extends Bundle {
 +      val isWrite = Bool()
@@ -1783,14 +1834,25 @@ index 0000000..f6d1376
 +    // BMB carries the burst's start address on every beat.
 +    val writeBeat = Reg(UInt(lengthWidth bits)) init (0)
 +
-+    bus.cmd.ready := queue.io.push.ready
-+    queue.io.push.valid := bus.cmd.valid && (isRead || bus.cmd.last)
++    val pushNow = bus.cmd.valid && (isRead || bus.cmd.last)
++    wants(portIdx) := pushNow && queue.io.push.ready
++    // With a channel, a transaction enters only when granted; write beats
++    // before the last one are taken freely.
++    val granted = if (chan) grants(portIdx) else True
++    bus.cmd.ready := queue.io.push.ready && (granted || !(isRead || bus.cmd.last))
++    queue.io.push.valid := pushNow && granted
 +    queue.io.push.isWrite := !isRead
 +    queue.io.push.wordAddr := cmdWordAddr
 +    queue.io.push.words := cmdWords
 +    queue.io.push.source := bus.cmd.source
 +    queue.io.push.context := (if (p.access.contextWidth > 0) bus.cmd.context else B(0, 0 bits))
-+    queue.io.push.readyAt := cycle + Mux(isRead, U(readLatency, 32 bits), U(writeLatency, 32 bits))
++    if (!chan)
++      queue.io.push.readyAt := cycle + Mux(isRead, U(readLatency, 32 bits), U(writeLatency, 32 bits))
++    else {
++      val occ = occupancyTable(lengthWidth)(cmdWords).resize(32 bits)
++      queue.io.push.readyAt := chanStart + occ + Mux(isRead, U(readLatency, 32 bits), U(writeLatency, 32 bits))
++      when(queue.io.push.fire) { chanBusyUntil := chanStart + occ }
++    }
 +
 +    when(bus.cmd.fire && !isRead) {
 +      val addr = cmdWordAddr + writeBeat.resize(wordAddrWidth bits)
@@ -1843,7 +1905,13 @@ index 0000000..f6d1376
 +      line := (rowAddr + cmd.x0.resize(32 bits))(31 downto 5) @@ U(0, 5 bits)
 +      setup := False
 +    }
-+    when(active && !setup) {
++    // With a channel, each 32-byte line takes it when no port starts a
++    // transaction this cycle and it is free.
++    val lineGo = if (chan) !grants.orR && chanBusyUntil <= cycle else True
++    if (chan) when(active && !setup && lineGo) {
++      chanBusyUntil := cycle + U(chanOverhead + (32 * 16 + chanBytesPerCycleX16 - 1) / chanBytesPerCycleX16, 32 bits)
++    }
++    when(active && !setup && lineGo) {
 +      for (k <- 0 until 8; lane <- 0 until 4) {
 +        val b = line + U(4 * k + lane, 32 bits)
 +        when(b >= sByte && b <= eByte) {
@@ -7237,7 +7305,7 @@ index c6b2ec5..7437fb0 100644
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/FastfillWordWriter.scala b/src/voodoo/raster/FastfillWordWriter.scala
-index 3a41225..a2e4035 100644
+index 3a41225..9fb16c5 100644
 --- a/src/voodoo/raster/FastfillWordWriter.scala
 +++ b/src/voodoo/raster/FastfillWordWriter.scala
 @@ -25,12 +25,22 @@ case class FastfillWordWriter(c: Config) extends Component {
@@ -7273,7 +7341,7 @@ index 3a41225..a2e4035 100644
      clipLeft := clipLeftCapture
      clipRight := clipRightCapture
      clipLowY := clipLowYCapture
-@@ -59,12 +69,52 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -59,12 +69,64 @@ case class FastfillWordWriter(c: Config) extends Component {
    val curWordX = Reg(UInt(10 bits)) init (0)
    val curY = Reg(UInt(10 bits)) init (0)
  
@@ -7300,16 +7368,28 @@ index 3a41225..a2e4035 100644
 +      pendColor := regs.fbzMode.rgbBufferMask
 +      pendAux := regs.fbzMode.auxBufferMask
 +    }
-+    val y0 = transformedY(c, regs.fbzMode.yOrigin, regs.yOriginSwapValue, clipLowY)
++    // Config.sliCount: only this chip's rows, from its first row at or below
++    // clipLowY, sliCount rows apart (at least one row: the memory side's
++    // fill engine needs rows > 0).
++    val sliBits = log2Up(c.sliCount)
++    val firstY =
++      if (c.sliCount == 1) clipLowY
++      else (clipLowY + ((U(c.sliIndex, sliBits bits) - clipLowY(sliBits - 1 downto 0)).resize(10 bits))).resize(10 bits)
++    val y0 = transformedY(c, regs.fbzMode.yOrigin, regs.yOriginSwapValue, firstY)
 +    val stride = regs.routing.pixelStride
-+    val rowBytes = FramebufferAddressMath.pixelByteOffset(U(0, 1 bits), U(1, 1 bits), stride, 16)
++    val rowBytes = (FramebufferAddressMath.pixelByteOffset(U(0, 1 bits), U(1, 1 bits), stride, 16) << sliBits).resize(16 bits)
 +    val cmd = FillCmd(c)
 +    cmd.rowAddr := FramebufferAddressMath.planeAddress(
 +      Mux(pendColor, regs.routing.colorBaseAddr, regs.routing.auxBaseAddr), U(0, 1 bits), y0, stride)
 +    cmd.rowStep := Mux(regs.fbzMode.yOrigin, -rowBytes.asSInt, rowBytes.asSInt)
 +    cmd.x0 := (clipLeft @@ U(0, 1 bits)).resized
 +    cmd.x1 := (clipRight @@ U(0, 1 bits)).resized
-+    cmd.rows := (clipHighY - clipLowY).resized
++    if (c.sliCount == 1) cmd.rows := (clipHighY - clipLowY).resized
++    else {
++      val span = Mux(clipHighY > firstY, (clipHighY - firstY).resize(11 bits), U(0, 11 bits))
++      val sliRows = ((span + (c.sliCount - 1)) >> sliBits).resize(11 bits)
++      cmd.rows := Mux(sliRows === 0, U(1, 11 bits), sliRows)
++    }
 +    cmd.value := Mux(pendColor,
 +      regs.color1(23 downto 19) ## regs.color1(15 downto 10) ## regs.color1(7 downto 3),
 +      regs.zaColor(15 downto 0))
@@ -7328,7 +7408,7 @@ index 3a41225..a2e4035 100644
  
    val wordStream = Stream(WordReq(c))
    val lane1X = (curWordX + 1).resize(10 bits)
-@@ -161,7 +211,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -161,7 +223,7 @@ case class FastfillWordWriter(c: Config) extends Component {
      .m2sPipe()
  
    val ditherJoined =
@@ -7337,7 +7417,7 @@ index 3a41225..a2e4035 100644
    val (forColor, forAux) = StreamFork2(ditherJoined, synchronous = true)
  
    io.colorWrite.valid := forColor.valid && forColor.payload._2.rgbWrite && anyLaneEnabled(
-@@ -188,7 +238,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -188,7 +250,7 @@ case class FastfillWordWriter(c: Config) extends Component {
      forAux.payload._2
    )) || io.auxWrite.ready
  
@@ -7346,7 +7426,7 @@ index 3a41225..a2e4035 100644
    io.wordValid := wordStream.valid
    io.wordReady := wordStream.ready
    io.generatedPixels := wordStream.fire ? laneCount(
-@@ -202,6 +252,18 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -202,6 +264,18 @@ case class FastfillWordWriter(c: Config) extends Component {
  }
  
  object FastfillWordWriter {
@@ -7739,7 +7819,7 @@ index cee86c0..feaf894 100644
        }
      )
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..680a9f2 100644
+index 59df4ba..76befbd 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -5,6 +5,20 @@ import spinal.core.formal._
@@ -7797,7 +7877,7 @@ index 59df4ba..680a9f2 100644
  
    private val lowGradFormats = Seq(
      c.vColorFormat,
-@@ -67,318 +57,270 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -67,318 +57,276 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
      dst.texDy(0) := input.texHi.dSdY
      dst.texDy(1) := input.texHi.dTdY
      dst.alphaDx := input.hiAlpha.dAdX
@@ -8217,8 +8297,14 @@ index 59df4ba..680a9f2 100644
 -      }.otherwise {
 -        stepHorizontal(probe, probe, moveRight = true)
 +  val emitYPix = wide(m.y.floor(0).asSInt)
++  require(c.sliCount >= 1 && isPow2(c.sliCount) && c.sliIndex < c.sliCount)
++  // Config.sliCount: rows of the other chips still step the row values, but
++  // emit no span.
++  val sliOwnsRow =
++    if (c.sliCount == 1) True
++    else emitYPix(log2Up(c.sliCount) - 1 downto 0).asUInt === c.sliIndex
 +  val emit = m.nonEmpty && m.end >= effClipLeft && m.start < effClipRight &&
-+    emitYPix >= effClipLowY && emitYPix < effClipHighY
++    emitYPix >= effClipLowY && emitYPix < effClipHighY && sliOwnsRow
 +  val spans = multiplied
 +    .throwWhen(!emit)
 +    .translateWith {
@@ -8333,7 +8419,7 @@ index 59df4ba..680a9f2 100644
  }
  
  object SpanWalker {
-@@ -397,6 +339,7 @@ object SpanWalker {
+@@ -397,6 +345,7 @@ object SpanWalker {
      val linear = LinearState(c)
      val tex = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alpha = AFix(c.texCoordsHiFormat)
@@ -8341,7 +8427,7 @@ index 59df4ba..680a9f2 100644
    }
  
    case class TriangleConst(c: Config) extends Bundle {
-@@ -409,6 +352,8 @@ object SpanWalker {
+@@ -409,6 +358,8 @@ object SpanWalker {
      val texDy = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alphaDx = AFix(c.texCoordsHiFormat)
      val alphaDy = AFix(c.texCoordsHiFormat)
@@ -8350,7 +8436,7 @@ index 59df4ba..680a9f2 100644
      val tmuConfig = TriangleSetup.TmuConfig(c)
      val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
      val enableClipping = Bool()
-@@ -416,6 +361,9 @@ object SpanWalker {
+@@ -416,6 +367,9 @@ object SpanWalker {
      val clipRight = UInt(10 bits)
      val clipLowY = UInt(10 bits)
      val clipHighY = UInt(10 bits)
@@ -8360,7 +8446,7 @@ index 59df4ba..680a9f2 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,9 +374,12 @@ object SpanWalker {
+@@ -426,9 +380,12 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -8374,7 +8460,7 @@ index 59df4ba..680a9f2 100644
      val xStart = AFix(c.vertexFormat)
      val xEnd = AFix(c.vertexFormat)
      val y = AFix(c.vertexFormat)
-@@ -436,9 +387,11 @@ object SpanWalker {
+@@ -436,9 +393,11 @@ object SpanWalker {
      val hiS = AFix(c.texCoordsHiFormat)
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
