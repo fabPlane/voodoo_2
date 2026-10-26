@@ -129,3 +129,31 @@ timing (pipeline the multiplies or ~25-30 MHz); per-chip video streaming
 (today every chip scans the whole frame); dock FPGA side (link host, per-chip
 addressing, video merge, swap sync) and the board; LibreLane run in the
 wafer.space template (pads, power grid, DRC/LVS, antenna); gate-level sim.
+
+## More memory pins: 1x1_max_all pad ring (168 I/O, same 12.92 mm² core)
+
+The wafer.space template's `1x1_max_all` ring has 168 bidirectional pads (+30
+power) without shrinking the core, so the dies can have wide parallel
+memory. Channel-model runs (fps at 40 MHz, mid config + asicFifos):
+
+| memory per chip | cycles/frame | fps |
+|---|---|---|
+| calibration: model of HyperRAM at the core clock (real controller: 2,770,930) | 1,940,617 | 21 |
+| 32-bit async SRAM fb + x8 HyperRAM tex | 1,465,614 | 27 |
+| 64-bit SRAM fb (2 banks) + x8 HyperRAM tex | 1,450,629 | 28 |
+| 64-bit SRAM fb + x16 HyperRAM tex | 1,370,619 | 29 |
+| 32-bit SRAM fb + 16-bit SRAM tex | 1,430,602 | 28 |
+| **2 chips: 32-bit SRAM fb + x16 HyperRAM tex** | **775,641** | **52** |
+| 2 chips: 32-bit SRAM fb + 16-bit SRAM tex | 815,590 | 49 |
+| 4 chips: 32-bit SRAM fb + 16-bit SRAM tex | 495,581 | 81 |
+
+The model underestimates HyperRAM's cost (1.94M vs the real controller's
+2.77M: one transaction at a time, read chunks); an SRAM controller has no
+command / latency phase, so the SRAM rows should hold. One 32-bit SRAM bank is
+enough: with it the framebuffer stops being the limit (second bank +1%).
+Pins: 32-bit SRAM (2 x 16-bit 10 ns parts, shared address) ~59, x16
+HyperRAM 20, link 11, video 12, clock/reset 2 = ~104 of 168.
+Risks: async SRAM read through GF180 pads in one 25 ns cycle (pad delays
+2.4-6.6 ns + 10 ns SRAM: tight at the slow corner, or pipeline), WE# pulse
+timing, simultaneous switching on ~60 pins, 3.3 V I/O supply, bond-out of a
+200-pad die on chip-on-board.
