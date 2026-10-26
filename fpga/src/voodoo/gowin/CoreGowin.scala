@@ -129,7 +129,10 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // like the fill ports; with 8 the write ports were blocked 11% / 19% of
   // cycles once reads dropped (B114).
   val fbAxi = BmbToAxi4Mem(Core.fbMemSharedBmbParams(c), axiBurstLog2, pendingMax = CoreGowin.fillPendingMax)
-  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false, pendingMax = CoreGowin.fillPendingMax)
+  // Two TMUs x 4 fills x two 32-byte pieces = 16: the old cap exactly
+  // (GOWIN_TEX_PENDING).
+  val texAxi = BmbToAxi4Mem(Core.texMemBmbParams(c), axiBurstLog2, splitPages = false,
+    pendingMax = sys.env.get("GOWIN_TEX_PENDING").map(_.toInt).getOrElse(CoreGowin.fillPendingMax))
   val texReloc = Axi4AddressRelocate(
     CoreGowin.texAxiConfig(c, axiBurstLog2),
     GowinAddressMap.texMemBase

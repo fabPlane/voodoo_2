@@ -272,8 +272,12 @@ case class TangMega138kPro(c: Config) extends Component {
   private val burstBeats = 32
   val fbCc = Axi4ClockCrossing(fbDdrConfig, coreCd, ClockDomain.current,
     arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
+  // Texture R: both TMUs keep up to 4 fills of 64-byte lines (16 words)
+  // in flight each; 32 words held two lines and the adapter's stager then
+  // waited on it (GOWIN_TEX_RFIFO, words).
+  private val texRBeats = sys.env.get("GOWIN_TEX_RFIFO").map(_.toInt).getOrElse(burstBeats)
   val texCc = Axi4ClockCrossing(CoreGowin.texAxiConfig(c), coreCd, ClockDomain.current,
-    arFifoSize = 4, awFifoSize = 4, rFifoSize = burstBeats, wFifoSize = burstBeats, bFifoSize = 4)
+    arFifoSize = 4, awFifoSize = 4, rFifoSize = texRBeats, wFifoSize = burstBeats, bFifoSize = 4)
 
   pcie.bar.io.axi <> barCc.io.input
   raw.split.io.input <> barCc.io.output
