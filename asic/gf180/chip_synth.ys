@@ -1,0 +1,17 @@
+read_verilog -sv /home/hyper/.cache/asic-est/chip-rtl/voodoo_sli_chip.v
+hierarchy -top voodoo_sli_chip
+synth -top voodoo_sli_chip -flatten -booth -run begin:fine
+techmap -autoproc -map memmodel.v
+opt -fast -full
+techmap -map +/techmap.v -map +/choices/kogge-stone.v
+opt -fast
+dfflibmap -liberty /home/hyper/.cache/asic-est/gf180_7t_tt5v.lib
+abc -liberty /home/hyper/.cache/asic-est/gf180_7t_tt5v.lib -D 10000
+opt_clean
+hilomap -singleton -hicell gf180mcu_fd_sc_mcu7t5v0__tieh Z -locell gf180mcu_fd_sc_mcu7t5v0__tiel ZN
+setundef -zero
+splitnets
+opt_clean -purge
+insbuf -buf gf180mcu_fd_sc_mcu7t5v0__buf_1 I Z
+tee -o area.txt stat -liberty /home/hyper/.cache/asic-est/gf180_7t_tt5v.lib
+write_verilog -noattr -noexpr -nohex -nodec chip_gf180.v

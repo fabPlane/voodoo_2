@@ -84,3 +84,48 @@ One die design, N copies (SLI): single-TMU core, 2xHyperRAM (16-bit) on the
 framebuffer, 1xHyperRAM on textures (~32 memory pins), narrow broadcast input
 from the host FPGA (Tang dock: PCIe + HDMI), scan-line output back to it.
 4 chips ≈ 70-85 fps GLQuake at 33-40 MHz (dock today: 50.5 fps).
+
+## The SLI chip, built out (2026-10-27)
+
+RTL (port patch, `src/voodoo/asic/`): `AsicChip` die top (`AsicChipGen`) =
+core + `AsicUncore`: host link (8 pins DDR), framebuffer arbiter (5 core ports
++ fill-to-burst) into a 16-bit HyperBus controller (2 x8 HyperRAMs), texture
+port into an 8-bit one. Runtime SLI (host config write). `AsicConfig`: single
+TMU, tex cache 64 lines, fb write slots 2x64, `asicFifos`, scanout line
+fetcher, SLI up to 8. Simulation: `--sim-mem-mode asic` (CoreSim keeps the
+harness paths; HyperRamModel behind the real controllers, HyperBus at the
+core clock). Pin budget 56/56 (clk, reset, link 11, fb HyperBus 20, tex 11,
+video 12).
+
+Function: GLQuake frame renders pixel-exact through link + controllers +
+models; 2-chip SLI: chip 1 exact, chip 0 2 px (known quirk).
+
+Performance (cycles per frame, fps at 40 MHz):
+
+| run | cycles | fps |
+|---|---|---|
+| 1 chip, fixed latency 6, dock FIFOs | 3,090,974 | 12.9 |
+| + asicFifos (small queues) | 3,135,950 | 12.8 |
+| + variable latency 3 | 2,825,951 | 14.2 |
+| + 32-word read chunks | 2,770,930 | 14.4 |
+| **2 chips (each)** | **1,505,910** | **26.6** |
+| 4 chips (chip 0) | 860,944 | 46.5 |
+
+Framebuffer bandwidth bound: ~6.5 MB/frame of framebuffer traffic is ~1.6M
+words; the 16-bit HyperRAM at the core clock moves one word per cycle.
+Clocking HyperBus at 2x the core clock would be the next big gain.
+
+Die (Yosys + OpenROAD, typical 5 V): logic 4.59 mm² cells (4.84 after
+buffering, ~8 mm² placed), meets 40 MHz (core slack +0.02 ns after
+repair_timing; slow corner would not). On-chip RAM 26.2 KiB (asicFifos):
+~8.8 mm² as 5 V SRAM macros + ~4.4 mm² as flops — does not fit 12.92 mm².
+GF180 5 V SRAM is ~51 µm²/bit (512x8; 64x8 is 196) vs ~64 µm²/bit for a flop.
+Fitting needs ~10 KiB: single palette copy, plane-reader line buffers → small
+windows, HDMI FIFO 256, tex cache 32-64 lines, PCI FIFO 32.
+
+Remaining work to a tape-out: memory diet + SRAM macro wrappers (sync reads);
+HyperBus DDR PHY on GF180 pads (no DDR cells; RWDS capture); slow-corner
+timing (pipeline the multiplies or ~25-30 MHz); per-chip video streaming
+(today every chip scans the whole frame); dock FPGA side (link host, per-chip
+addressing, video merge, swap sync) and the board; LibreLane run in the
+wafer.space template (pads, power grid, DRC/LVS, antenna); gate-level sim.
