@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..6a2582c 100644
+index 1b34fa2..9596a9a 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..6a2582c 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,106 @@ case class Config(
+@@ -31,6 +34,113 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1149,6 +1149,13 @@ index 1b34fa2..6a2582c 100644
 +    // die design, N chips, each with its own memory.
 +    sliCount: Int = 1,
 +    sliIndex: Int = 0,
++    // Largest chip count the SLI row select supports at run time (Core
++    // io.sliCountLog2 / io.sliIndex, which default to sliCount / sliIndex).
++    sliMaxCount: Int = 1,
++    // ASIC on-chip RAM budget: FPGA-sized queues cut down (framebuffer reader
++    // issue queues 64 -> 8, post-TMU FIFO 64 -> 16, framebuffer access
++    // queues 32 -> 8, scanout line fetcher FIFO 128 words).
++    asicFifos: Boolean = false,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -1176,7 +1183,7 @@ index 1b34fa2..6a2582c 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..c86c2c9 100644
+index 100f1c6..b4f7164 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -1,5 +1,7 @@
@@ -1187,7 +1194,20 @@ index 100f1c6..c86c2c9 100644
  import spinal.core._
  import spinal.lib._
  import spinal.lib.bus.bmb._
-@@ -36,6 +38,27 @@ object Core {
+@@ -14,6 +16,12 @@ import voodoo.hdmi.{HdmiCdcFramebufferScanout, HdmiScanoutPort}
+ import voodoo.texture.TextureMem
+ 
+ object Core {
++  /** The elaborating Core's SLI inputs, pulled by the span walker and the
++    * fill writer (raster/Sli.scala). */
++  object Sli {
++    var countLog2: UInt = null
++    var index: UInt = null
++  }
+   val cpuBmbParams = BmbParameter(
+     addressWidth = 24,
+     dataWidth = 32,
+@@ -36,6 +44,27 @@ object Core {
      alignment = BmbParameter.BurstAlignement.BYTE
    )
  
@@ -1215,7 +1235,7 @@ index 100f1c6..c86c2c9 100644
    def texMemBmbParams(c: Config) = BmbParameter(
      addressWidth = c.addressWidth.value,
      dataWidth = 32,
-@@ -67,11 +90,17 @@ case class Core(c: Config) extends Component {
+@@ -67,11 +96,17 @@ case class Core(c: Config) extends Component {
  
      // Framebuffer memory buses
      val fbMemWrite = master(Bmb(Core.fbMemBmbParams(c)))
@@ -1233,7 +1253,7 @@ index 100f1c6..c86c2c9 100644
      // Texture memory bus (R/W, internal 2-port arbitration with texBaseAddr relocation)
      val texMem = master(Bmb(Core.texMemBmbParams(c)))
  
-@@ -92,25 +121,40 @@ case class Core(c: Config) extends Component {
+@@ -92,25 +127,47 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -1244,7 +1264,14 @@ index 100f1c6..c86c2c9 100644
      // Integrated scanout path. Board wrappers provide the physical HDMI transmitter/clocking.
      val hdmi = master(HdmiScanoutPort(c))
  
++    // SLI row select (Config.sliMaxCount): this chip renders rows
++    // y % (1 << sliCountLog2) == sliIndex.
++    val sliCountLog2 = in(UInt(2 bits)) default (U(log2Up(c.sliCount), 2 bits))
++    val sliIndex = in(UInt(3 bits)) default (U(c.sliIndex, 3 bits))
++
    }
++  Core.Sli.countLog2 = io.sliCountLog2
++  Core.Sli.index = io.sliIndex
    val addressRemapper =
 -    AddressRemapper(RegisterBank.externalBmbParams(c), RegisterBank.bmbParams(c))
 +    AddressRemapper(RegisterBank.externalBmbParams(c), RegisterBank.bmbParams(c), c.tmuCount)
@@ -1277,7 +1304,7 @@ index 100f1c6..c86c2c9 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -124,7 +168,12 @@ case class Core(c: Config) extends Component {
+@@ -124,7 +181,12 @@ case class Core(c: Config) extends Component {
      pciFifo.io.texWrite << frontdoor.io.texWrite
      frontdoor.io.texBaseAddr := regBank.tmuConfig.texBaseAddr
  
@@ -1291,7 +1318,7 @@ index 100f1c6..c86c2c9 100644
      pciFifo.io.regSide <> regBank.io.bus
      regBank.io.floatShadow <> pciFifo.io.floatShadow
      regBank.io.statusInputs <> io.statusInputs
-@@ -135,6 +184,8 @@ case class Core(c: Config) extends Component {
+@@ -135,6 +197,8 @@ case class Core(c: Config) extends Component {
      swapBuffer.io.vsyncEnable := regBank.commands.swapVsyncEnable
      swapBuffer.io.swapInterval := regBank.commands.swapInterval
      swapBuffer.io.swapCmdEnqueued := pciFifo.io.wasEnqueued
@@ -1300,7 +1327,7 @@ index 100f1c6..c86c2c9 100644
  
      regBank.io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      regBank.io.swapsPending := framebufferLayout.swapsPending
-@@ -142,14 +193,14 @@ case class Core(c: Config) extends Component {
+@@ -142,14 +206,14 @@ case class Core(c: Config) extends Component {
      io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      io.swapsPending := framebufferLayout.swapsPending
  
@@ -1317,7 +1344,7 @@ index 100f1c6..c86c2c9 100644
  
      pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
        c,
-@@ -157,14 +208,45 @@ case class Core(c: Config) extends Component {
+@@ -157,14 +221,45 @@ case class Core(c: Config) extends Component {
        framebufferLayout
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
@@ -1364,7 +1391,7 @@ index 100f1c6..c86c2c9 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,16 +255,20 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +268,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -1388,7 +1415,7 @@ index 100f1c6..c86c2c9 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +276,7 @@ case class Core(c: Config) extends Component {
+@@ -190,6 +289,7 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
@@ -1396,7 +1423,7 @@ index 100f1c6..c86c2c9 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -199,10 +286,61 @@ case class Core(c: Config) extends Component {
+@@ -199,10 +299,61 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiClock := io.hdmi.clock
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
@@ -1461,7 +1488,7 @@ index 100f1c6..c86c2c9 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..4f33d0a 100644
+index 9effb48..80e25d5 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
@@ -1485,13 +1512,34 @@ index 9effb48..4f33d0a 100644
  ) extends Component {
    val io = new Bundle {
      // Unified CPU bus (24-bit address covers 16MB PCI BAR)
-@@ -31,22 +36,94 @@ case class CoreSim(
+@@ -27,26 +32,114 @@ case class CoreSim(
+   }
+ 
+   val core = Core(c)
+-  core.io.cpuBus <> io.cpuBus
++  val asicMode = memTiming.mode == "asic"
++  if (!asicMode) core.io.cpuBus <> io.cpuBus
++
++  if (asicMode) {
++    // GF180 SLI chip study: the host link, external HyperRAM and the chip's
++    // uncore (voodoo.asic), memories under the harness's names.
++    val host = voodoo.asic.HostLinkHost()
++    host.io.bus <> io.cpuBus
++    val uncore = voodoo.asic.AsicUncore(c, memTiming.hbLatency, log2Up(c.sliCount), c.sliIndex, memTiming.hbReadChunk)
++    voodoo.asic.AsicUncore.attach(core, uncore)
++    uncore.io.link << host.io.link
++    host.io.rsp << uncore.io.linkRsp
++    val fbWriteRam = voodoo.asic.HyperRamModel(2, 4 * 1024 * 1024, memTiming.hbLatency).setName("fbWriteRam")
++    val texRam = voodoo.asic.HyperRamModel(1, 8 * 1024 * 1024, memTiming.hbLatency).setName("texRam")
++    fbWriteRam.io.hb <> uncore.io.fbHb
++    texRam.io.hb <> uncore.io.texHb
++  }
  
    def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
  
 -  val fbWriteRam = simRam(Core.fbMemBmbParams(c), 4 * 1024 * 1024)
 -  val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024)
-+  if (memTiming.mode == "pipelined") {
++  if (asicMode) {} else if (memTiming.mode == "pipelined") {
 +    // Every framebuffer client on its own pipelined port (board-like).
 +    require(!c.separateScanoutMem)
 +    def pieceParams(p: BmbParameter): BmbParameter =
@@ -1595,7 +1643,7 @@ index 9effb48..4f33d0a 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..fc32c28 100644
+index 6051025..c754285 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1643,7 +1691,7 @@ index 6051025..fc32c28 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,32 @@ object CoreSimGen extends App {
+@@ -37,7 +49,34 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1673,11 +1721,13 @@ index 6051025..fc32c28 100644
 +      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64),
 +      tripleBuffering = args.contains("--triple-buffering"),
 +      sliCount = argIntValue("--sli-count").getOrElse(1),
-+      sliIndex = argIntValue("--sli-index").getOrElse(0)
++      sliIndex = argIntValue("--sli-index").getOrElse(0),
++      sliMaxCount = argIntValue("--sli-max-count").getOrElse(1),
++      asicFifos = args.contains("--asic-fifos")
      )
  
    val memTiming = SimMemoryTiming(
-@@ -45,9 +82,13 @@ object CoreSimGen extends App {
+@@ -45,9 +84,15 @@ object CoreSimGen extends App {
      fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
      burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
      burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
@@ -1686,7 +1736,9 @@ index 6051025..fc32c28 100644
 +    fbChanBytesPerCycleX16 = argIntValue("--sim-fb-chan-bpc16").getOrElse(0),
 +    fbChanOverhead = argIntValue("--sim-fb-chan-overhead").getOrElse(0),
 +    texChanBytesPerCycleX16 = argIntValue("--sim-tex-chan-bpc16").getOrElse(0),
-+    texChanOverhead = argIntValue("--sim-tex-chan-overhead").getOrElse(0)
++    texChanOverhead = argIntValue("--sim-tex-chan-overhead").getOrElse(0),
++    hbLatency = argIntValue("--sim-hb-latency").getOrElse(6),
++    hbReadChunk = argIntValue("--sim-hb-read-chunk").getOrElse(16)
    )
  
 -  val report = GenSupport.simVerilog().generate(CoreSim(config, memTiming))
@@ -1694,10 +1746,10 @@ index 6051025..fc32c28 100644
    GenSupport.mirrorRomSidecars("emu/sim/rtl", report.toplevelName)
  }
 diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
-index 1bfe40c..a819515 100644
+index 1bfe40c..e219c87 100644
 --- a/src/voodoo/SimBmbMemory.scala
 +++ b/src/voodoo/SimBmbMemory.scala
-@@ -9,9 +9,20 @@ case class SimMemoryTiming(
+@@ -9,9 +9,23 @@ case class SimMemoryTiming(
      fixedReadLatency: Int = 0,
      burstSetupLatency: Int = 12,
      burstBeatLatency: Int = 1,
@@ -1710,17 +1762,20 @@ index 1bfe40c..a819515 100644
 +    fbChanBytesPerCycleX16: Int = 0,
 +    fbChanOverhead: Int = 0,
 +    texChanBytesPerCycleX16: Int = 0,
-+    texChanOverhead: Int = 0
++    texChanOverhead: Int = 0,
++    // "asic": the GF180 SLI chip's uncore on HyperRAM models (CoreSim).
++    hbLatency: Int = 6,
++    hbReadChunk: Int = 16
  ) {
 -  require(Set("onchip", "ideal", "fixed", "burst").contains(mode))
 +  // "pipelined": one independent port per memory client (SimBmbMultiPortMemory),
 +  // reads answered fixedReadLatency cycles after the command, writes
 +  // writeLatency cycles after their last beat.
-+  require(Set("onchip", "ideal", "fixed", "burst", "pipelined").contains(mode))
++  require(Set("onchip", "ideal", "fixed", "burst", "pipelined", "asic").contains(mode))
    require(fixedReadLatency >= 0)
    require(burstSetupLatency >= 0)
    require(burstBeatLatency >= 0)
-@@ -96,9 +107,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
+@@ -96,9 +110,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
      }
    }
  
@@ -1931,6 +1986,799 @@ index 0000000..3478c00
 +      }
 +    }
 +  } else null
++}
+diff --git a/src/voodoo/asic/AsicChip.scala b/src/voodoo/asic/AsicChip.scala
+new file mode 100644
+index 0000000..db08859
+--- /dev/null
++++ b/src/voodoo/asic/AsicChip.scala
+@@ -0,0 +1,184 @@
++package voodoo.asic
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo._
++import voodoo.hdmi.HdmiScanoutPort
++
++/** Everything of one SLI chip (GF180 study) around the core: external
++  * HyperRAM for every memory client and a narrow host link. Same die for
++  * every chip; the host sets each chip's SLI row select through the link.
++  *
++  *   - framebuffer: two x8 HyperRAMs on one CS# (16-bit), all five core ports
++  *     and the fill engine through one arbiter
++  *   - texture memory: one x8 HyperRAM
++  *   - host: HostLinkChip (8 pins DDR + valid / ready / direction)
++  *
++  * Separate from the core so CoreSim keeps its core at the harness's path.
++  */
++case class AsicUncore(
++    c: Config,
++    hbLatency: Int = 6,
++    sliResetCountLog2: Int = 0,
++    sliResetIndex: Int = 0,
++    hbReadChunk: Int = 16
++) extends Component {
++  require(c.fbFillOffload, "AsicUncore: the fill engine sits on the memory side")
++  require(!c.separateScanoutMem)
++  val io = new Bundle {
++    val link = slave Stream (Bits(16 bits))
++    val linkRsp = master Flow (Bits(8 bits))
++    val fbHb = master(HyperBusIo(2))
++    val texHb = master(HyperBusIo(1))
++
++    // Core side
++    val cpuBus = master(Bmb(Core.cpuBmbParams))
++    val fbPorts = Vec(slave(Bmb(Core.fbMemBmbParams(c))), Core.fbMemPortCount)
++    val fillOffload = slave Stream (voodoo.raster.FastfillWordWriter.FillCmd(c))
++    val fillDone = out Bool ()
++    val texMem = slave(Bmb(Core.texMemBmbParams(c)))
++    val sli = out(HostLink.SliCfg())
++  }
++
++  val link = HostLinkChip(sliResetCountLog2, sliResetIndex)
++  link.io.link << io.link
++  io.linkRsp << link.io.rsp
++  io.cpuBus <> link.io.bus
++  io.sli := link.io.sli
++
++  val fill = FillToBmb(c)
++  fill.io.fill << io.fillOffload
++  io.fillDone := fill.io.done
++
++  val fbInputs = Core.fbMemPortCount + 1
++  val fbShared = BmbParameter(
++    addressWidth = c.addressWidth.value,
++    dataWidth = 32,
++    sourceWidth = Core.fbMemBmbParams(c).access.sourceWidth + log2Up(fbInputs),
++    contextWidth = 0,
++    lengthWidth = c.memBurstLengthWidth,
++    canRead = true,
++    canWrite = true,
++    alignment = BmbParameter.BurstAlignement.BYTE
++  )
++  val fbArbiter = BmbArbiter(
++    inputsParameter = Seq.fill(fbInputs)(Core.fbMemBmbParams(c)),
++    outputParameter = fbShared,
++    lowerFirstPriority = false
++  )
++  for (i <- 0 until Core.fbMemPortCount) fbArbiter.io.inputs(i) <> io.fbPorts(i)
++  fbArbiter.io.inputs(Core.fbMemPortCount) <> fill.io.bus
++
++  val fbCtrl = HyperBusController(fbShared, devices = 2, latencyBeats = hbLatency, readChunkWords = hbReadChunk)
++  fbCtrl.io.bus <> fbArbiter.io.output
++  io.fbHb <> fbCtrl.io.hb
++
++  val texCtrl = HyperBusController(Core.texMemBmbParams(c), devices = 1, latencyBeats = hbLatency, readChunkWords = hbReadChunk)
++  texCtrl.io.bus <> io.texMem
++  io.texHb <> texCtrl.io.hb
++}
++
++object AsicUncore {
++  /** Wire a core's memory, host and SLI ports to an uncore. */
++  def attach(core: Core, u: AsicUncore): Unit = {
++    core.io.cpuBus <> u.io.cpuBus
++    u.io.fbPorts(0) <> core.io.fbMemWrite
++    u.io.fbPorts(1) <> core.io.fbColorWriteMem
++    u.io.fbPorts(2) <> core.io.fbAuxWriteMem
++    u.io.fbPorts(3) <> core.io.fbColorReadMem
++    u.io.fbPorts(4) <> core.io.fbAuxReadMem
++    u.io.fillOffload << core.io.fillOffload
++    core.io.fillDone := u.io.fillDone
++    u.io.texMem <> core.io.texMem
++    core.io.sliCountLog2 := u.io.sli.countLog2
++    core.io.sliIndex := u.io.sli.index
++  }
++}
++
++/** One SLI chip, the die top for synthesis: core + uncore; video is the
++  * core's scanout port (every chip scans the whole frame, the board takes
++  * each row from the chip that owns it).
++  */
++case class AsicChip(c: Config, hbLatency: Int = 6) extends Component {
++  val io = new Bundle {
++    val link = slave Stream (Bits(16 bits))
++    val linkRsp = master Flow (Bits(8 bits))
++    val fbHb = master(HyperBusIo(2))
++    val texHb = master(HyperBusIo(1))
++    val vRetrace = in Bool ()
++    val hdmi = master(HdmiScanoutPort(c))
++  }
++  val core = Core(c)
++  val uncore = AsicUncore(c, hbLatency)
++  AsicUncore.attach(core, uncore)
++  uncore.io.link << io.link
++  io.linkRsp << uncore.io.linkRsp
++  io.fbHb <> uncore.io.fbHb
++  io.texHb <> uncore.io.texHb
++  core.io.statusInputs.vRetrace := io.vRetrace
++  core.io.statusInputs.memFifoFree := 0xffff
++  core.io.statusInputs.pciInterrupt := False
++  core.io.fbBaseAddr := 0
++  core.io.flushFbCaches := False
++  io.hdmi <> core.io.hdmi
++}
++
++/** Verilog for the synthesis study: AsicChip as the die top (pins = io). */
++object AsicChipGen extends App {
++  def argIntValue(name: String): Option[Int] = {
++    val idx = args.lastIndexOf(name)
++    if (idx >= 0 && idx + 1 < args.length) Some(args(idx + 1).toInt) else None
++  }
++  val c = AsicConfig(args)
++  SpinalConfig(targetDirectory = argValue("--out").getOrElse("asic-rtl"), defaultConfigForClockDomains =
++    ClockDomainConfig(resetKind = ASYNC, resetActiveLevel = LOW))
++    .generateVerilog(AsicChip(c, hbLatency = argIntValue("--hb-latency").getOrElse(6)).setDefinitionName("voodoo_sli_chip"))
++  def argValue(name: String): Option[String] = {
++    val idx = args.lastIndexOf(name)
++    if (idx >= 0 && idx + 1 < args.length) Some(args(idx + 1)) else None
++  }
++}
++
++/** The single-TMU chip configuration ("mid" in asic/gf180/README.md): dock
++  * options minus the FPGA-only ones, small caches, SLI up to 8 chips.
++  */
++object AsicConfig {
++  def apply(args: Array[String] = Array()): Config = {
++    def argIntValue(name: String): Option[Int] = {
++      val idx = args.lastIndexOf(name)
++      if (idx >= 0 && idx + 1 < args.length) Some(args(idx + 1).toInt) else None
++    }
++    Config.voodoo1().copy(
++      fbWriteBufferLineWords = argIntValue("--fb-write-line-words").getOrElse(64),
++      fbWriteBufferCount = argIntValue("--fb-write-slots").getOrElse(2),
++      separateAuxWriteMem = true,
++      useFbWriteBuffer = true,
++      useFbReadCache = true,
++      useTexFillCache = false,
++      texSmallCacheLines = argIntValue("--tex-small-cache-lines").getOrElse(64),
++      texSmallFillSlots = 4,
++      texSmallLineWords = 16,
++      texHintQueueDepth = 8,
++      texMaxOutstanding = argIntValue("--tex-max-outstanding").getOrElse(15),
++      texFillRequestWindow = argIntValue("--tex-fill-request-window").getOrElse(16),
++      fbFillOffload = true,
++      spanQueueDepth = 16,
++      tmuCount = 1,
++      texHintValidCheck = true,
++      triangleSnapshot = false,
++      pixelConfigSlots = true,
++      texCachePairedBanks = true,
++      skipRedundantFbzSync = true,
++      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64),
++      tripleBuffering = true,
++      hdmiFifoDepth = 1024,
++      hdmiPrefill = 512,
++      hdmiRefillLow = 256,
++      hdmiRefillHigh = 768,
++      sliMaxCount = 8,
++      asicFifos = true,
++      scanoutLineFetcher = true
++    )
++  }
++}
+diff --git a/src/voodoo/asic/FillToBmb.scala b/src/voodoo/asic/FillToBmb.scala
+new file mode 100644
+index 0000000..9cae88b
+--- /dev/null
++++ b/src/voodoo/asic/FillToBmb.scala
+@@ -0,0 +1,84 @@
++package voodoo.asic
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo._
++import voodoo.raster.FastfillWordWriter.FillCmd
++
++/** Config.fbFillOffload on a chip without a DRAM fill engine: each fill
++  * rectangle becomes one masked 8-word (32-byte line) write burst per line
++  * into the framebuffer memory arbiter. done pulses once per command, after
++  * its last write response.
++  */
++case class FillToBmb(c: Config) extends Component {
++  val p = Core.fbMemBmbParams(c)
++  val io = new Bundle {
++    val fill = slave Stream (FillCmd(c))
++    val done = out Bool ()
++    val bus = master(Bmb(p))
++  }
++
++  val active = RegInit(False)
++  val setup = RegInit(False)
++  val cmd = Reg(FillCmd(c))
++  val rowsLeft = Reg(UInt(11 bits)) init (0)
++  val rowAddr = Reg(UInt(32 bits)) init (0)
++  val line = Reg(UInt(32 bits)) init (0)
++  val sByte, eByte = Reg(UInt(32 bits)) init (0)
++  val beat = Reg(UInt(3 bits)) init (0)
++  val outstanding = Reg(UInt(8 bits)) init (0)
++  val finishing = RegInit(False)
++
++  io.fill.ready := !active && !finishing
++  when(io.fill.fire) {
++    active := True
++    setup := True
++    cmd := io.fill.payload
++    rowsLeft := io.fill.payload.rows
++    rowAddr := io.fill.payload.rowAddr.resized
++  }
++  when(active && setup) {
++    sByte := rowAddr + cmd.x0.resize(32 bits)
++    eByte := rowAddr + cmd.x1.resize(32 bits) - 1
++    line := (rowAddr + cmd.x0.resize(32 bits))(31 downto 5) @@ U(0, 5 bits)
++    beat := 0
++    setup := False
++  }
++
++  val wordAddr = line + (beat.resize(32 bits) << 2)
++  io.bus.cmd.valid := active && !setup
++  io.bus.cmd.last := beat === 7
++  io.bus.cmd.opcode := Bmb.Cmd.Opcode.WRITE
++  io.bus.cmd.address := line.resized
++  io.bus.cmd.length := 31
++  io.bus.cmd.source := 0
++  io.bus.cmd.data := cmd.value ## cmd.value
++  for (lane <- 0 until 4) {
++    val b = wordAddr + lane
++    io.bus.cmd.mask(lane) := b >= sByte && b <= eByte
++  }
++
++  val rspFire = io.bus.rsp.fire
++  io.bus.rsp.ready := True
++  val lineSent = io.bus.cmd.fire && io.bus.cmd.last
++  outstanding := outstanding + U(lineSent) - U(rspFire)
++
++  when(io.bus.cmd.fire) {
++    beat := beat + 1
++    when(io.bus.cmd.last) {
++      line := line + 32
++      when((line + 32) > eByte) {
++        rowsLeft := rowsLeft - 1
++        rowAddr := (rowAddr.asSInt + cmd.rowStep.resize(32 bits)).asUInt
++        setup := True
++        when(rowsLeft === 1) {
++          active := False
++          finishing := True
++        }
++      }
++    }
++  }
++  io.done := finishing && outstanding === 0 && !lineSent
++  when(io.done) { finishing := False }
++}
+diff --git a/src/voodoo/asic/HostLink.scala b/src/voodoo/asic/HostLink.scala
+new file mode 100644
+index 0000000..6bc4b43
+--- /dev/null
++++ b/src/voodoo/asic/HostLink.scala
+@@ -0,0 +1,158 @@
++package voodoo.asic
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo._
++
++/** Host link between the board FPGA and one SLI chip: 8 data pins at double
++  * rate (16 bits per core cycle) towards the chip, the same pins turned
++  * around for read data (one byte per cycle).
++  *
++  * Packet, 16-bit halfwords: H0 = {read, config, mask[3:0], 00, addr[23:16]},
++  * H1 = addr[15:0], then for a write D0 = data[15:0], D1 = data[31:16].
++  * A read answers with four bytes (data[7:0] first). A config write sets the
++  * chip's SLI row select: data[1:0] = log2(chip count), data[6:4] = index.
++  * Writes are posted: the host side answers them as soon as they are sent.
++  */
++object HostLink {
++  case class SliCfg() extends Bundle {
++    val countLog2 = UInt(2 bits)
++    val index = UInt(3 bits)
++  }
++}
++
++/** Chip side: link packets to the core's CPU bus. */
++case class HostLinkChip(sliResetCountLog2: Int = 0, sliResetIndex: Int = 0) extends Component {
++  val p = Core.cpuBmbParams
++  val io = new Bundle {
++    val link = slave Stream (Bits(16 bits))
++    val rsp = master Flow (Bits(8 bits))
++    val bus = master(Bmb(p))
++    val sli = out(HostLink.SliCfg())
++  }
++
++  val sli = Reg(HostLink.SliCfg())
++  sli.countLog2.init(sliResetCountLog2)
++  sli.index.init(sliResetIndex)
++  io.sli := sli
++
++  val idx = Reg(UInt(2 bits)) init (0)
++  val h0 = Reg(Bits(16 bits))
++  val h1 = Reg(Bits(16 bits))
++  val d0 = Reg(Bits(16 bits))
++  val d1 = Reg(Bits(16 bits))
++  val full = RegInit(False) // a packet waits for the bus
++  val readPending = RegInit(False)
++
++  val isRead = io.link.payload(15)
++  io.link.ready := !full && !readPending
++  when(io.link.fire) {
++    switch(idx) {
++      is(0) { h0 := io.link.payload }
++      is(1) { h1 := io.link.payload }
++      is(2) { d0 := io.link.payload }
++      is(3) { d1 := io.link.payload }
++    }
++    idx := idx + 1
++    val pktRead = Mux(idx === 0, isRead, h0(15))
++    when((idx === 1 && pktRead) || idx === 3) {
++      idx := 0
++      full := True
++    }
++  }
++
++  val cfg = h0(14)
++  io.bus.cmd.valid := full && !cfg
++  io.bus.cmd.last := True
++  io.bus.cmd.opcode := Mux(h0(15), B(Bmb.Cmd.Opcode.READ, 1 bits), B(Bmb.Cmd.Opcode.WRITE, 1 bits))
++  io.bus.cmd.address := (h0(7 downto 0) ## h1).asUInt
++  io.bus.cmd.length := 3
++  io.bus.cmd.source := 0
++  io.bus.cmd.data := d1 ## d0
++  io.bus.cmd.mask := h0(13 downto 10)
++  when(full && cfg) {
++    sli.countLog2 := d0(1 downto 0).asUInt
++    sli.index := d0(6 downto 4).asUInt
++    full := False
++  }
++  when(io.bus.cmd.fire) {
++    full := False
++    when(h0(15)) { readPending := True }
++  }
++
++  // Write responses are dropped (posted); a read's data goes back bytewise.
++  // Responses come in command order: the read's is the first one after the
++  // earlier writes' responses.
++  io.bus.rsp.ready := True
++  val writesOut = Reg(UInt(8 bits)) init (0)
++  val writeIssued = io.bus.cmd.fire && !h0(15)
++  val writeRsp = io.bus.rsp.fire && writesOut =/= 0
++  writesOut := writesOut + U(writeIssued) - U(writeRsp)
++  val rdData = Reg(Bits(32 bits))
++  val rdLeft = Reg(UInt(3 bits)) init (0)
++  when(io.bus.rsp.fire && !writeRsp && readPending) {
++    rdData := io.bus.rsp.data
++    rdLeft := 4
++  }
++  io.rsp.valid := rdLeft =/= 0
++  io.rsp.payload := rdData(7 downto 0)
++  when(rdLeft =/= 0) {
++    rdData := rdData |>> 8
++    rdLeft := rdLeft - 1
++    when(rdLeft === 1) { readPending := False }
++  }
++}
++
++/** Host side (board FPGA; here the simulation harness): CPU bus to link. */
++case class HostLinkHost() extends Component {
++  val p = Core.cpuBmbParams
++  val io = new Bundle {
++    val bus = slave(Bmb(p))
++    val link = master Stream (Bits(16 bits))
++    val rsp = slave Flow (Bits(8 bits))
++  }
++  val busy = RegInit(False)
++  val idx = Reg(UInt(2 bits)) init (0)
++  val isRead = Reg(Bool())
++  val source = Reg(UInt(p.access.sourceWidth bits))
++  val h0, h1, d0, d1 = Reg(Bits(16 bits))
++  val waitRead = RegInit(False)
++  val rdData = Reg(Bits(32 bits))
++  val rdCount = Reg(UInt(3 bits)) init (0)
++  val rspPending = RegInit(False)
++
++  io.bus.cmd.ready := !busy && !rspPending
++  when(io.bus.cmd.fire) {
++    val read = io.bus.cmd.opcode === Bmb.Cmd.Opcode.READ
++    isRead := read
++    source := io.bus.cmd.source
++    h0 := read ## False ## io.bus.cmd.mask ## B"00" ## io.bus.cmd.address(23 downto 16).asBits
++    h1 := io.bus.cmd.address(15 downto 0).asBits
++    d0 := io.bus.cmd.data(15 downto 0)
++    d1 := io.bus.cmd.data(31 downto 16)
++    busy := True
++    idx := 0
++  }
++  val words = Vec(h0, h1, d0, d1)
++  io.link.valid := busy
++  io.link.payload := words(idx)
++  when(io.link.fire) {
++    idx := idx + 1
++    when((idx === 1 && isRead) || idx === 3) {
++      busy := False
++      when(isRead) { waitRead := True; rdCount := 0 }.otherwise { rspPending := True }
++    }
++  }
++  when(io.rsp.valid && waitRead) {
++    rdData := io.rsp.payload ## rdData(31 downto 8)
++    rdCount := rdCount + 1
++    when(rdCount === 3) { waitRead := False; rspPending := True }
++  }
++  io.bus.rsp.valid := rspPending
++  io.bus.rsp.last := True
++  io.bus.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
++  io.bus.rsp.source := source
++  io.bus.rsp.data := rdData
++  when(io.bus.rsp.fire) { rspPending := False }
++}
+diff --git a/src/voodoo/asic/HyperBus.scala b/src/voodoo/asic/HyperBus.scala
+new file mode 100644
+index 0000000..f8b27b2
+--- /dev/null
++++ b/src/voodoo/asic/HyperBus.scala
+@@ -0,0 +1,343 @@
++package voodoo.asic
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++
++/** HyperBus at the controller side of a DDR PHY, one CK period per core clock
++  * cycle. Every cycle with ckEn moves one beat: two bytes per device, the
++  * rising-edge byte in bits 15:8 of the device's 16-bit slice and the falling
++  * one in 7:0 (HyperBus sends word bits 15:8 first). devices = 1 (one x8
++  * HyperRAM) or 2 (two x8 devices on one CS# / CK: a 16-bit bus; device 0
++  * holds bytes 1:0 of every 32-bit word, device 1 bytes 3:2).
++  *
++  * rwdsOut is the write mask (1 = keep the byte), one bit per byte in the same
++  * order as dqOut. dqInValid: the PHY captured a read beat (RWDS strobes).
++  */
++case class HyperBusIo(devices: Int) extends Bundle with IMasterSlave {
++  val csN = Bool()
++  val ckEn = Bool()
++  val dqOut = Bits(16 * devices bits)
++  val dqOe = Bool()
++  val rwdsOut = Bits(2 * devices bits)
++  val rwdsOe = Bool()
++  val dqIn = Bits(16 * devices bits)
++  val dqInValid = Bool()
++
++  override def asMaster(): Unit = {
++    out(csN, ckEn, dqOut, dqOe, rwdsOut, rwdsOe)
++    in(dqIn, dqInValid)
++  }
++}
++
++object HyperBus {
++  /** 48-bit command / address: CA[47] read, CA[46] memory space (0), CA[45]
++    * linear burst (1), CA[44:16] address[31:3], CA[2:0] address[2:0]; the
++    * address counts 16-bit device words.
++    */
++  def ca(isRead: Bool, deviceWordAddr: UInt): Bits = {
++    val a = deviceWordAddr.resize(32 bits)
++    isRead ## False ## True ## a(31 downto 3) ## B(0, 13 bits) ## a(2 downto 0)
++  }
++}
++
++/** BMB (32-bit, word-aligned bursts) to HyperBus, one transaction at a time.
++  * Writes stream the burst's beats straight onto the bus; a beat that is not
++  * there in time ends the bus transaction and the rest goes in a new one at
++  * the next address. Long bursts are cut into chunks (CS# low time). Reads
++  * land in a readChunkWords FIFO, a chunk starts only when it has room.
++  */
++case class HyperBusController(
++    p: BmbParameter,
++    devices: Int,
++    latencyBeats: Int = 6,
++    readChunkWords: Int = 16,
++    writeChunkWords: Int = 64
++) extends Component {
++  require(devices == 1 || devices == 2)
++  require(p.access.dataWidth == 32)
++  val io = new Bundle {
++    val bus = slave(Bmb(p))
++    val hb = master(HyperBusIo(devices))
++    val busy = out Bool ()
++  }
++  val beatsPerWord = 2 / devices
++  val wordAddrWidth = p.access.addressWidth - 2
++  val countWidth = p.access.lengthWidth + 1
++
++  object State extends SpinalEnum {
++    val IDLE, CA, LAT, WDATA, RDATA, GAP, WRSP, RWAIT = newElement()
++  }
++  val state = RegInit(State.IDLE)
++
++  val isRead = Reg(Bool()) init (False)
++  val inBurst = Reg(Bool()) init (False) // a write burst is partly written
++  val wordAddr = Reg(UInt(wordAddrWidth bits)) init (0)
++  val wordsLeft = Reg(UInt(countWidth bits)) init (0) // whole BMB transaction
++  val chunkLeft = Reg(UInt(countWidth bits)) init (0)
++  val beat = Reg(UInt(8 bits)) init (0)
++  val sub = Reg(UInt(1 bits)) init (0) // beat within a word (x8)
++  val source = Reg(UInt(p.access.sourceWidth bits))
++  val context = Reg(Bits(p.access.contextWidth bits))
++
++  val cmdWords = ((io.bus.cmd.length.resize(countWidth bits) + 1) >> 2).resize(countWidth bits)
++  val cmdWordAddr = io.bus.cmd.address(p.access.addressWidth - 1 downto 2)
++  val cmdIsRead = io.bus.cmd.opcode === Bmb.Cmd.Opcode.READ
++
++  // Read data path: beats -> words -> FIFO -> BMB response.
++  val rspFifo = StreamFifo(Bits(32 bits), readChunkWords)
++  val inflight = Reg(UInt(log2Up(readChunkWords + 1) + 1 bits)) init (0) // words requested, not yet in the FIFO
++  val rspWordsLeft = Reg(UInt(countWidth bits)) init (0)
++  val lowHalf = Reg(Bits(16 bits))
++  val inSub = Reg(UInt(1 bits)) init (0)
++  rspFifo.io.push.valid := False
++  rspFifo.io.push.payload.assignDontCare()
++  when(io.hb.dqInValid) {
++    if (devices == 2) {
++      rspFifo.io.push.valid := True
++      rspFifo.io.push.payload := io.hb.dqIn
++    } else {
++      when(inSub === 0) { lowHalf := io.hb.dqIn }.otherwise {
++        rspFifo.io.push.valid := True
++        rspFifo.io.push.payload := io.hb.dqIn ## lowHalf
++      }
++      inSub := inSub + 1
++    }
++  }
++  val pushed = rspFifo.io.push.fire
++
++  // Bus defaults
++  io.hb.csN := True
++  io.hb.ckEn := False
++  io.hb.dqOut := 0
++  io.hb.dqOe := False
++  io.hb.rwdsOut := 0
++  io.hb.rwdsOe := False
++  io.bus.cmd.ready := False
++
++  io.bus.rsp.valid := False
++  io.bus.rsp.last := True
++  io.bus.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
++  io.bus.rsp.source := source
++  if (p.access.contextWidth > 0) io.bus.rsp.context := context
++  io.bus.rsp.data := rspFifo.io.pop.payload
++  rspFifo.io.pop.ready := False
++
++  val deviceWordAddr = if (devices == 2) wordAddr.resize(32 bits) else (wordAddr << 1).resize(32 bits)
++  val caBits = HyperBus.ca(isRead, deviceWordAddr)
++
++  val inflightNext = UInt(inflight.getWidth bits)
++  inflightNext := inflight - U(pushed)
++
++  switch(state) {
++    is(State.IDLE) {
++      when(io.bus.cmd.valid) {
++        when(cmdIsRead) {
++          // Take the read command; chunks follow from the latched state.
++          io.bus.cmd.ready := True
++          isRead := True
++          wordAddr := cmdWordAddr
++          wordsLeft := cmdWords
++          rspWordsLeft := cmdWords
++          source := io.bus.cmd.source
++          if (p.access.contextWidth > 0) context := io.bus.cmd.context
++          state := State.RWAIT
++        }.otherwise {
++          isRead := False
++          when(!inBurst) {
++            wordAddr := cmdWordAddr
++            wordsLeft := cmdWords
++            source := io.bus.cmd.source
++            if (p.access.contextWidth > 0) context := io.bus.cmd.context
++          }
++          beat := 0
++          state := State.CA
++        }
++      }
++    }
++    is(State.RWAIT) {
++      // Next read chunk when the FIFO has room for it and the last one is in.
++      val chunk = Mux(wordsLeft > readChunkWords, U(readChunkWords, countWidth bits), wordsLeft)
++      when(wordsLeft === 0) {
++        when(rspWordsLeft === 0) { state := State.IDLE }
++      }.elsewhen(inflight === 0 && rspFifo.io.availability >= chunk) {
++        chunkLeft := chunk
++        beat := 0
++        state := State.CA
++      }
++    }
++    is(State.CA) {
++      io.hb.csN := False
++      io.hb.ckEn := True
++      io.hb.dqOe := True
++      val slice = caBits.subdivideIn(16 bits).reverse(beat.resize(2 bits)) // CA[47:32] first
++      io.hb.dqOut := (if (devices == 2) slice ## slice else slice)
++      beat := beat + 1
++      when(beat === 2) {
++        beat := 0
++        state := State.LAT
++        when(!isRead) {
++          chunkLeft := Mux(wordsLeft > writeChunkWords, U(writeChunkWords, countWidth bits), wordsLeft)
++        }
++      }
++    }
++    is(State.LAT) {
++      io.hb.csN := False
++      io.hb.ckEn := True
++      beat := beat + 1
++      when(beat === latencyBeats - 1) {
++        beat := 0
++        sub := 0
++        state := Mux(isRead, State.RDATA, State.WDATA)
++        when(isRead) { inflightNext := inflight - U(pushed) + chunkLeft.resized }
++      }
++    }
++    is(State.WDATA) {
++      io.hb.csN := False
++      val data = io.bus.cmd.data
++      val keep = io.bus.cmd.mask
++      when(!io.bus.cmd.valid && sub === 0) {
++        // Data late: end this bus transaction, go on in a new one.
++        inBurst := True
++        state := State.GAP
++      }.otherwise {
++        io.hb.ckEn := True
++        io.hb.dqOe := True
++        io.hb.rwdsOe := True
++        if (devices == 2) {
++          io.hb.dqOut := data
++          io.hb.rwdsOut := keep
++        } else {
++          io.hb.dqOut := Mux(sub === 0, data(15 downto 0), data(31 downto 16))
++          io.hb.rwdsOut := Mux(sub === 0, keep(1 downto 0), keep(3 downto 2))
++        }
++        val wordDone = if (devices == 2) True else sub === 1
++        sub := sub + 1
++        when(wordDone) {
++          io.bus.cmd.ready := True
++          wordAddr := wordAddr + 1
++          wordsLeft := wordsLeft - 1
++          chunkLeft := chunkLeft - 1
++          when(wordsLeft === 1) {
++            inBurst := False
++            state := State.WRSP
++          }.elsewhen(chunkLeft === 1) {
++            inBurst := True
++            state := State.GAP
++          }
++        }
++      }
++    }
++    is(State.RDATA) {
++      io.hb.csN := False
++      io.hb.ckEn := True
++      val wordDone = if (devices == 2) True else sub === 1
++      sub := sub + 1
++      when(wordDone) {
++        wordAddr := wordAddr + 1
++        wordsLeft := wordsLeft - 1
++        chunkLeft := chunkLeft - 1
++        when(chunkLeft === 1) { state := State.GAP }
++      }
++    }
++    is(State.GAP) {
++      // CS# high for a cycle between transactions (tCSHI).
++      state := Mux(isRead, State.RWAIT, State.IDLE)
++    }
++    is(State.WRSP) {
++      io.bus.rsp.valid := True
++      io.bus.rsp.last := True
++      when(io.bus.rsp.ready) { state := State.IDLE }
++    }
++  }
++  inflight := inflightNext
++
++  // Read responses, in parallel with the chunk state machine.
++  when(isRead && state =/= State.IDLE && state =/= State.WRSP) {
++    io.bus.rsp.valid := rspFifo.io.pop.valid
++    io.bus.rsp.last := rspWordsLeft === 1
++    rspFifo.io.pop.ready := io.bus.rsp.ready
++    when(rspFifo.io.pop.fire) { rspWordsLeft := rspWordsLeft - 1 }
++  }
++
++  io.busy := state =/= State.IDLE
++}
++
++/** Behavioural HyperRAM (simulation): `devices` x8 parts on one CS#, fixed
++  * latency, read beats back `readDelay` cycles after their clock (PHY round
++  * trip). Storage keeps SimBmbMemory's names (ram_symbol0..3, 32-bit words)
++  * so the C++ harness loads and reads it unchanged.
++  */
++case class HyperRamModel(devices: Int, size: Int, latencyBeats: Int = 6, readDelay: Int = 2) extends Component {
++  require(devices == 1 || devices == 2)
++  val io = new Bundle {
++    val hb = slave(HyperBusIo(devices))
++  }
++  private val wordCount = size / 4
++  private val wordAddrWidth = log2Up(wordCount)
++
++  val ram_symbol0 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol1 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol2 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol3 = Mem(Bits(8 bits), wordCount)
++  private val lanes = Seq(ram_symbol0, ram_symbol1, ram_symbol2, ram_symbol3)
++
++  val beat = Reg(UInt(12 bits)) init (0)
++  val caHigh = Reg(Bits(32 bits)) init (0)
++  val isRead = Reg(Bool()) init (False)
++  val addr = Reg(UInt(32 bits)) init (0) // device word address
++
++  val slice = io.hb.dqOut(15 downto 0) // device 0 carries the CA
++  val dataBeat = beat >= 3 + latencyBeats
++
++  val rdValid = False
++  val rdData = Bits(16 * devices bits)
++  rdData := 0
++
++  when(io.hb.csN) {
++    beat := 0
++  }.elsewhen(io.hb.ckEn) {
++    when(!dataBeat) { beat := beat + 1 }
++    when(beat < 2) { caHigh := caHigh(15 downto 0) ## slice }
++    when(beat === 2) {
++      val ca = caHigh ## slice
++      isRead := ca(47)
++      addr := (ca(44 downto 16) ## ca(2 downto 0)).asUInt
++    }
++    when(dataBeat) {
++      addr := addr + 1
++      if (devices == 2) {
++        val w = addr.resize(wordAddrWidth bits)
++        when(isRead) {
++          rdValid := True
++          rdData := Cat(lanes.map(_.readAsync(w)))
++        }.otherwise {
++          for (l <- 0 until 4) when(io.hb.rwdsOut(l)) { lanes(l)(w) := io.hb.dqOut(8 * l + 7 downto 8 * l) }
++        }
++      } else {
++        val w = (addr >> 1).resize(wordAddrWidth bits)
++        val hi = addr(0)
++        when(isRead) {
++          rdValid := True
++          rdData := Mux(hi, lanes(3).readAsync(w) ## lanes(2).readAsync(w), lanes(1).readAsync(w) ## lanes(0).readAsync(w))
++        }.otherwise {
++          for (l <- 0 until 4) {
++            val lo = l % 2 == 0
++            when((hi === Bool(l >= 2)) && io.hb.rwdsOut(if (lo) 0 else 1)) {
++              val (msb, lsb) = if (lo) (7, 0) else (15, 8)
++              lanes(l)(w) := io.hb.dqOut(msb downto lsb)
++            }
++          }
++        }
++      }
++    }
++  }
++
++  // PHY round trip
++  val dly = Flow(Bits(16 * devices bits))
++  dly.valid := rdValid
++  dly.payload := rdData
++  val delayed = (0 until readDelay).foldLeft(dly)((f, _) => f.stage())
++  io.hb.dqInValid := delayed.valid
++  io.hb.dqIn := delayed.payload
 +}
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
 index 3a197b9..2731d3b 100644
@@ -2939,7 +3787,7 @@ index 2f55df7..58c106f 100644
    val writePath = CoreWritePathMap()
    val pipelineBusySources = Bits(32 bits)
 diff --git a/src/voodoo/core/FramebufferMemSubsystem.scala b/src/voodoo/core/FramebufferMemSubsystem.scala
-index c23fa0b..e73df10 100644
+index c23fa0b..746447c 100644
 --- a/src/voodoo/core/FramebufferMemSubsystem.scala
 +++ b/src/voodoo/core/FramebufferMemSubsystem.scala
 @@ -5,7 +5,7 @@ import spinal.core.sim._
@@ -2978,7 +3826,7 @@ index c23fa0b..e73df10 100644
 +  // the render fills (Gowin), and a fill queued behind a 256-byte piece
 +  // waited up to 64 core cycles (B74: DDR idle, reads latency-bound).
 +  val scanoutFetcher =
-+    if (c.scanoutLineFetcher) ScanoutLineFetcher(c, fifoWords = 1024, maxBurstBytes = 64).setName("fbScanoutFetcher")
++    if (c.scanoutLineFetcher) ScanoutLineFetcher(c, fifoWords = if (c.asicFifos) 128 else 1024, maxBurstBytes = 64).setName("fbScanoutFetcher")
 +    else null
 +  private def scanoutPrefetch = if (c.scanoutLineFetcher) scanoutFetcher.io.prefetchReq else scanoutReaderCached.io.prefetchReq
 +  private def scanoutReq = if (c.scanoutLineFetcher) scanoutFetcher.io.readReq else scanoutReaderCached.io.readReq
@@ -3189,7 +4037,7 @@ index c23fa0b..e73df10 100644
    io.stats.memAuxWriteBlockedCycles := memAuxWriteBlockedCycles
    io.stats.memColorReadBlockedCycles := (if (useCachedReaders) memColorReadBlockedCycles
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..4eed8d8 100644
+index 7797711..a2d263f 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,8 @@ object PixelPipeline {
@@ -3267,7 +4115,7 @@ index 7797711..4eed8d8 100644
 -    .stage()
 +  val slots = rasterizer.slotConfig // pixelConfigSlots, else null
 +  require(!c.pixelConfigSlots || c.enableTmu)
-+  val postTmuFifo = StreamFifo(Rasterizer.PostTmu(c), 64)
++  val postTmuFifo = StreamFifo(Rasterizer.PostTmu(c), if (c.asicFifos) 16 else 64)
 +  postTmuFifo.io.push << rasterFork._2
 +    .translateWith(Rasterizer.PostTmu.fromOutput(c, rasterFork._2.payload,
 +      Rasterizer.configsOf(c, rasterFork._2.payload, slots)))
@@ -4115,7 +4963,7 @@ index bf8fd33..6e4c2e7 100644
  }
  
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-index 9d1e15f..4210501 100644
+index 9d1e15f..e681dae 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 @@ -6,7 +6,11 @@ import spinal.core.sim._
@@ -4144,9 +4992,12 @@ index 9d1e15f..4210501 100644
      val reqCount = out UInt (32 bits)
      val reqForwardStepCount = out UInt (32 bits)
      val reqBackwardStepCount = out UInt (32 bits)
-@@ -68,7 +78,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -66,9 +76,20 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   io.mem.rsp.valid.simPublic()
+   io.mem.rsp.ready.simPublic()
  
-   val issueQueueDepth = 64
+-  val issueQueueDepth = 64
++  val issueQueueDepth = if (c.asicFifos) 8 else 64
    val spanIssueQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
 -  val issuedSpanQueue = StreamFifo(HardType(SpanCmd()), 4)
 +  // Spans whose fill burst is issued and still returning. Only what the fill
@@ -6980,7 +7831,7 @@ index 1a3a34c..76f1906 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..7437fb0 100644
+index c6b2ec5..142a5d9 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
 @@ -26,9 +26,16 @@ case class FramebufferAccess(c: Config) extends Component {
@@ -7107,7 +7958,7 @@ index c6b2ec5..7437fb0 100644
    if (c.trace.enabled) {
      request.passthrough.trace := payload.trace
    }
-@@ -165,7 +164,8 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -165,16 +164,18 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -7117,7 +7968,20 @@ index c6b2ec5..7437fb0 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
-@@ -199,45 +199,23 @@ case class FramebufferAccess(c: Config) extends Component {
+   val forked = StreamFork(requestStream, portCount = 5, synchronous = false)
+   val colorReqBase = forked(0)
+   val auxReqBase = forked(1)
+-  val colorCtlBase = forked(2).queue(32)
+-  val auxCtlBase = forked(3).queue(32)
+-  val passMeta = forked(4).queue(32)
++  val ctlDepth = if (c.asicFifos) 8 else 32
++  val colorCtlBase = forked(2).queue(ctlDepth)
++  val auxCtlBase = forked(3).queue(ctlDepth)
++  val passMeta = forked(4).queue(ctlDepth)
+   colorCtlBase.valid.simPublic()
+   colorCtlBase.ready.simPublic()
+   passMeta.valid.simPublic()
+@@ -199,45 +200,23 @@ case class FramebufferAccess(c: Config) extends Component {
    val colorRspBuf = io.fbReadColorRsp.queue(4)
    val auxRspBuf = io.fbReadAuxRsp.queue(4)
  
@@ -7179,7 +8043,16 @@ index c6b2ec5..7437fb0 100644
  
    val fetchedRaw = StreamJoin(StreamJoin(colorRsp, auxRsp), passMeta).translateWith {
      val out = FetchResult()
-@@ -266,7 +244,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -247,7 +226,7 @@ case class FramebufferAccess(c: Config) extends Component {
+     out
+   }
+ 
+-  val fetched = fetchedRaw.queue(32)
++  val fetched = fetchedRaw.queue(ctlDepth)
+ 
+   val exitFire = fetched.fire
+   when(io.input.fire && !exitFire) {
+@@ -266,7 +245,7 @@ case class FramebufferAccess(c: Config) extends Component {
    val pdata = fetched.payload.passthrough
    val oldDepth = auxData.asUInt
  
@@ -7188,7 +8061,7 @@ index c6b2ec5..7437fb0 100644
      U(0) -> False,
      U(1) -> (pdata.newDepth < oldDepth),
      U(2) -> (pdata.newDepth === oldDepth),
-@@ -277,10 +255,13 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -277,10 +256,13 @@ case class FramebufferAccess(c: Config) extends Component {
      U(7) -> True
    )
  
@@ -7203,7 +8076,7 @@ index c6b2ec5..7437fb0 100644
  
    // ========================================================================
    // Step 4: Alpha blend
-@@ -291,28 +272,18 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -291,28 +273,18 @@ case class FramebufferAccess(c: Config) extends Component {
  
    val oldColor565 = afterColorData.asUInt
    val destColor = expandRgb565(oldColor565)
@@ -7241,7 +8114,7 @@ index c6b2ec5..7437fb0 100644
    val destA = U(0xff, 8 bits)
  
    val srcColor = afterPdata.color
-@@ -395,6 +366,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -395,6 +367,7 @@ case class FramebufferAccess(c: Config) extends Component {
      }
      .m2sPipe()
  
@@ -7249,7 +8122,7 @@ index c6b2ec5..7437fb0 100644
    io.debug := 0
    io.debug(0) := io.input.valid
    io.debug(1) := io.input.ready
-@@ -417,10 +389,10 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -417,10 +390,10 @@ case class FramebufferAccess(c: Config) extends Component {
    io.debug(18) := auxCtlBase.ready
    io.debug(19) := passMeta.valid
    io.debug(20) := passMeta.ready
@@ -7264,7 +8137,7 @@ index c6b2ec5..7437fb0 100644
    io.debug(25) := fetched.valid
    io.debug(26) := fetched.ready
    io.debug(31 downto 27) := inFlightCount.asBits
-@@ -454,14 +426,15 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -454,14 +427,15 @@ case class FramebufferAccess(c: Config) extends Component {
      out.colorBeforeFog := pd.colorBeforeFog
      out.newDepth := pd.newDepth
      out.alphaMode := pd.alphaMode
@@ -7288,7 +8161,7 @@ index c6b2ec5..7437fb0 100644
      if (c.trace.enabled) {
        out.trace := pd.trace
      }
-@@ -469,6 +442,15 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -469,6 +443,15 @@ case class FramebufferAccess(c: Config) extends Component {
  }
  
  object FramebufferAccess {
@@ -7305,7 +8178,7 @@ index c6b2ec5..7437fb0 100644
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/FastfillWordWriter.scala b/src/voodoo/raster/FastfillWordWriter.scala
-index 3a41225..9fb16c5 100644
+index 3a41225..23ea538 100644
 --- a/src/voodoo/raster/FastfillWordWriter.scala
 +++ b/src/voodoo/raster/FastfillWordWriter.scala
 @@ -25,12 +25,22 @@ case class FastfillWordWriter(c: Config) extends Component {
@@ -7341,7 +8214,7 @@ index 3a41225..9fb16c5 100644
      clipLeft := clipLeftCapture
      clipRight := clipRightCapture
      clipLowY := clipLowYCapture
-@@ -59,12 +69,64 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -59,12 +69,67 @@ case class FastfillWordWriter(c: Config) extends Component {
    val curWordX = Reg(UInt(10 bits)) init (0)
    val curY = Reg(UInt(10 bits)) init (0)
  
@@ -7368,26 +8241,29 @@ index 3a41225..9fb16c5 100644
 +      pendColor := regs.fbzMode.rgbBufferMask
 +      pendAux := regs.fbzMode.auxBufferMask
 +    }
-+    // Config.sliCount: only this chip's rows, from its first row at or below
-+    // clipLowY, sliCount rows apart (at least one row: the memory side's
-+    // fill engine needs rows > 0).
-+    val sliBits = log2Up(c.sliCount)
++    // SLI (raster/Sli.scala): only this chip's rows, from its first row at
++    // or below clipLowY, 1 << countLog2 rows apart (at least one row: the
++    // memory side's fill engine needs rows > 0).
++    val sliBits = Sli.maxBits(c)
++    val (sliCountLog2, sliIndex) = Sli.inputs(c)
++    val sliMask = if (sliBits > 0) Sli.mask(c, sliCountLog2) else null
 +    val firstY =
-+      if (c.sliCount == 1) clipLowY
-+      else (clipLowY + ((U(c.sliIndex, sliBits bits) - clipLowY(sliBits - 1 downto 0)).resize(10 bits))).resize(10 bits)
++      if (sliBits == 0) clipLowY
++      else (clipLowY + ((sliIndex.resize(sliBits bits) - clipLowY(sliBits - 1 downto 0)) & sliMask).resize(10 bits)).resize(10 bits)
 +    val y0 = transformedY(c, regs.fbzMode.yOrigin, regs.yOriginSwapValue, firstY)
 +    val stride = regs.routing.pixelStride
-+    val rowBytes = (FramebufferAddressMath.pixelByteOffset(U(0, 1 bits), U(1, 1 bits), stride, 16) << sliBits).resize(16 bits)
++    val rowBytes1 = FramebufferAddressMath.pixelByteOffset(U(0, 1 bits), U(1, 1 bits), stride, 16)
++    val rowBytes = if (sliBits == 0) rowBytes1 else (rowBytes1 << sliCountLog2).resize(16 bits)
 +    val cmd = FillCmd(c)
 +    cmd.rowAddr := FramebufferAddressMath.planeAddress(
 +      Mux(pendColor, regs.routing.colorBaseAddr, regs.routing.auxBaseAddr), U(0, 1 bits), y0, stride)
 +    cmd.rowStep := Mux(regs.fbzMode.yOrigin, -rowBytes.asSInt, rowBytes.asSInt)
 +    cmd.x0 := (clipLeft @@ U(0, 1 bits)).resized
 +    cmd.x1 := (clipRight @@ U(0, 1 bits)).resized
-+    if (c.sliCount == 1) cmd.rows := (clipHighY - clipLowY).resized
++    if (sliBits == 0) cmd.rows := (clipHighY - clipLowY).resized
 +    else {
 +      val span = Mux(clipHighY > firstY, (clipHighY - firstY).resize(11 bits), U(0, 11 bits))
-+      val sliRows = ((span + (c.sliCount - 1)) >> sliBits).resize(11 bits)
++      val sliRows = ((span + sliMask.resize(11 bits)) >> sliCountLog2).resize(11 bits)
 +      cmd.rows := Mux(sliRows === 0, U(1, 11 bits), sliRows)
 +    }
 +    cmd.value := Mux(pendColor,
@@ -7408,7 +8284,7 @@ index 3a41225..9fb16c5 100644
  
    val wordStream = Stream(WordReq(c))
    val lane1X = (curWordX + 1).resize(10 bits)
-@@ -161,7 +223,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -161,7 +226,7 @@ case class FastfillWordWriter(c: Config) extends Component {
      .m2sPipe()
  
    val ditherJoined =
@@ -7417,7 +8293,7 @@ index 3a41225..9fb16c5 100644
    val (forColor, forAux) = StreamFork2(ditherJoined, synchronous = true)
  
    io.colorWrite.valid := forColor.valid && forColor.payload._2.rgbWrite && anyLaneEnabled(
-@@ -188,7 +250,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -188,7 +253,7 @@ case class FastfillWordWriter(c: Config) extends Component {
      forAux.payload._2
    )) || io.auxWrite.ready
  
@@ -7426,7 +8302,7 @@ index 3a41225..9fb16c5 100644
    io.wordValid := wordStream.valid
    io.wordReady := wordStream.ready
    io.generatedPixels := wordStream.fire ? laneCount(
-@@ -202,6 +264,18 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -202,6 +267,18 @@ case class FastfillWordWriter(c: Config) extends Component {
  }
  
  object FastfillWordWriter {
@@ -7818,8 +8694,50 @@ index cee86c0..feaf894 100644
          (next, isLast)
        }
      )
+diff --git a/src/voodoo/raster/Sli.scala b/src/voodoo/raster/Sli.scala
+new file mode 100644
+index 0000000..da6cdd1
+--- /dev/null
++++ b/src/voodoo/raster/Sli.scala
+@@ -0,0 +1,36 @@
++package voodoo.raster
++
++import spinal.core._
++import voodoo._
++
++/** Scan-line interleave (Config.sliCount / sliMaxCount): row select shared by
++  * the span walker and the fill writer. A chip renders the rows
++  * y % (1 << countLog2) == index.
++  */
++object Sli {
++  /** Row bits the select can look at. 0 = no SLI logic. */
++  def maxBits(c: Config): Int = log2Up(scala.math.max(c.sliCount, c.sliMaxCount))
++
++  /** (countLog2, index) in the current component: pulled from the elaborating
++    * Core's inputs, or the Config constants outside a Core (unit tests).
++    */
++  def inputs(c: Config): (UInt, UInt) =
++    if (Core.Sli.countLog2 != null && maxBits(c) > 0)
++      (Core.Sli.countLog2.pull(), Core.Sli.index.pull())
++    else (U(log2Up(c.sliCount), 2 bits), U(c.sliIndex, 3 bits))
++
++  /** Mask of the row bits that select the chip (countLog2 ones, at most maxBits). */
++  def mask(c: Config, countLog2: UInt): UInt = {
++    val m = UInt(maxBits(c) bits)
++    for (i <- 0 until maxBits(c)) m(i) := countLog2 > i
++    m
++  }
++
++  /** This chip renders row y. */
++  def owns(c: Config, y: Bits, countLog2: UInt, index: UInt): Bool =
++    if (maxBits(c) == 0) True
++    else {
++      val m = mask(c, countLog2)
++      (y.asUInt.resize(maxBits(c) bits) & m) === (index.resize(maxBits(c) bits) & m)
++    }
++}
 diff --git a/src/voodoo/raster/SpanWalker.scala b/src/voodoo/raster/SpanWalker.scala
-index 59df4ba..76befbd 100644
+index 59df4ba..24a4045 100644
 --- a/src/voodoo/raster/SpanWalker.scala
 +++ b/src/voodoo/raster/SpanWalker.scala
 @@ -5,6 +5,20 @@ import spinal.core.formal._
@@ -7877,7 +8795,7 @@ index 59df4ba..76befbd 100644
  
    private val lowGradFormats = Seq(
      c.vColorFormat,
-@@ -67,318 +57,276 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
+@@ -67,318 +57,275 @@ case class SpanWalker(c: Config, formalStrong: Boolean = false) extends Componen
      dst.texDy(0) := input.texHi.dSdY
      dst.texDy(1) := input.texHi.dTdY
      dst.alphaDx := input.hiAlpha.dAdX
@@ -8297,12 +9215,11 @@ index 59df4ba..76befbd 100644
 -      }.otherwise {
 -        stepHorizontal(probe, probe, moveRight = true)
 +  val emitYPix = wide(m.y.floor(0).asSInt)
-+  require(c.sliCount >= 1 && isPow2(c.sliCount) && c.sliIndex < c.sliCount)
-+  // Config.sliCount: rows of the other chips still step the row values, but
-+  // emit no span.
-+  val sliOwnsRow =
-+    if (c.sliCount == 1) True
-+    else emitYPix(log2Up(c.sliCount) - 1 downto 0).asUInt === c.sliIndex
++  require(c.sliCount >= 1 && isPow2(c.sliCount) && c.sliIndex < c.sliCount && c.sliCount <= 8 && c.sliMaxCount <= 8)
++  // SLI (raster/Sli.scala): rows of the other chips still step the row
++  // values, but emit no span.
++  val (sliCountLog2, sliIndex) = Sli.inputs(c)
++  val sliOwnsRow = Sli.owns(c, emitYPix.asBits, sliCountLog2, sliIndex)
 +  val emit = m.nonEmpty && m.end >= effClipLeft && m.start < effClipRight &&
 +    emitYPix >= effClipLowY && emitYPix < effClipHighY && sliOwnsRow
 +  val spans = multiplied
@@ -8419,7 +9336,7 @@ index 59df4ba..76befbd 100644
  }
  
  object SpanWalker {
-@@ -397,6 +345,7 @@ object SpanWalker {
+@@ -397,6 +344,7 @@ object SpanWalker {
      val linear = LinearState(c)
      val tex = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alpha = AFix(c.texCoordsHiFormat)
@@ -8427,7 +9344,7 @@ index 59df4ba..76befbd 100644
    }
  
    case class TriangleConst(c: Config) extends Bundle {
-@@ -409,6 +358,8 @@ object SpanWalker {
+@@ -409,6 +357,8 @@ object SpanWalker {
      val texDy = Vec.fill(2)(AFix(c.texCoordsHiFormat))
      val alphaDx = AFix(c.texCoordsHiFormat)
      val alphaDy = AFix(c.texCoordsHiFormat)
@@ -8436,7 +9353,7 @@ index 59df4ba..76befbd 100644
      val tmuConfig = TriangleSetup.TmuConfig(c)
      val pixelConfig = TriangleSetup.PixelPipelineConfig(c)
      val enableClipping = Bool()
-@@ -416,6 +367,9 @@ object SpanWalker {
+@@ -416,6 +366,9 @@ object SpanWalker {
      val clipRight = UInt(10 bits)
      val clipLowY = UInt(10 bits)
      val clipHighY = UInt(10 bits)
@@ -8446,7 +9363,7 @@ index 59df4ba..76befbd 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  
-@@ -426,9 +380,12 @@ object SpanWalker {
+@@ -426,9 +379,12 @@ object SpanWalker {
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
      val edge = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -8460,7 +9377,7 @@ index 59df4ba..76befbd 100644
      val xStart = AFix(c.vertexFormat)
      val xEnd = AFix(c.vertexFormat)
      val y = AFix(c.vertexFormat)
-@@ -436,9 +393,11 @@ object SpanWalker {
+@@ -436,9 +392,11 @@ object SpanWalker {
      val hiS = AFix(c.texCoordsHiFormat)
      val hiT = AFix(c.texCoordsHiFormat)
      val hiAlpha = AFix(c.texCoordsHiFormat)
