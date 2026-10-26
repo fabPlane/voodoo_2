@@ -8389,10 +8389,10 @@ index 59df4ba..680a9f2 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
 diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
-index fb95365..b153f14 100644
+index fb95365..dffc013 100644
 --- a/src/voodoo/raster/TriangleSetup.scala
 +++ b/src/voodoo/raster/TriangleSetup.scala
-@@ -8,216 +8,283 @@ import spinal.lib._
+@@ -8,216 +8,284 @@ import spinal.lib._
  case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Component {
    val i = slave(Stream(TriangleSetup.Input(c)))
    val o = master(Stream(TriangleSetup.Output(c)))
@@ -8431,6 +8431,7 @@ index fb95365..b153f14 100644
 +
 +  val coeffsReg = Reg(Vec.fill(3)(Coefficients(c)))
 +  val edgeStartReg = Reg(Vec.fill(3)(AFix(c.coefficientFormat)))
++  val xCenterReg, yCenterReg = Reg(AFix(c.vertexFormat))
 +  val xrangeReg = Reg(vertex2d(c.vertexFormat))
 +  val yrangeReg = Reg(vertex2d(c.vertexFormat))
 +  val scanXReg = Reg(Vec.fill(3)(SInt(32 bits)))
@@ -8550,12 +8551,12 @@ index fb95365..b153f14 100644
 -      (-wide).asUInt.resize(value.getWidth bits),
 -      wide.asUInt.resize(value.getWidth bits)
 -    )
-   }
+-  }
 -
 -  def signAdjust(value: SInt, negate: Bool, width: Int): SInt = {
 -    val resized = value.resize(width bits)
 -    Mux(negate, (-resized).resize(width bits), resized)
--  }
+   }
 -
 -  def scaleByChunk(term: SInt, chunk: UInt): SInt = {
 -    val scaled = SInt(term.getWidth bits)
@@ -8860,7 +8861,20 @@ index fb95365..b153f14 100644
    when(state === SetupState.Prep) {
      val input = pending
      val tri = input.triWithSign.tri
-@@ -282,47 +349,55 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+@@ -264,10 +332,8 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+     halfPixel := 0.5
+     val xCenter = (xrange0 + halfPixel).fixTo(c.vertexFormat)
+     val yCenter = (yrange0 + halfPixel).fixTo(c.vertexFormat)
+-    val edgeStartVec = Vec(AFix(c.coefficientFormat), 3)
+-    coeffsVec.zipWithIndex.foreach { case (coeff, idx) =>
+-      edgeStartVec(idx) := (coeff.a * xCenter + coeff.b * yCenter + coeff.c).truncated
+-    }
++    xCenterReg := xCenter
++    yCenterReg := yCenter
+ 
+     val paramAdjust = input.config.fbzColorPath.paramAdjust
+     val fracAx = tri(0)(0).raw(3 downto 0).asUInt
+@@ -282,47 +348,63 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
      val dxPix = (startXPix - aXPix).resize(16 bits)
      val dyPix = (startYPix - aYPix).resize(16 bits)
  
@@ -8872,22 +8886,7 @@ index fb95365..b153f14 100644
 -    outputReg.grads.all.zip(input.grads.all).foreach { case (outG, inG) =>
 -      outG.start.raw := inG.start.raw
 -      outG.d := inG.d
--    }
--    outputReg.texHi := input.texHi
--    outputReg.hiAlpha := input.hiAlpha
--    outputReg.edgeStart := edgeStartVec
--    outputReg.config := input.config
--    if (c.trace.enabled) copyTrace(outputReg.trace, input.trace)
--
--    val dxNeg = dxPix.msb
--    val dyNeg = dyPix.msb
--    dxMagWork := signedMagnitude(dxPix)
--    dyMagWork := signedMagnitude(dyPix)
--    allStarts.foreach(_.load(dxSubRaw, dySubRaw, paramAdjust, dxNeg, dyNeg))
--    iterIndex := 0
--    state := SetupState.Iterate
 +    coeffsReg := coeffsVec
-+    edgeStartReg := edgeStartVec
 +    xrangeReg(0) := xrange0
 +    xrangeReg(1) := xrange1
 +    yrangeReg(0) := yrange0
@@ -8908,8 +8907,26 @@ index fb95365..b153f14 100644
 +    state := SetupState.Work
 +  }
 +
-+  when(state === SetupState.Work && !divBusy && !chBusy && lod.ready) {
-+    state := SetupState.ScanMul
++  // Edge start values from the registered coefficients / pixel centre,
++  // during Work (several cycles while the dividers run): in Prep they
++  // chained the vertex min / max and two multiplier levels into one cycle.
++  when(state === SetupState.Work) {
++    coeffsReg.zipWithIndex.foreach { case (coeff, idx) =>
++      edgeStartReg(idx) := (coeff.a * xCenterReg + coeff.b * yCenterReg + coeff.c).truncated
+     }
+-    outputReg.texHi := input.texHi
+-    outputReg.hiAlpha := input.hiAlpha
+-    outputReg.edgeStart := edgeStartVec
+-    outputReg.config := input.config
+-    if (c.trace.enabled) copyTrace(outputReg.trace, input.trace)
+-
+-    val dxNeg = dxPix.msb
+-    val dyNeg = dyPix.msb
+-    dxMagWork := signedMagnitude(dxPix)
+-    dyMagWork := signedMagnitude(dyPix)
+-    allStarts.foreach(_.load(dxSubRaw, dySubRaw, paramAdjust, dxNeg, dyNeg))
+-    iterIndex := 0
+-    state := SetupState.Iterate
    }
  
 -  when(state === SetupState.Iterate) {
@@ -8922,6 +8939,10 @@ index fb95365..b153f14 100644
 -      state := SetupState.Done
 -    }.otherwise {
 -      iterIndex := iterIndex + 1
++  when(state === SetupState.Work && !divBusy && !chBusy && lod.ready) {
++    state := SetupState.ScanMul
++  }
++
 +  when(state === SetupState.ScanMul) {
 +    val dxAB = divs(0).quotient
 +    val dxBC = divs(1).quotient
@@ -8949,7 +8970,7 @@ index fb95365..b153f14 100644
    GenerationFlags.formal {
      when(o.valid) {
        val tri = pending.triWithSign.tri
-@@ -351,7 +426,8 @@ object TriangleSetup {
+@@ -351,7 +433,8 @@ object TriangleSetup {
        texHi: HiTexCoords,
        config: PerTriangleConfig,
        traceDrawId: UInt,
@@ -8959,7 +8980,7 @@ index fb95365..b153f14 100644
    ): Input = {
      val out = Input(c)
      out.triWithSign.tri(0)(0).raw := ax.asBits
-@@ -364,6 +440,7 @@ object TriangleSetup {
+@@ -364,6 +447,7 @@ object TriangleSetup {
      out.grads := grads
      out.hiAlpha := hiAlpha
      out.texHi := texHi
@@ -8967,7 +8988,7 @@ index fb95365..b153f14 100644
      out.config := config
      if (c.trace.enabled) {
        out.trace.valid := True
-@@ -395,6 +472,7 @@ object TriangleSetup {
+@@ -395,6 +479,7 @@ object TriangleSetup {
      val fbzColorPath = FbzColorPath()
      val fogMode = FogMode()
      val alphaMode = AlphaMode()
@@ -8975,7 +8996,7 @@ index fb95365..b153f14 100644
    }
  
    object PixelPipelineConfig {
-@@ -403,10 +481,24 @@ object TriangleSetup {
+@@ -403,10 +488,24 @@ object TriangleSetup {
        out.fbzColorPath := src.fbzColorPath
        out.fogMode := src.fogMode
        out.alphaMode := src.alphaMode
@@ -9000,7 +9021,7 @@ index fb95365..b153f14 100644
    case class TmuConfig(c: Config) extends Bundle {
      val textureEnable = Bool()
      val textureMode = Bits(12 bits)
-@@ -415,15 +507,18 @@ object TriangleSetup {
+@@ -415,15 +514,18 @@ object TriangleSetup {
      val texBaseAddr2 = UInt(24 bits)
      val texBaseAddr38 = UInt(24 bits)
      val tLOD = Bits(27 bits)
@@ -9025,7 +9046,7 @@ index fb95365..b153f14 100644
        val out = TmuConfig(c)
        out.textureEnable := src.fbzColorPath.textureEnable
        out.textureMode := src.tmuTextureMode
-@@ -432,11 +527,13 @@ object TriangleSetup {
+@@ -432,11 +534,13 @@ object TriangleSetup {
        out.texBaseAddr2 := src.tmuTexBaseAddr2
        out.texBaseAddr38 := src.tmuTexBaseAddr38
        out.tLOD := src.tmuTLOD
@@ -9044,7 +9065,7 @@ index fb95365..b153f14 100644
        out
      }
    }
-@@ -450,6 +547,7 @@ object TriangleSetup {
+@@ -450,6 +554,7 @@ object TriangleSetup {
      val fbzColorPath = FbzColorPath() // Color path control (FBI + TREX)
      val fogMode = FogMode() // Fog mode control (FBI)
      val alphaMode = AlphaMode() // Alpha mode control (FBI)
@@ -9052,7 +9073,7 @@ index fb95365..b153f14 100644
      val enableClipping = Bool()
      val clipLeft = UInt(10 bits)
      val clipRight = UInt(10 bits)
-@@ -468,9 +566,11 @@ object TriangleSetup {
+@@ -468,9 +573,11 @@ object TriangleSetup {
      val tmudTdX = AFix(c.texCoordsFormat)
      val tmudSdY = AFix(c.texCoordsFormat)
      val tmudTdY = AFix(c.texCoordsFormat)
@@ -9067,7 +9088,7 @@ index fb95365..b153f14 100644
    }
  
    /** Input bundle - triangle with gradients and render config captured at command time */
-@@ -479,6 +579,7 @@ object TriangleSetup {
+@@ -479,6 +586,7 @@ object TriangleSetup {
      val grads = Rasterizer.GradientBundle(Rasterizer.InputGradient(_), c)
      val hiAlpha = HiAlpha(c)
      val texHi = HiTexCoords(c)
@@ -9075,7 +9096,7 @@ index fb95365..b153f14 100644
      val config = PerTriangleConfig(c)
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
-@@ -489,10 +590,17 @@ object TriangleSetup {
+@@ -489,10 +597,17 @@ object TriangleSetup {
      val xrange = vertex2d(c.vertexFormat)
      val yrange = vertex2d(c.vertexFormat)
      val edgeStart = Vec.fill(3)(AFix(c.coefficientFormat))

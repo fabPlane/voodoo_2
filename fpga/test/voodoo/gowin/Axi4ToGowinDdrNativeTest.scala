@@ -851,4 +851,53 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       println(s"[shortreads] ${want.size} words ok")
     }
   }
+
+  test("write throughput: fb + auxW streaming line-aligned 8-beat bursts (line-split drains)") {
+    compiledAuxW.doSim("wthroughput", seed = 13) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      dut.io.policy #= 0
+      for (axi <- Seq(dut.io.fb, dut.io.tex, dut.io.scan, dut.io.aux, dut.io.col, dut.io.auxW)) {
+        axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
+        axi.ar.valid #= false; axi.r.ready #= true
+      }
+      var cycle = 0L
+      var words = 0L
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        for (axi <- Seq(dut.io.fb, dut.io.auxW)) if (axi.w.valid.toBoolean && axi.w.ready.toBoolean) words += 1
+      }
+      def stream(axi: spinal.lib.bus.amba4.axi.Axi4, base: Long, bursts: Int) = fork {
+        // AW and W run independently (as through the clock crossing FIFOs).
+        val aw = fork {
+          for (k <- 0 until bursts) {
+            axi.aw.valid #= true; axi.aw.addr #= base + 32L * k; axi.aw.len #= 7
+            axi.aw.size #= 2; axi.aw.burst #= 1; axi.aw.id #= 0
+            dut.clockDomain.waitSamplingWhere(axi.aw.ready.toBoolean)
+          }
+          axi.aw.valid #= false
+        }
+        for (k <- 0 until bursts; i <- 0 until 8) {
+          axi.w.valid #= true; axi.w.data #= k * 8 + i; axi.w.strb #= 0xf; axi.w.last #= i == 7
+          dut.clockDomain.waitSamplingWhere(axi.w.ready.toBoolean)
+        }
+        axi.w.valid #= false
+        aw.join()
+      }
+      dut.clockDomain.waitSampling(5)
+      val c0 = cycle
+      val a = stream(dut.io.fb, 0x100000L, 64)
+      val b = stream(dut.io.auxW, 0x200000L, 64)
+      a.join(); b.join()
+      val n = cycle - c0
+      println(f"[wthroughput] ${words} words in $n cycles = ${words.toDouble / n}%.2f words/cycle")
+    }
+  }
 }

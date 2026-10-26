@@ -281,7 +281,18 @@ case class TangMega138kPro(c: Config) extends Component {
 
   pcie.bar.io.axi <> barCc.io.input
   raw.split.io.input <> barCc.io.output
-  core.io.bar <> raw.split.io.core
+  // Full pipes between the raw-window split and the core's BAR bridge: the
+  // bridge's accept logic chained barCc pop -> bridge -> split -> barCc pop
+  // ready in one core cycle (55 MHz trial). Core clock domain.
+  coreCd {
+    val m = raw.split.io.core
+    val s = core.io.bar
+    s.aw << m.aw.s2mPipe().m2sPipe()
+    s.w << m.w.s2mPipe().m2sPipe()
+    s.ar << m.ar.s2mPipe().m2sPipe()
+    m.b << s.b.s2mPipe().m2sPipe()
+    m.r << s.r.s2mPipe().m2sPipe()
+  }
   raw.merge.io.inputs(0) << core.io.memFb
   fbCc.io.input << raw.merge.io.output
   texCc.io.input << core.io.memTex

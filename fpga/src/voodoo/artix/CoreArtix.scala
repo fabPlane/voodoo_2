@@ -243,10 +243,13 @@ case class BmbToAxi4Mem(p: BmbParameter, burstLog2: Int, splitPages: Boolean = t
     val lineSplitter = BmbPageSplitter(p, pageBits = burstLog2)
     val writeSplitter = BmbWriteLineSplitter(p, lineBits = burstLog2, pendingMax = pendingMax)
     val bridge = BmbToAxi4SharedBridge(p, pendingMax = pendingMax)
+    // Registered between the stages: the splitters' piece address / length
+    // arithmetic chained into the clock-crossing FIFO write (55 MHz trial).
+    def cut(b: Bmb): Bmb = b.pipelined(cmdValid = true, cmdReady = true)
     pageSplit.io.input <> io.input
-    lineSplitter.io.input <> pageSplit.io.output
-    writeSplitter.io.input <> lineSplitter.io.output
-    bridge.io.input <> writeSplitter.io.output
+    lineSplitter.io.input <> cut(pageSplit.io.output)
+    writeSplitter.io.input <> cut(lineSplitter.io.output)
+    bridge.io.input <> cut(writeSplitter.io.output)
     io.output << bridge.io.output.toAxi4()
   } else new Area {
   val aligner = BmbAligner(p, burstLog2)

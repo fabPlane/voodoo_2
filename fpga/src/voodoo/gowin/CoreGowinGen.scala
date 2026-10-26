@@ -81,7 +81,7 @@ object GowinGenSupport {
       // still held the texture path ~14% of cycles under GLQuake (B118).
       // 64-byte texture cache lines, 256 of them (same 16 KB): Quake II
       // cut-frame replay -3.1% (misses roughly halve; 32 KB would be -4.2%).
-      texSmallCacheLines = 256,
+      texSmallCacheLines = sys.env.get("GOWIN_TEX_LINES").map(_.toInt).getOrElse(256),
       texSmallLineWords = 16,
       // 8 queued prefetch hints (was 2, dropped when full): -1.3% in replay.
       texHintQueueDepth = 8,
