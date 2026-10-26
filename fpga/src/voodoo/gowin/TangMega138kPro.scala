@@ -248,7 +248,7 @@ case class TangMega138kPro(c: Config) extends Component {
     colConfig = CoreGowin.colAxiConfig(c),
     auxWConfig = CoreGowin.auxWAxiConfig(c),
     // Two-TMU builds need the DDR-domain area more than the stagers' ~0.4%.
-    readStagers = c.tmuCount == 1,
+    readStagers = c.tmuCount == 1 || sys.env.contains("GOWIN_DDR_STAGERS"),
     // and its debug counters (~770 FFs with the snapshot and PCIe copy).
     withStats = c.tmuCount == 1 || sys.env.contains("GOWIN_DDR_STATS"),
     withFill = c.fbFillOffload)
