@@ -51,6 +51,8 @@ overhead 6 core cycles at 40 MHz); 2xHR66 = two ganged (bpc16 107).
 | mini (tex 32, slots 2x64), SLI 4 (worst chip) | 585,614 | 56 | 68 | 85 |
 | ideal memory, SLI 4 (SLI ceiling) | 375,601 | 88 | 106 | 133 |
 | HR66, tex 64, SLI 8 | 360,589 | 92 | 111 | 139 |
+| mid, SLI 8 (worst of k0 / k7) | 300,615 | 110 | 133 | 166 |
+| ideal memory, SLI 8 | 260,596 | 127 | 153 | 192 |
 
 Findings:
 - The framebuffer channel is the bottleneck; the texture channel barely
