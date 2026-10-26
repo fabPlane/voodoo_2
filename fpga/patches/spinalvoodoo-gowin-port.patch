@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..0edb405 100644
+index 1b34fa2..7656996 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..0edb405 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,93 @@ case class Config(
+@@ -31,6 +34,97 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1077,6 +1077,10 @@ index 1b34fa2..0edb405 100644
 +    texMaxOutstanding: Int = 15,
 +    // Voodoo 2 triangle setup engine (sVx ... sDrawTriCMD, 0x260-0x2a4).
 +    setupEngine: Boolean = false,
++    // Fast fills the colour plane without dithering or the aux plane go out
++    // as one rectangle command (Core io.fillOffload) for the memory side to
++    // write whole lines (Gowin: Axi4ToGowinDdrNative withFill).
++    fbFillOffload: Boolean = false,
 +    // Lines of the small direct-mapped texture cache used when
 +    // useTexFillCache is off (TmuSmallTextureCache); 0 = no cache.
 +    texSmallCacheLines: Int = 0,
@@ -1163,7 +1167,7 @@ index 1b34fa2..0edb405 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..d26924c 100644
+index 100f1c6..c86c2c9 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -1,5 +1,7 @@
@@ -1202,7 +1206,7 @@ index 100f1c6..d26924c 100644
    def texMemBmbParams(c: Config) = BmbParameter(
      addressWidth = c.addressWidth.value,
      dataWidth = 32,
-@@ -67,6 +90,7 @@ case class Core(c: Config) extends Component {
+@@ -67,11 +90,17 @@ case class Core(c: Config) extends Component {
  
      // Framebuffer memory buses
      val fbMemWrite = master(Bmb(Core.fbMemBmbParams(c)))
@@ -1210,7 +1214,17 @@ index 100f1c6..d26924c 100644
      val fbColorWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbAuxWriteMem = master(Bmb(Core.fbMemBmbParams(c)))
      val fbColorReadMem = master(Bmb(Core.fbMemBmbParams(c)))
-@@ -92,25 +116,40 @@ case class Core(c: Config) extends Component {
+     val fbAuxReadMem = master(Bmb(Core.fbMemBmbParams(c)))
+ 
++    // Config.fbFillOffload: fast fill rectangles in framebuffer byte
++    // addresses for the memory side, one fillDone cycle per finished one.
++    val fillOffload = if (c.fbFillOffload) master Stream (voodoo.raster.FastfillWordWriter.FillCmd(c)) else null
++    val fillDone = if (c.fbFillOffload) in Bool () else null
++
+     // Texture memory bus (R/W, internal 2-port arbitration with texBaseAddr relocation)
+     val texMem = master(Bmb(Core.texMemBmbParams(c)))
+ 
+@@ -92,25 +121,40 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -1254,7 +1268,7 @@ index 100f1c6..d26924c 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -124,7 +163,12 @@ case class Core(c: Config) extends Component {
+@@ -124,7 +168,12 @@ case class Core(c: Config) extends Component {
      pciFifo.io.texWrite << frontdoor.io.texWrite
      frontdoor.io.texBaseAddr := regBank.tmuConfig.texBaseAddr
  
@@ -1268,7 +1282,7 @@ index 100f1c6..d26924c 100644
      pciFifo.io.regSide <> regBank.io.bus
      regBank.io.floatShadow <> pciFifo.io.floatShadow
      regBank.io.statusInputs <> io.statusInputs
-@@ -135,6 +179,8 @@ case class Core(c: Config) extends Component {
+@@ -135,6 +184,8 @@ case class Core(c: Config) extends Component {
      swapBuffer.io.vsyncEnable := regBank.commands.swapVsyncEnable
      swapBuffer.io.swapInterval := regBank.commands.swapInterval
      swapBuffer.io.swapCmdEnqueued := pciFifo.io.wasEnqueued
@@ -1277,7 +1291,7 @@ index 100f1c6..d26924c 100644
  
      regBank.io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      regBank.io.swapsPending := framebufferLayout.swapsPending
-@@ -142,14 +188,14 @@ case class Core(c: Config) extends Component {
+@@ -142,14 +193,14 @@ case class Core(c: Config) extends Component {
      io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      io.swapsPending := framebufferLayout.swapsPending
  
@@ -1294,7 +1308,7 @@ index 100f1c6..d26924c 100644
  
      pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
        c,
-@@ -157,14 +203,25 @@ case class Core(c: Config) extends Component {
+@@ -157,14 +208,45 @@ case class Core(c: Config) extends Component {
        framebufferLayout
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
@@ -1306,6 +1320,26 @@ index 100f1c6..d26924c 100644
    pixelPipeline.io.triangleCmd << regBank.commands.triangleCmd
    pixelPipeline.io.ftriangleCmd << regBank.commands.ftriangleCmd
    pixelPipeline.io.fastfillCmd << regBank.commands.fastfillCmd
++  if (c.fbFillOffload) {
++    io.fillOffload << pixelPipeline.io.fillOffload
++    pixelPipeline.io.fillDone := io.fillDone
++    // Every framebuffer write has its response (BMB write responses follow
++    // the AXI B, i.e. the write reached the memory controller's queue) and
++    // none is on its way: quiet for 8 cycles, so a write moving between
++    // pipeline stages (busy already low, port valid not yet high) is seen.
++    val fillWrites = new Area {
++      val ports = Seq(io.fbMemWrite, io.fbColorWriteMem, io.fbAuxWriteMem)
++      val busy = ports.map { b =>
++        val pending = Reg(UInt(8 bits)) init (0)
++        val issued = b.cmd.fire && b.cmd.last
++        pending := pending + U(issued) - U(b.rsp.fire)
++        b.cmd.valid || pending =/= 0
++      }.orR || framebufferMem.io.status.colorBusy || framebufferMem.io.status.auxBusy
++      val quiet = Reg(UInt(4 bits)) init (0)
++      when(busy) { quiet := 0 } elsewhen (!quiet.msb) { quiet := quiet + 1 }
++      pixelPipeline.io.fillWritesIdle := quiet.msb && !busy
++    }
++  }
    pixelPipeline.io.paletteWrite << regBank.io.paletteWrite
 -  pixelPipeline.io.tmuInvalidate := frontdoor.io.invalidate
 +  if (c.tmuCount > 1) pixelPipeline.io.paletteWrite1 << regBank.io.paletteWrite1
@@ -1321,7 +1355,7 @@ index 100f1c6..d26924c 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,16 +230,20 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +255,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -1345,7 +1379,7 @@ index 100f1c6..d26924c 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +251,7 @@ case class Core(c: Config) extends Component {
+@@ -190,6 +276,7 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
@@ -1353,7 +1387,7 @@ index 100f1c6..d26924c 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -199,10 +261,61 @@ case class Core(c: Config) extends Component {
+@@ -199,10 +286,61 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiClock := io.hdmi.clock
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
@@ -1418,10 +1452,10 @@ index 100f1c6..d26924c 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..2b632af 100644
+index 9effb48..5bd7ede 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
-@@ -31,22 +31,39 @@ case class CoreSim(
+@@ -31,22 +31,46 @@ case class CoreSim(
  
    def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
  
@@ -1430,11 +1464,17 @@ index 9effb48..2b632af 100644
 +  if (memTiming.mode == "pipelined") {
 +    // Every framebuffer client on its own pipelined port (board-like).
 +    require(!c.separateScanoutMem)
-+    def multiRam(ps: Seq[BmbParameter], size: Int) = SimBmbMultiPortMemory(
-+      ps, size, readLatency = memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency)
++    def multiRam(ps: Seq[BmbParameter], size: Int, fill: Boolean = false) = SimBmbMultiPortMemory(
++      ps, size, readLatency = memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency,
++      fillPort = if (fill) c else null)
 +    // The harness reaches the arrays by these instance names.
-+    val fbWriteRam = multiRam(Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)), 4 * 1024 * 1024)
++    val fbWriteRam = multiRam(Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)), 4 * 1024 * 1024,
++      fill = c.fbFillOffload)
 +      .setName("fbWriteRam")
++    if (c.fbFillOffload) {
++      fbWriteRam.io.fill << core.io.fillOffload
++      core.io.fillDone := fbWriteRam.io.fillDone
++    }
 +    val texRam = multiRam(Seq(Core.texMemBmbParams(c)), 8 * 1024 * 1024).setName("texRam")
 +    fbWriteRam.io.buses(0) <> core.io.fbMemWrite
 +    fbWriteRam.io.buses(1) <> core.io.fbColorWriteMem
@@ -1444,6 +1484,7 @@ index 9effb48..2b632af 100644
 +    texRam.io.buses(0) <> core.io.texMem
 +  } else {
 +    val fbWriteRam = simRam(Core.fbMemSharedBmbParams(c), 4 * 1024 * 1024).setName("fbWriteRam")
++    require(!c.fbFillOffload, "fbFillOffload needs --sim-mem-mode pipelined")
 +    val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024).setName("texRam")
  
 -  val fbArbiter = BmbArbiter(
@@ -1476,7 +1517,7 @@ index 9effb48..2b632af 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..248e88d 100644
+index 6051025..ddc7864 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1524,7 +1565,7 @@ index 6051025..248e88d 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,28 @@ object CoreSimGen extends App {
+@@ -37,7 +49,29 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1537,6 +1578,7 @@ index 6051025..248e88d 100644
 +      texHintQueueDepth = argIntValue("--tex-hint-queue").getOrElse(2),
 +      texMaxOutstanding = argIntValue("--tex-max-outstanding").getOrElse(15),
 +      setupEngine = args.contains("--setup-engine"),
++      fbFillOffload = args.contains("--fill-offload"),
 +      spanQueueDepth = argIntValue("--span-queue-depth").getOrElse(4),
 +      tmuCount = argIntValue("--tmu-count").getOrElse(1),
 +      texSampleQueueDepth = argIntValue("--tex-sample-queue-depth").getOrElse(16),
@@ -1588,10 +1630,10 @@ index 1bfe40c..06e63fe 100644
      )
 diff --git a/src/voodoo/SimBmbMultiPortMemory.scala b/src/voodoo/SimBmbMultiPortMemory.scala
 new file mode 100644
-index 0000000..404f420
+index 0000000..f6d1376
 --- /dev/null
 +++ b/src/voodoo/SimBmbMultiPortMemory.scala
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,152 @@
 +package voodoo
 +
 +import spinal.core._
@@ -1617,13 +1659,20 @@ index 0000000..404f420
 +    size: Int,
 +    readLatency: Int,
 +    writeLatency: Int,
-+    queueDepth: Int = 64
++    queueDepth: Int = 64,
++    // Config.fbFillOffload: fill rectangles written one 32-byte line per
++    // cycle (the board's DDR fill engine writes a native line per DDR
++    // command), done `fillDoneLatency` cycles after the last line.
++    fillPort: Config = null,
++    fillDoneLatency: Int = 16
 +) extends Component {
 +  require(size > 0 && (size % 4) == 0)
 +  require(ports.forall(p => p.access.dataWidth == 32))
 +
 +  val io = new Bundle {
 +    val buses = Vec(ports.map(p => slave(Bmb(p))))
++    val fill = if (fillPort != null) slave(Stream(voodoo.raster.FastfillWordWriter.FillCmd(fillPort))) else null
++    val fillDone = if (fillPort != null) out Bool () else null
 +  }
 +
 +  private val wordCount = size / 4
@@ -1690,6 +1739,52 @@ index 0000000..404f420
 +      rspIndex := Mux(lastBeat, U(0, lengthWidth bits), rspIndex + 1)
 +    }
 +  }
++
++  val fillEngine = if (fillPort != null) new Area {
++    val active = RegInit(False)
++    val cmd = Reg(voodoo.raster.FastfillWordWriter.FillCmd(fillPort))
++    val rowsLeft = Reg(UInt(11 bits)) init (0)
++    val rowAddr = Reg(UInt(32 bits)) init (0)
++    val line = Reg(UInt(32 bits)) init (0)
++    val sByte, eByte = Reg(UInt(32 bits)) init (0)
++    val setup = RegInit(False)
++    val doneTimer = Reg(UInt(8 bits)) init (0)
++    io.fill.ready := !active && doneTimer === 0
++    io.fillDone := doneTimer === 1
++    when(doneTimer =/= 0) { doneTimer := doneTimer - 1 }
++    when(io.fill.fire) {
++      active := True
++      cmd := io.fill.payload
++      rowsLeft := io.fill.payload.rows
++      rowAddr := io.fill.payload.rowAddr.resized
++      setup := True
++    }
++    when(active && setup) {
++      sByte := rowAddr + cmd.x0.resize(32 bits)
++      eByte := rowAddr + cmd.x1.resize(32 bits) - 1
++      line := (rowAddr + cmd.x0.resize(32 bits))(31 downto 5) @@ U(0, 5 bits)
++      setup := False
++    }
++    when(active && !setup) {
++      for (k <- 0 until 8; lane <- 0 until 4) {
++        val b = line + U(4 * k + lane, 32 bits)
++        when(b >= sByte && b <= eByte) {
++          val v = if (lane % 2 == 0) cmd.value(7 downto 0) else cmd.value(15 downto 8)
++          byteLanes(lane)((b >> 2).resize(wordAddrWidth bits)) := v
++        }
++      }
++      line := line + 32
++      when((line + 32) > eByte) {
++        rowsLeft := rowsLeft - 1
++        rowAddr := (rowAddr.asSInt + cmd.rowStep.resize(32 bits)).asUInt
++        setup := True
++        when(rowsLeft === 1) {
++          active := False
++          doneTimer := fillDoneLatency
++        }
++      }
++    }
++  } else null
 +}
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
 index 3a197b9..2731d3b 100644
@@ -2733,7 +2828,7 @@ index c23fa0b..e73df10 100644
    io.stats.memAuxWriteBlockedCycles := memAuxWriteBlockedCycles
    io.stats.memColorReadBlockedCycles := (if (useCachedReaders) memColorReadBlockedCycles
 diff --git a/src/voodoo/core/PixelPipeline.scala b/src/voodoo/core/PixelPipeline.scala
-index 7797711..0d234df 100644
+index 7797711..4eed8d8 100644
 --- a/src/voodoo/core/PixelPipeline.scala
 +++ b/src/voodoo/core/PixelPipeline.scala
 @@ -149,7 +149,8 @@ object PixelPipeline {
@@ -2746,9 +2841,15 @@ index 7797711..0d234df 100644
        else io.fbzMode.enableDepthBuffer
  
      io.readReq.valid := io.span.valid && planeReadNeeded
-@@ -167,14 +168,20 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -166,15 +167,26 @@ case class PixelPipeline(c: Config) extends Component {
+     val triangleCmd = slave(Stream(TriangleSetup.Input(c)))
      val ftriangleCmd = slave(Stream(TriangleSetup.Input(c)))
      val fastfillCmd = slave Stream (NoData)
++    // Config.fbFillOffload: fast fill rectangles for the memory side, done
++    // pulses back, and "every earlier framebuffer write has landed".
++    val fillOffload = if (c.fbFillOffload) master Stream (voodoo.raster.FastfillWordWriter.FillCmd(c)) else null
++    val fillDone = if (c.fbFillOffload) in Bool () else null
++    val fillWritesIdle = if (c.fbFillOffload) in Bool () else null
      val paletteWrite = slave(Flow(RegisterBank.PaletteWrite()))
 +    val paletteWrite1 = if (c.tmuCount > 1) slave(Flow(RegisterBank.PaletteWrite())) else null
      val lfbBus = slave(Bmb(Lfb.bmbParams(c)))
@@ -2767,7 +2868,7 @@ index 7797711..0d234df 100644
      val lfbReadBus = master(Bmb(Lfb.fbReadBmbParams(c)))
      val colorReadReq = master(Stream(FramebufferPlaneBuffer.ReadReq(c)))
      val colorReadRsp = slave(Stream(FramebufferPlaneBuffer.ReadRsp()))
-@@ -246,7 +253,10 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -246,7 +258,13 @@ case class PixelPipeline(c: Config) extends Component {
      .on(Seq(io.triangleCmd, io.ftriangleCmd))
    triangleSetup.i << triangleSetupInput
  
@@ -2775,11 +2876,26 @@ index 7797711..0d234df 100644
 +  // fbReadHazardGuard: assigned below, once the pipeline busy terms exist.
 +  val hazardHold = Bool()
 +  val drainedForHazard = Bool()
-+  rasterizer.i << triangleSetup.o.haltWhen(hazardHold)
++  // An offloaded fast fill lands all at once on the memory side: nothing may
++  // read the framebuffer before it reports done (the word path instead
++  // overlaps the next triangles).
++  rasterizer.i << triangleSetup.o.haltWhen(hazardHold || fastfillWriter.io.offloadActive)
    rasterizer.enableClipping := io.controls.fastfill.fbzMode.enableClipping
    rasterizer.clipLeft := io.controls.clip.left
    rasterizer.clipRight := io.controls.clip.right
-@@ -280,15 +290,29 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -254,6 +272,11 @@ case class PixelPipeline(c: Config) extends Component {
+   rasterizer.clipHighY := io.controls.clip.highY
+ 
+   fastfillWriter.io.cmd << io.fastfillCmd
++  if (c.fbFillOffload) {
++    io.fillOffload << fastfillWriter.io.offload
++    fastfillWriter.io.offloadDone := io.fillDone
++    fastfillWriter.io.writesIdle := io.fillWritesIdle
++  }
+   fastfillWriter.io.regs := io.controls.fastfill
+   fastfillWriter.io.clipLeft := io.controls.clip.left
+   fastfillWriter.io.clipRight := io.controls.clip.right
+@@ -280,15 +303,29 @@ case class PixelPipeline(c: Config) extends Component {
  
    val rasterYPipe = rasterYTransformed.stage()
    val rasterFork = StreamFork2(rasterYPipe, synchronous = true)
@@ -2814,7 +2930,7 @@ index 7797711..0d234df 100644
  
    if (c.enableTmu) {
      val tmu = Tmu(c)
-@@ -305,15 +329,56 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -305,15 +342,56 @@ case class PixelPipeline(c: Config) extends Component {
      tmu.io.invalidate := io.tmuInvalidate
      io.texRead <> tmu.io.texRead
  
@@ -2877,7 +2993,7 @@ index 7797711..0d234df 100644
      tmuOutput.translateFrom(rasterFork._1.stage()) { (out, in) =>
        out.texture.r := 0
        out.texture.g := 0
-@@ -334,23 +399,140 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -334,23 +412,140 @@ case class PixelPipeline(c: Config) extends Component {
      }
      io.texRead.rsp.ready := True
      tmuInputValid := False
@@ -3027,7 +3143,7 @@ index 7797711..0d234df 100644
  
    val spanPrefetchFork = StreamFork2(rasterizer.prefetchSpan, synchronous = true)
    val colorPrefetcher = SpanPrefetcher(c, colorPlane = true)
-@@ -367,17 +549,20 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -367,17 +562,20 @@ case class PixelPipeline(c: Config) extends Component {
    auxPrefetcher.io.yOriginEnable := yOriginEnable
    auxPrefetcher.io.yOriginSwapValue := yOriginSwapValue.resize(c.vertexFormat.nonFraction bits)
  
@@ -3052,7 +3168,7 @@ index 7797711..0d234df 100644
        ccColor.g === ckG && ccColor.b === ckB
      else False
  
-@@ -397,14 +582,12 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -397,14 +595,12 @@ case class PixelPipeline(c: Config) extends Component {
      dst.coords := src.coords
      dst.color := src.color
      dst.alpha := src.alpha
@@ -3071,7 +3187,7 @@ index 7797711..0d234df 100644
      if (c.trace.enabled) dst.trace := src.trace
    }
  
-@@ -413,6 +596,7 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -413,6 +609,7 @@ case class PixelPipeline(c: Config) extends Component {
      fog.io.input.simPublic()
      fog.io.output.simPublic()
      fog.io.fogTable := io.controls.fogTable
@@ -3079,7 +3195,7 @@ index 7797711..0d234df 100644
      fogArbiterInput >/-> fog.io.input
      fogOutput << fog.io.output
      fogBusy := fog.io.busy
-@@ -439,6 +623,11 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -439,6 +636,11 @@ case class PixelPipeline(c: Config) extends Component {
    val alphaKill = if (c.enableAlphaTest) alphaTestEnable && !alphaPassed else False
  
    fogOutput >/-> fbAccess.io.input
@@ -3091,7 +3207,7 @@ index 7797711..0d234df 100644
    fbAccess.io.fbReadColorRsp << io.colorReadRsp
    fbAccess.io.fbReadAuxRsp << io.auxReadRsp
    io.colorReadReq << fbAccess.io.fbReadColorReq.s2mPipe()
-@@ -653,10 +842,18 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -653,10 +855,18 @@ case class PixelPipeline(c: Config) extends Component {
    io.debug.writePath.zFuncFailNonZero := zFuncFailCounter.orR
    io.debug.writePath.aFuncFailNonZero := aFuncFailCounter.orR
  
@@ -3113,7 +3229,7 @@ index 7797711..0d234df 100644
        writeColor.i.fromPipeline.valid || writeAux.i.fromPipeline.valid ||
        writeColor.o.fbWrite.valid || writeAux.o.fbWrite.valid ||
        fastfillWriter.io.running || fastfillWriter.io.wordValid ||
-@@ -666,12 +863,122 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -666,12 +876,122 @@ case class PixelPipeline(c: Config) extends Component {
        forColorWrite.valid || forAuxWrite.valid ||
        colorWriteInput.valid || auxWriteInput.valid ||
        io.externalBusy.nopCmd || io.externalBusy.fastfillCmd ||
@@ -3237,7 +3353,7 @@ index 7797711..0d234df 100644
    val pipelineBusySources = Bits(32 bits)
    pipelineBusySources := 0
    pipelineBusySources(0) := triangleSetup.o.valid
-@@ -707,6 +1014,50 @@ case class PixelPipeline(c: Config) extends Component {
+@@ -707,6 +1027,56 @@ case class PixelPipeline(c: Config) extends Component {
    pipelineBusySources(30) := lfb.io.busy
  
    io.debug.pipelineBusy := pipelineBusySignal
@@ -3280,7 +3396,13 @@ index 7797711..0d234df 100644
 +      )
 +    else Map.empty
 +  // 20-25 are filled in by Core (fb write-buffer drain counters).
-+  for (i <- 0 until 32) io.debug.perf(i) := perfOwn.getOrElse(i, U(0, 32 bits))
++  // SV_TMU_DBG=1 (sim measurement build): TMU1's texture-path counters in
++  // 27, 28, 30, 31.
++  val perfTmuDbg: Map[Int, UInt] =
++    if (sys.env.contains("SV_TMU_DBG") && c.tmuCount > 1)
++      Map(27 -> tmu1Perf(0), 28 -> tmu1Perf(1), 30 -> tmu1Perf(2), 31 -> tmu1Perf(3))
++    else Map.empty
++  for (i <- 0 until 32) io.debug.perf(i) := (perfOwn ++ perfTmuDbg).getOrElse(i, U(0, 32 bits))
 +  // Framebuffer reader / access words come from FramebufferMemSubsystem in Core.
 +  for (w <- Seq(io.debug.fbAccess, io.debug.fbColorCache, io.debug.fbColorCacheReq,
 +      io.debug.fbColorCacheExpected, io.debug.fbColorCacheOccupancy, io.debug.fbAuxCache,
@@ -6822,10 +6944,98 @@ index c6b2ec5..7437fb0 100644
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/FastfillWordWriter.scala b/src/voodoo/raster/FastfillWordWriter.scala
-index 3a41225..31a7ac2 100644
+index 3a41225..a2e4035 100644
 --- a/src/voodoo/raster/FastfillWordWriter.scala
 +++ b/src/voodoo/raster/FastfillWordWriter.scala
-@@ -161,7 +161,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -25,12 +25,22 @@ case class FastfillWordWriter(c: Config) extends Component {
+     val wordReady = out Bool ()
+     val generatedPixels = out UInt (2 bits)
+     val colorWrittenPixels = out UInt (2 bits)
++
++    // Config.fbFillOffload: rectangle commands instead of words, offloadDone
++    // one cycle per finished command; writesIdle = every earlier
++    // framebuffer write has reached memory.
++    val offload = if (c.fbFillOffload) master Stream (FillCmd(c)) else null
++    val offloadDone = if (c.fbFillOffload) in Bool () else null
++    val writesIdle = if (c.fbFillOffload) in Bool () else null
++    val offloadActive = out Bool ()
+   }
+ 
+   val active = RegInit(False)
++  val offActive = RegInit(False)
++  val held = active || offActive
+   val regsCapture = RegNextWhen(io.regs, io.cmd.fire)
+   val regs = FastfillWrite.Regs(c)
+-  when(active) { regs := regsCapture }.otherwise { regs := io.regs }
++  when(held) { regs := regsCapture }.otherwise { regs := io.regs }
+ 
+   val clipLeftCapture = RegNextWhen(io.clipLeft, io.cmd.fire)
+   val clipRightCapture = RegNextWhen(io.clipRight, io.cmd.fire)
+@@ -41,7 +51,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+   val clipRight = UInt(10 bits)
+   val clipLowY = UInt(10 bits)
+   val clipHighY = UInt(10 bits)
+-  when(active) {
++  when(held) {
+     clipLeft := clipLeftCapture
+     clipRight := clipRightCapture
+     clipLowY := clipLowYCapture
+@@ -59,12 +69,52 @@ case class FastfillWordWriter(c: Config) extends Component {
+   val curWordX = Reg(UInt(10 bits)) init (0)
+   val curY = Reg(UInt(10 bits)) init (0)
+ 
+-  io.cmd.ready := !active
++  // Offloadable: no dithered colour (the memory side writes one value).
++  val offloadable =
++    if (c.fbFillOffload) !(regs.fbzMode.rgbBufferMask && regs.fbzMode.enableDithering) else False
++  io.cmd.ready := !held
+   when(io.cmd.fire) {
+-    active := !emptyRect
++    active := !emptyRect && !offloadable
++    offActive := !emptyRect && offloadable
+     curWordX := alignedClipLeft
+     curY := clipLowY
+   }
++  io.offloadActive := offActive
++  if (!c.fbFillOffload) offActive := False
++  val off = if (c.fbFillOffload) new Area {
++    // Colour then aux, each once every earlier write has landed; done when
++    // both commands report back.
++    val pendColor, pendAux = RegInit(False)
++    val outstanding = Reg(UInt(2 bits)) init (0)
++    when(io.cmd.fire && !emptyRect && offloadable) {
++      pendColor := regs.fbzMode.rgbBufferMask
++      pendAux := regs.fbzMode.auxBufferMask
++    }
++    val y0 = transformedY(c, regs.fbzMode.yOrigin, regs.yOriginSwapValue, clipLowY)
++    val stride = regs.routing.pixelStride
++    val rowBytes = FramebufferAddressMath.pixelByteOffset(U(0, 1 bits), U(1, 1 bits), stride, 16)
++    val cmd = FillCmd(c)
++    cmd.rowAddr := FramebufferAddressMath.planeAddress(
++      Mux(pendColor, regs.routing.colorBaseAddr, regs.routing.auxBaseAddr), U(0, 1 bits), y0, stride)
++    cmd.rowStep := Mux(regs.fbzMode.yOrigin, -rowBytes.asSInt, rowBytes.asSInt)
++    cmd.x0 := (clipLeft @@ U(0, 1 bits)).resized
++    cmd.x1 := (clipRight @@ U(0, 1 bits)).resized
++    cmd.rows := (clipHighY - clipLowY).resized
++    cmd.value := Mux(pendColor,
++      regs.color1(23 downto 19) ## regs.color1(15 downto 10) ## regs.color1(7 downto 3),
++      regs.zaColor(15 downto 0))
++    val cmdStage = Stream(FillCmd(c))
++    cmdStage.valid := offActive && (pendColor || pendAux) && io.writesIdle
++    cmdStage.payload := cmd
++    io.offload << cmdStage.m2sPipe()
++    when(cmdStage.fire) {
++      when(pendColor) { pendColor := False } otherwise { pendAux := False }
++    }
++    outstanding := outstanding + U(cmdStage.fire) - U(io.offloadDone)
++    when(offActive && !pendColor && !pendAux && outstanding === 0 && !io.offload.valid && !cmdStage.fire) {
++      offActive := False
++    }
++  } else null
+ 
+   val wordStream = Stream(WordReq(c))
+   val lane1X = (curWordX + 1).resize(10 bits)
+@@ -161,7 +211,7 @@ case class FastfillWordWriter(c: Config) extends Component {
      .m2sPipe()
  
    val ditherJoined =
@@ -6834,6 +7044,34 @@ index 3a41225..31a7ac2 100644
    val (forColor, forAux) = StreamFork2(ditherJoined, synchronous = true)
  
    io.colorWrite.valid := forColor.valid && forColor.payload._2.rgbWrite && anyLaneEnabled(
+@@ -188,7 +238,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+     forAux.payload._2
+   )) || io.auxWrite.ready
+ 
+-  io.running := active
++  io.running := active || offActive
+   io.wordValid := wordStream.valid
+   io.wordReady := wordStream.ready
+   io.generatedPixels := wordStream.fire ? laneCount(
+@@ -202,6 +252,18 @@ case class FastfillWordWriter(c: Config) extends Component {
+ }
+ 
+ object FastfillWordWriter {
++  /** A fill rectangle in framebuffer byte addresses (Config.fbFillOffload):
++    * rows of bytes [rowAddr + x0, rowAddr + x1), rowStep apart, set to value.
++    */
++  case class FillCmd(c: Config) extends Bundle {
++    val rowAddr = UInt(c.addressWidth)
++    val rowStep = SInt(16 bits)
++    val x0 = UInt(12 bits)
++    val x1 = UInt(12 bits)
++    val rows = UInt(11 bits)
++    val value = Bits(16 bits)
++  }
++
+   case class WordReq(c: Config) extends Bundle {
+     val baseX = UInt(10 bits)
+     val y = UInt(10 bits)
 diff --git a/src/voodoo/raster/Rasterizer.scala b/src/voodoo/raster/Rasterizer.scala
 index cee86c0..f0b6f7f 100644
 --- a/src/voodoo/raster/Rasterizer.scala
@@ -9941,7 +10179,7 @@ index d5f1a9b..51cc3c9 100644
          result.trace := pass.trace
        }
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..8a71105 100644
+index 465ea78..b666895 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -10030,7 +10268,7 @@ index 465ea78..8a71105 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,403 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,404 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
@@ -10430,7 +10668,8 @@ index 465ea78..8a71105 100644
 +  // 0 word lookups (active lanes), 1 lookup-stage misses, 2 cycles the lookup
 +  // stage waits on fills, 3 samples delivered.
 +  io.perf(0) := counter(Mux(out.fire, Mux(s1.bilinear, U(4, 3 bits), U(1, 3 bits)), U(0, 3 bits)))
-+  io.perf(1) := counter(backMiss.asUInt)
++  // SV_TMU_DBG=1 (sim measurement build): 1 counts paired-bank re-reads.
++  io.perf(1) := counter((if (sys.env.contains("SV_TMU_DBG")) bankRetry else backMiss).asUInt)
 +  io.perf(2) := counter((s1Valid && (waitFill || reread || backMiss)).asUInt)
 +  io.perf(3) := counter(io.sampleFetch.fire.asUInt)
 +}

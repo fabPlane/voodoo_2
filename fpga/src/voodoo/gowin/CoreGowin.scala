@@ -79,6 +79,10 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     // Host has a raw-DDR window selected: drain the fb write buffer and drop
     // texture caches so raw reads see, and rendering uses, current memory.
     val rawActive = in Bool ()
+    // Config.fbFillOffload: fast fill rectangles (DDR byte addresses; the
+    // framebuffer sits at 0) and one fillDone cycle per finished one.
+    val fill = if (c.fbFillOffload) master Stream (voodoo.raster.FastfillWordWriter.FillCmd(c)) else null
+    val fillDone = if (c.fbFillOffload) in Bool () else null
   }
 
   val core = Core(c)
@@ -168,6 +172,10 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   texReloc.io.input << texAxi.io.output
   io.memTex << texReloc.io.output
 
+  if (c.fbFillOffload) {
+    io.fill << core.io.fillOffload
+    core.io.fillDone := io.fillDone
+  }
   core.io.statusInputs.vRetrace := core.io.hdmi.status.frameDone
   core.io.statusInputs.memFifoFree := 0xffff
   core.io.statusInputs.pciInterrupt := False

@@ -688,4 +688,102 @@ class Axi4ToGowinDdrNativeTest extends AnyFunSuite {
       println(f"[auxw-stream] ${(cycle - c0)} cycles for two ports' 12 bursts each")
     }
   }
+
+  private lazy val compiledFill = SimConfig.withVerilator.compile(
+    Axi4ToGowinDdrNative(cfg, cfg, scanConfig = cfg, auxConfig = cfg, colConfig = cfg, auxWConfig = cfg,
+      readStagers = stagers, withFill = true))
+
+  test("fills (unaligned edges, negative row step) set exactly their rectangle, ordered with write bursts") {
+    compiledFill.doSim("fill", seed = 3) { dut =>
+      dut.clockDomain.forkStimulus(10)
+      val rnd = new scala.util.Random(31)
+      dut.io.ddr.cmdReady #= true
+      dut.io.ddr.wrDataRdy #= true
+      dut.io.ddr.rdDataValid #= false
+      dut.io.ddr.rdDataEnd #= false
+      dut.io.ddr.initCalibComplete #= true
+      dut.io.cmdGap #= 0
+      dut.io.maxReads #= 0
+      dut.io.urgent #= false
+      dut.io.policy #= 0
+      dut.io.fill.valid #= false
+      for (axi <- Seq(dut.io.fb, dut.io.tex, dut.io.scan, dut.io.aux, dut.io.col, dut.io.auxW)) {
+        axi.aw.valid #= false; axi.w.valid #= false; axi.b.ready #= true
+        axi.ar.valid #= false; axi.r.ready #= false
+      }
+      val mem = mutable.HashMap[BigInt, BigInt]()
+      // Expected bytes, applied in the order the adapter must apply them.
+      val want = mutable.HashMap[Long, Int]()
+      var cycle = 0L
+      var fillsDone = 0
+      dut.clockDomain.onSamplings {
+        cycle += 1
+        dut.io.ddr.cmdReady #= rnd.nextInt(4) != 0
+        dut.io.ddr.wrDataRdy #= rnd.nextInt(4) != 0
+        if (dut.io.fillDone.toBoolean) fillsDone += 1
+        if (dut.io.ddr.cmdEn.toBoolean && dut.io.ddr.cmd.toInt == 0) {
+          val a = dut.io.ddr.addr.toBigInt
+          val data = dut.io.ddr.wrData.toBigInt; val mask = dut.io.ddr.wrDataMask.toBigInt
+          var line = mem.getOrElse(a, BigInt(0))
+          for (b <- 0 until 32 if !mask.testBit(b)) {
+            val byte = (data >> (8 * b)) & 0xff
+            line = (line & ~(BigInt(0xff) << (8 * b))) | (byte << (8 * b))
+          }
+          mem(a) = line
+        }
+      }
+      def byteAt(a: Long): Int = ((mem.getOrElse(BigInt((a >> 5) << 3), BigInt(0)) >> (8 * (a & 31).toInt)) & 0xff).toInt
+      def burst(axi: spinal.lib.bus.amba4.axi.Axi4, a: Long, beats: Int): Unit = {
+        axi.aw.valid #= true; axi.aw.addr #= a; axi.aw.len #= beats - 1
+        axi.aw.size #= 2; axi.aw.burst #= 1; axi.aw.id #= 1
+        dut.clockDomain.waitSamplingWhere(axi.aw.ready.toBoolean)
+        axi.aw.valid #= false
+        for (i <- 0 until beats) {
+          val d = rnd.nextLong() & 0xffffffffL
+          axi.w.valid #= true; axi.w.data #= d; axi.w.strb #= 0xf; axi.w.last #= i == beats - 1
+          dut.clockDomain.waitSamplingWhere(axi.w.ready.toBoolean)
+          for (b <- 0 until 4) want(a + 4 * i + b) = ((d >> (8 * b)) & 0xff).toInt
+        }
+        axi.w.valid #= false
+        dut.clockDomain.waitSamplingWhere(axi.b.valid.toBoolean)
+      }
+      def fill(rowAddr: Long, rowStep: Int, x0: Int, x1: Int, rows: Int, value: Int): Unit = {
+        val before = fillsDone
+        dut.io.fill.valid #= true
+        dut.io.fill.rowAddr #= rowAddr; dut.io.fill.rowStep #= rowStep
+        dut.io.fill.x0 #= x0; dut.io.fill.x1 #= x1; dut.io.fill.rows #= rows; dut.io.fill.value #= value
+        dut.clockDomain.waitSamplingWhere(dut.io.fill.ready.toBoolean)
+        dut.io.fill.valid #= false
+        dut.clockDomain.waitSamplingWhere(fillsDone > before)
+        for (r <- 0 until rows; x <- x0 until x1) {
+          val a = rowAddr + r.toLong * rowStep + x
+          want(a) = if ((a & 1) == 0) value & 0xff else (value >> 8) & 0xff
+        }
+      }
+      val rowBytes = 1280
+      // Background: a 3-row patch written by both ports.
+      for (r <- 0 until 3; k <- 0 until 10) { burst(dut.io.fb, 0x10000L + r * rowBytes + 32 * k, 8); burst(dut.io.auxW, 0x20000L + r * rowBytes + 32 * k, 8) }
+      fill(0x10000L, rowBytes, 6, 290, 3, 0x1234)           // unaligned both ends
+      fill(0x20000L + 2 * rowBytes, -rowBytes, 0, 1280, 3, 0xffff) // whole rows, upward
+      fill(0x30000L, rowBytes, 34, 36, 4, 0xabcd)           // inside one line
+      fill(0x30000L + 64, rowBytes, 30, 34, 2, 0x5a5a)      // straddles two lines
+      // Writes queued behind a fill land after it.
+      val w = fork { burst(dut.io.fb, 0x10000L + 64, 8) }
+      fill(0x10000L, rowBytes, 0, 128, 1, 0x7777)
+      w.join()
+      dut.clockDomain.waitSampling(50)
+      var bad = 0
+      for ((a, v) <- want) {
+        val got = byteAt(a)
+        if (got != v) { if (bad < 8) println(f"byte $a%x: got $got%02x want $v%02x"); bad += 1 }
+      }
+      // Nothing outside the expected bytes was written.
+      for ((line, data) <- mem; b <- 0 until 32) {
+        val a = (line.toLong >> 3 << 5) + b
+        if (!want.contains(a) && ((data >> (8 * b)) & 0xff) != 0) { if (bad < 16) println(f"stray byte $a%x"); bad += 1 }
+      }
+      assert(bad == 0, s"$bad bytes wrong")
+      println(s"[fill] ok, ${want.size} bytes checked")
+    }
+  }
 }

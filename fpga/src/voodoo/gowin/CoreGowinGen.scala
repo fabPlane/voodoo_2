@@ -129,6 +129,9 @@ object GowinGenSupport {
       texSmallFillSlots = 4,
       // Voodoo 2 triangle setup engine (sVx ... sDrawTriCMD); Glide uses it
       // with SST_V2SETUP=1, the old register path keeps working.
+      // Fast fills (Q2 / GLQuake clear depth every frame: ~154k core cycles
+      // at two pixels a clock) as whole DDR lines.
+      fbFillOffload = !sys.env.contains("GOWIN_NO_FILL_OFFLOAD"),
       setupEngine = false, // B175/B176: misses timing at current utilisation (86% CLS); sim only for now
       // Two TMUs: one data copy per tap pair, split into word-parity banks
       // (half the texture cache data BSRAM; same cycles in replay).

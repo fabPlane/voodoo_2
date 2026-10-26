@@ -232,7 +232,24 @@ case class TangMega138kPro(c: Config) extends Component {
     // Two-TMU builds need the DDR-domain area more than the stagers' ~0.4%.
     readStagers = c.tmuCount == 1,
     // and its debug counters (~770 FFs with the snapshot and PCIe copy).
-    withStats = c.tmuCount == 1 || sys.env.contains("GOWIN_DDR_STATS"))
+    withStats = c.tmuCount == 1 || sys.env.contains("GOWIN_DDR_STATS"),
+    withFill = c.fbFillOffload)
+  // Fast fill rectangles to the adapter's fill engine, done pulses back.
+  if (c.fbFillOffload) {
+    val fillCc = StreamCCByToggle(voodoo.raster.FastfillWordWriter.FillCmd(c), coreCd, ClockDomain.current)
+    fillCc.io.input << core.io.fill
+    ddr.io.fill << fillCc.io.output.translateWith {
+      val f = DdrFillCmd()
+      f.rowAddr := fillCc.io.output.rowAddr.resized
+      f.rowStep := fillCc.io.output.rowStep
+      f.x0 := fillCc.io.output.x0
+      f.x1 := fillCc.io.output.x1
+      f.rows := fillCc.io.output.rows
+      f.value := fillCc.io.output.value
+      f
+    }
+    core.io.fillDone := PulseCCByToggle(ddr.io.fillDone, ClockDomain.current, coreCd)
+  }
   // W / R buffering per direction: 32 words, four 32-byte bursts.
   private val burstBeats = 32
   val fbCc = Axi4ClockCrossing(fbDdrConfig, coreCd, ClockDomain.current,

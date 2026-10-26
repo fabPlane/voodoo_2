@@ -57,6 +57,19 @@ case class GowinDdrNative(
   * wr_data_mask is active-high inhibit, the inverse of AXI wstrb.
   * nativeDataWidth is 256 on the 32-bit Pro Dock and 128 on the Console.
   */
+/** A framebuffer fill in DDR byte addresses (Axi4ToGowinDdrNative withFill):
+  * rows of bytes [rowAddr + x0, rowAddr + x1), rowStep apart, set to the
+  * 16-bit value. x1 > x0, rows > 0.
+  */
+case class DdrFillCmd() extends Bundle {
+  val rowAddr = UInt(32 bits)
+  val rowStep = SInt(16 bits)
+  val x0 = UInt(12 bits)
+  val x1 = UInt(12 bits)
+  val rows = UInt(11 bits)
+  val value = Bits(16 bits)
+}
+
 case class Axi4ToGowinDdrNative(
     fbConfig: Axi4Config,
     texConfig: Axi4Config,
@@ -85,7 +98,13 @@ case class Axi4ToGowinDdrNative(
     // 256-bit lines) for ~0.4% GLQuake speed (B130d).
     readStagers: Boolean = true,
     // io.stats counters (window 31 0x78-0x94 on the Pro Dock); false = 0.
-    withStats: Boolean = true
+    withStats: Boolean = true,
+    // io.fill: whole-line framebuffer fills (fast fills / depth clears)
+    // written as native lines, 16 pixels per command instead of 2 per core
+    // clock through a write port. Nothing else is collected meanwhile; the
+    // sender orders it against earlier writes (their B returned) and later
+    // ones (io.fillDone).
+    withFill: Boolean = false
 ) extends Component {
   require(fbConfig.dataWidth == 32 && texConfig.dataWidth == 32)
   require(scanConfig == null || scanConfig.dataWidth == 32)
@@ -97,6 +116,7 @@ case class Axi4ToGowinDdrNative(
   val hasCol = colConfig != null
   val hasAuxW = auxWConfig != null
   require(nativeDataWidth % 32 == 0 && nativeDataWidth >= 32)
+  require(!withFill || nativeDataWidth == 256, "fill engine assumes 32-byte native lines")
   require(isPow2(readsInFlight) && readsInFlight >= 2)
   val nativeWords = nativeDataWidth / 32
   val beatBytes = GowinDdrNative.beatBytes(nativeDataWidth)
@@ -143,6 +163,8 @@ case class Axi4ToGowinDdrNative(
     // 6 sum of reads in flight per cycle (/ read cmds = mean read latency),
     // 7 cycles the head returned line waited for the col port's R.
     val stats = out(Vec(UInt(32 bits), 8))
+    val fill = if (withFill) slave(Stream(DdrFillCmd())) else null
+    val fillDone = if (withFill) out Bool () else null // one cycle per finished fill
   }
 
   private def toNative(a: UInt): UInt = {
@@ -525,8 +547,9 @@ case class Axi4ToGowinDdrNative(
       when(bReady) { iDone := True }
     }
 
+    val fillHold = Bool() // a fill waits or runs: start no burst
     when(!collecting) {
-      when(io.ddr.initCalibComplete) {
+      when(io.ddr.initCalibComplete && !fillHold) {
         if (hasAuxW) {
           when(io.auxW.aw.valid && (auxWNext || !io.fb.aw.valid)) {
             start(writePorts(2))
@@ -590,6 +613,82 @@ case class Axi4ToGowinDdrNative(
         when(last) { collecting := False }
       }
     }
+
+    // ---- fill engine: loads lines straight into the issue buffer (no B)
+    if (!withFill) fillHold := False
+    val fillEngine = if (withFill) new Area {
+      val active = RegInit(False)
+      val cmd = Reg(DdrFillCmd())
+      val rowsLeft = Reg(UInt(11 bits)) init (0)
+      val rowAddr = Reg(UInt(32 bits)) init (0)
+      // Row setup over two cycles (start / end byte, then line bounds), off
+      // the per-line path.
+      val setup1, setup2 = RegInit(False)
+      val sByte, eByte = Reg(UInt(32 bits)) // first byte, last byte of the row
+      val line = Reg(UInt(32 bits)) init (0)
+      val linesLeft = Reg(UInt(8 bits)) init (0) // lines after `line` in this row
+      val lowCut, highCut = Reg(UInt(5 bits)) init (0)
+      val firstOfRow = RegInit(False)
+      val draining = RegInit(False)
+      val done = RegInit(False)
+      fillHold := active || io.fill.valid
+      io.fill.ready := !active && !collecting && !iValid
+      done := False
+      io.fillDone := done
+      when(io.fill.fire) {
+        active := True
+        cmd := io.fill.payload
+        rowsLeft := io.fill.payload.rows
+        rowAddr := io.fill.payload.rowAddr
+        setup1 := True
+      }
+      when(setup1) {
+        sByte := rowAddr + cmd.x0.resize(32 bits)
+        eByte := rowAddr + cmd.x1.resize(32 bits) - 1
+        setup1 := False
+        setup2 := True
+      }
+      when(setup2) {
+        line := sByte(31 downto 5) @@ U(0, 5 bits)
+        linesLeft := ((eByte(31 downto 5) - sByte(31 downto 5)).resize(8 bits))
+        lowCut := sByte(4 downto 0)
+        highCut := eByte(4 downto 0)
+        firstOfRow := True
+        setup2 := False
+      }
+      val lineReady = active && !setup1 && !setup2 && !draining && !io.fill.fire
+      val isLast = linesLeft === 0
+      val lo = Mux(firstOfRow, lowCut, U(0, 5 bits))
+      val hi = Mux(isLast, highCut, U(31, 5 bits))
+      when(lineReady && !iValid) {
+        iValid := True
+        iResp := False
+        iLast := False
+        iPortOh := 0
+        addr := line
+        iHasData := True
+        for (k <- 0 until nativeWords) {
+          words(k) := cmd.value ## cmd.value
+          for (l <- 0 until 4) {
+            val b = U(4 * k + l, 5 bits)
+            strbs(k)(l) := b >= lo && b <= hi
+          }
+        }
+        firstOfRow := False
+        line := line + 32
+        linesLeft := linesLeft - 1
+        when(isLast) {
+          rowsLeft := rowsLeft - 1
+          rowAddr := (rowAddr.asSInt + cmd.rowStep.resize(32 bits)).asUInt
+          when(rowsLeft === 1) { draining := True } otherwise { setup1 := True }
+        }
+      }
+      when(draining && !iValid) {
+        draining := False
+        active := False
+        done := True
+      }
+    } else null
   }
   if (fbConfig.useId) io.fb.b.id := wr.id.resized
   if (texConfig.useId) io.tex.b.id := wr.id.resized
