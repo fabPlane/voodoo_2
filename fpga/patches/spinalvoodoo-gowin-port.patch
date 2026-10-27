@@ -8417,10 +8417,10 @@ index 59df4ba..680a9f2 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
 diff --git a/src/voodoo/raster/TriangleSetup.scala b/src/voodoo/raster/TriangleSetup.scala
-index fb95365..2f69ba0 100644
+index fb95365..a2b712e 100644
 --- a/src/voodoo/raster/TriangleSetup.scala
 +++ b/src/voodoo/raster/TriangleSetup.scala
-@@ -8,216 +8,289 @@ import spinal.lib._
+@@ -8,220 +8,302 @@ import spinal.lib._
  case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Component {
    val i = slave(Stream(TriangleSetup.Input(c)))
    val o = master(Stream(TriangleSetup.Output(c)))
@@ -8884,17 +8884,32 @@ index fb95365..2f69ba0 100644
 +  }
 +  o.payload.baseLod := lod.baseLod
 +
-+  val ax = pending.triWithSign.tri(0)(0).raw.asSInt.resize(32 bits)
-+  val ay = pending.triWithSign.tri(0)(1).raw.asSInt.resize(32 bits)
-+  val bx = pending.triWithSign.tri(1)(0).raw.asSInt.resize(32 bits)
-+  val by = pending.triWithSign.tri(1)(1).raw.asSInt.resize(32 bits)
-+  val cx = pending.triWithSign.tri(2)(0).raw.asSInt.resize(32 bits)
-+  val cy = pending.triWithSign.tri(2)(1).raw.asSInt.resize(32 bits)
++  // Vertices copied into setup's own registers as the triangle is taken:
++  // the register bank's live values (triangleSnapshot = false) fed Prep's
++  // and ScanMul's multipliers through its read logic (54.5 MHz builds).
++  val triReg = Reg(cloneOf(pending.triWithSign.tri))
++  val signReg = Reg(Bool())
++  when(state === SetupState.Idle && i.valid) {
++    triReg := pending.triWithSign.tri
++    signReg := pending.triWithSign.signBit
++  }
++  val ax = triReg(0)(0).raw.asSInt.resize(32 bits)
++  val ay = triReg(0)(1).raw.asSInt.resize(32 bits)
++  val bx = triReg(1)(0).raw.asSInt.resize(32 bits)
++  val by = triReg(1)(1).raw.asSInt.resize(32 bits)
++  val cx = triReg(2)(0).raw.asSInt.resize(32 bits)
++  val cy = triReg(2)(1).raw.asSInt.resize(32 bits)
 +
    when(state === SetupState.Prep) {
      val input = pending
-     val tri = input.triWithSign.tri
-@@ -264,10 +337,8 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+-    val tri = input.triWithSign.tri
+-    val signBit = input.triWithSign.signBit
++    val tri = triReg
++    val signBit = signReg
+ 
+     val xminRaw = tri.map(_(0)).reduceBalancedTree((a, b) => a.min(b))
+     val xmaxRaw = tri.map(_(0)).reduceBalancedTree((a, b) => a.max(b))
+@@ -264,10 +346,8 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
      halfPixel := 0.5
      val xCenter = (xrange0 + halfPixel).fixTo(c.vertexFormat)
      val yCenter = (yrange0 + halfPixel).fixTo(c.vertexFormat)
@@ -8907,7 +8922,7 @@ index fb95365..2f69ba0 100644
  
      val paramAdjust = input.config.fbzColorPath.paramAdjust
      val fracAx = tri(0)(0).raw(3 downto 0).asUInt
-@@ -282,47 +353,63 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
+@@ -282,47 +362,63 @@ case class TriangleSetup(c: Config, formalStrong: Boolean = false) extends Compo
      val dxPix = (startXPix - aXPix).resize(16 bits)
      val dyPix = (startYPix - aYPix).resize(16 bits)
  
@@ -9003,7 +9018,7 @@ index fb95365..2f69ba0 100644
    GenerationFlags.formal {
      when(o.valid) {
        val tri = pending.triWithSign.tri
-@@ -351,7 +438,8 @@ object TriangleSetup {
+@@ -351,7 +447,8 @@ object TriangleSetup {
        texHi: HiTexCoords,
        config: PerTriangleConfig,
        traceDrawId: UInt,
@@ -9013,7 +9028,7 @@ index fb95365..2f69ba0 100644
    ): Input = {
      val out = Input(c)
      out.triWithSign.tri(0)(0).raw := ax.asBits
-@@ -364,6 +452,7 @@ object TriangleSetup {
+@@ -364,6 +461,7 @@ object TriangleSetup {
      out.grads := grads
      out.hiAlpha := hiAlpha
      out.texHi := texHi
@@ -9021,7 +9036,7 @@ index fb95365..2f69ba0 100644
      out.config := config
      if (c.trace.enabled) {
        out.trace.valid := True
-@@ -395,6 +484,7 @@ object TriangleSetup {
+@@ -395,6 +493,7 @@ object TriangleSetup {
      val fbzColorPath = FbzColorPath()
      val fogMode = FogMode()
      val alphaMode = AlphaMode()
@@ -9029,7 +9044,7 @@ index fb95365..2f69ba0 100644
    }
  
    object PixelPipelineConfig {
-@@ -403,10 +493,24 @@ object TriangleSetup {
+@@ -403,10 +502,24 @@ object TriangleSetup {
        out.fbzColorPath := src.fbzColorPath
        out.fogMode := src.fogMode
        out.alphaMode := src.alphaMode
@@ -9054,7 +9069,7 @@ index fb95365..2f69ba0 100644
    case class TmuConfig(c: Config) extends Bundle {
      val textureEnable = Bool()
      val textureMode = Bits(12 bits)
-@@ -415,15 +519,18 @@ object TriangleSetup {
+@@ -415,15 +528,18 @@ object TriangleSetup {
      val texBaseAddr2 = UInt(24 bits)
      val texBaseAddr38 = UInt(24 bits)
      val tLOD = Bits(27 bits)
@@ -9079,7 +9094,7 @@ index fb95365..2f69ba0 100644
        val out = TmuConfig(c)
        out.textureEnable := src.fbzColorPath.textureEnable
        out.textureMode := src.tmuTextureMode
-@@ -432,11 +539,13 @@ object TriangleSetup {
+@@ -432,11 +548,13 @@ object TriangleSetup {
        out.texBaseAddr2 := src.tmuTexBaseAddr2
        out.texBaseAddr38 := src.tmuTexBaseAddr38
        out.tLOD := src.tmuTLOD
@@ -9098,7 +9113,7 @@ index fb95365..2f69ba0 100644
        out
      }
    }
-@@ -450,6 +559,7 @@ object TriangleSetup {
+@@ -450,6 +568,7 @@ object TriangleSetup {
      val fbzColorPath = FbzColorPath() // Color path control (FBI + TREX)
      val fogMode = FogMode() // Fog mode control (FBI)
      val alphaMode = AlphaMode() // Alpha mode control (FBI)
@@ -9106,7 +9121,7 @@ index fb95365..2f69ba0 100644
      val enableClipping = Bool()
      val clipLeft = UInt(10 bits)
      val clipRight = UInt(10 bits)
-@@ -468,9 +578,11 @@ object TriangleSetup {
+@@ -468,9 +587,11 @@ object TriangleSetup {
      val tmudTdX = AFix(c.texCoordsFormat)
      val tmudSdY = AFix(c.texCoordsFormat)
      val tmudTdY = AFix(c.texCoordsFormat)
@@ -9121,7 +9136,7 @@ index fb95365..2f69ba0 100644
    }
  
    /** Input bundle - triangle with gradients and render config captured at command time */
-@@ -479,6 +591,7 @@ object TriangleSetup {
+@@ -479,6 +600,7 @@ object TriangleSetup {
      val grads = Rasterizer.GradientBundle(Rasterizer.InputGradient(_), c)
      val hiAlpha = HiAlpha(c)
      val texHi = HiTexCoords(c)
@@ -9129,7 +9144,7 @@ index fb95365..2f69ba0 100644
      val config = PerTriangleConfig(c)
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
-@@ -489,10 +602,17 @@ object TriangleSetup {
+@@ -489,10 +611,17 @@ object TriangleSetup {
      val xrange = vertex2d(c.vertexFormat)
      val yrange = vertex2d(c.vertexFormat)
      val edgeStart = Vec.fill(3)(AFix(c.coefficientFormat))
@@ -10528,7 +10543,7 @@ index d5f1a9b..51cc3c9 100644
          result.trace := pass.trace
        }
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..b666895 100644
+index 465ea78..465ad10 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -10617,7 +10632,7 @@ index 465ea78..b666895 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,404 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,406 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
@@ -10923,7 +10938,9 @@ index 465ea78..b666895 100644
 +  val inTaps = tapAddrsOf(io.sampleRequest.payload)
 +  for (i <- 0 until lanes) hintIn.payload.addr(i) := wordAddr(inTaps(i))
 +  hintIn.payload.active := Mux(io.sampleRequest.payload.bilinear, B"1111", B"0001")
-+  val hintQ = hintIn.toFlow.toStream.queue(c.texHintQueueDepth)
++  // s2mPipe: the queue's pop ready is registered (the tag compare drove the
++  // queue RAM's enables combinationally, 54.5 MHz builds).
++  val hintQ = hintIn.toFlow.toStream.queue(c.texHintQueueDepth).s2mPipe()
 +  val hValid = RegInit(False)
 +  val hFresh = RegInit(False) // tags read last cycle belong to h
 +  val h = Reg(Hint())
