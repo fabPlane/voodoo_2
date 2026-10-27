@@ -190,3 +190,39 @@ cuts: plane-reader line buffers → 64-lane windows (~1.2 mm²), PCI FIFO
 entries 124 → ~56 bits (~0.25), spanVar FIFO 16 → 8 (~0.19), texture cache
 16 lines (~1 mm², -11%). 3.3 V cells + 3.3 V SRAM: cells ~20-40% slower,
 and the 1024x8 macros only help the line buffers.
+
+## Area cuts round 2 + PCI (2026-10-28)
+
+Cuts: `Config.fbReaderChunkLanes` = 64 (plane readers fetch spans in 64-lane
+bursts; lane buffer 128 instead of 641 lanes; also 6% faster), span queue
+16 → 4 and TMU sample queue 16 → 8 (free), PCI FIFO stays 64 (Voodoo
+software). Texture cache 16 lines is the last lever (-11%).
+
+PCI: `voodoo.asic.Pci` — PciTarget (PCI clock domain; config space with 3dfx
+Voodoo Graphics IDs, BAR0 16 MB, posted burst writes, delayed-transaction
+reads, parity), PciToLink (packets to every chip; LFB reads to the row's
+chip), PciMasterModel (sim host bridge). Die top `AsicChip`: one die is the
+SLI master (pciMaster strap) or a slave; straps for chip index / count, busy
+in / out folded into the status register. No FPGA needed on a PCI card:
+2 dies + SRAM + HyperRAM + an HDMI transmitter on the shared RGB bus.
+Pins (1x1_max_all): PCI 47, fb SRAM 59, tex HyperRAM x16 20, link 11, video
+20, busy 2, straps 6, core clock 1 = 166 / 168.
+
+Whole-system simulation (`--asic-chips N`, `--asic-pci`): chips share the
+memory models, the composed frame is compared with the single-chip image —
+exact except the known 2 px, for 2 and 4 chips, link or PCI.
+
+| system (fps at 40 MHz) | cycles/frame | fps |
+|---|---|---|
+| 2 chips, link, SRAM fb + tex, cache 32 | 1,040,919 | 38 |
+| 2 chips, PCI, SRAM fb + tex, cache 32 | 1,071,329 | 37 |
+| 2 chips, PCI, SRAM fb + HyperRAM x16 tex, cache 32 | 1,181,395 | 34 |
+| 4 chips, PCI, SRAM fb + tex, cache 32 | 691,391 | 58 |
+| **fits: 2 chips, PCI, SRAM fb + HyperRAM tex, cache 16** | **1,331,363** | **30** |
+| fits: 4 chips | 856,391 | 47 |
+
+PCI die (cache 32): 4.61 mm² cells, 4.86 after buffering (0.47 of RAM
+stand-ins → ~4.39 logic; PCI target ~0.06), core 40 MHz +0.23 ns, PCI 33 MHz
++2.68 ns, pixel clock met (typical corner). RAM 13.3 KiB = 6.11 mm².
+Total ≈ 13.5 mm² at 70% placement density (14.5 at 60%) vs 12.92; with the
+16-line texture cache ≈ 12.2 mm² at 70%: fits, tightly.
