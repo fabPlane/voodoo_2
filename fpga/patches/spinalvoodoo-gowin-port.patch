@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..9596a9a 100644
+index 1b34fa2..2894a1d 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..9596a9a 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,113 @@ case class Config(
+@@ -31,6 +34,117 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1156,6 +1156,10 @@ index 1b34fa2..9596a9a 100644
 +    // issue queues 64 -> 8, post-TMU FIFO 64 -> 16, framebuffer access
 +    // queues 32 -> 8, scanout line fetcher FIFO 128 words).
 +    asicFifos: Boolean = false,
++    // One palette RAM with four read ports instead of a copy per bilinear tap
++    // (the copies work around Quartus' 1W/4R RAM inference; an ASIC keeps one
++    // register array).
++    paletteSingleRam: Boolean = false,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -1183,7 +1187,7 @@ index 1b34fa2..9596a9a 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..b4f7164 100644
+index 100f1c6..a84fc90 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -1,5 +1,7 @@
@@ -1474,7 +1478,7 @@ index 100f1c6..b4f7164 100644
 +    // 12: PCI FIFO under 64 free (the host is about to wait for room); was
 +    // the read-hazard guard hold, ~0% since B92.
 +    val fifoNearlyFull = Reg(UInt(32 bits)) init (0)
-+    when(RegNext(pciFifo.io.pciFifoFree < 64) init (False)) { fifoNearlyFull := fifoNearlyFull + 1 }
++    when(RegNext(pciFifo.io.pciFifoFree < scala.math.min(64, c.pciFifoDepth)) init (False)) { fifoNearlyFull := fifoNearlyFull + 1 }
 +    regDebug.perf(12) := fifoNearlyFull
 +  }
 +  regBank.io.debug := regDebug
@@ -1488,7 +1492,7 @@ index 100f1c6..b4f7164 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..80e25d5 100644
+index 9effb48..bac8271 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
@@ -1512,7 +1516,7 @@ index 9effb48..80e25d5 100644
  ) extends Component {
    val io = new Bundle {
      // Unified CPU bus (24-bit address covers 16MB PCI BAR)
-@@ -27,26 +32,114 @@ case class CoreSim(
+@@ -27,26 +32,120 @@ case class CoreSim(
    }
  
    val core = Core(c)
@@ -1525,13 +1529,19 @@ index 9effb48..80e25d5 100644
 +    // uncore (voodoo.asic), memories under the harness's names.
 +    val host = voodoo.asic.HostLinkHost()
 +    host.io.bus <> io.cpuBus
-+    val uncore = voodoo.asic.AsicUncore(c, memTiming.hbLatency, log2Up(c.sliCount), c.sliIndex, memTiming.hbReadChunk)
++    val uncore = voodoo.asic.AsicUncore(c, memTiming.hbLatency, log2Up(c.sliCount), c.sliIndex, memTiming.hbReadChunk,
++      fbSram = memTiming.asicFbSram, texDevices = memTiming.asicTexDevices)
 +    voodoo.asic.AsicUncore.attach(core, uncore)
 +    uncore.io.link << host.io.link
 +    host.io.rsp << uncore.io.linkRsp
-+    val fbWriteRam = voodoo.asic.HyperRamModel(2, 4 * 1024 * 1024, memTiming.hbLatency).setName("fbWriteRam")
-+    val texRam = voodoo.asic.HyperRamModel(1, 8 * 1024 * 1024, memTiming.hbLatency).setName("texRam")
-+    fbWriteRam.io.hb <> uncore.io.fbHb
++    if (memTiming.asicFbSram) {
++      val fbWriteRam = voodoo.asic.SramModel(4 * 1024 * 1024).setName("fbWriteRam")
++      fbWriteRam.io.sram <> uncore.io.fbSramBus
++    } else {
++      val fbWriteRam = voodoo.asic.HyperRamModel(2, 4 * 1024 * 1024, memTiming.hbLatency).setName("fbWriteRam")
++      fbWriteRam.io.hb <> uncore.io.fbHb
++    }
++    val texRam = voodoo.asic.HyperRamModel(memTiming.asicTexDevices, 8 * 1024 * 1024, memTiming.hbLatency).setName("texRam")
 +    texRam.io.hb <> uncore.io.texHb
 +  }
  
@@ -1643,7 +1653,7 @@ index 9effb48..80e25d5 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..c754285 100644
+index 6051025..bc3805b 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1691,7 +1701,7 @@ index 6051025..c754285 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,34 @@ object CoreSimGen extends App {
+@@ -37,7 +49,36 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1723,11 +1733,13 @@ index 6051025..c754285 100644
 +      sliCount = argIntValue("--sli-count").getOrElse(1),
 +      sliIndex = argIntValue("--sli-index").getOrElse(0),
 +      sliMaxCount = argIntValue("--sli-max-count").getOrElse(1),
-+      asicFifos = args.contains("--asic-fifos")
++      asicFifos = args.contains("--asic-fifos"),
++      paletteSingleRam = args.contains("--palette-single"),
++      maxFbDims = if (args.contains("--max-fb-640")) (640, 480) else Config.voodoo1().maxFbDims
      )
  
    val memTiming = SimMemoryTiming(
-@@ -45,9 +84,15 @@ object CoreSimGen extends App {
+@@ -45,9 +86,17 @@ object CoreSimGen extends App {
      fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
      burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
      burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
@@ -1738,7 +1750,9 @@ index 6051025..c754285 100644
 +    texChanBytesPerCycleX16 = argIntValue("--sim-tex-chan-bpc16").getOrElse(0),
 +    texChanOverhead = argIntValue("--sim-tex-chan-overhead").getOrElse(0),
 +    hbLatency = argIntValue("--sim-hb-latency").getOrElse(6),
-+    hbReadChunk = argIntValue("--sim-hb-read-chunk").getOrElse(16)
++    hbReadChunk = argIntValue("--sim-hb-read-chunk").getOrElse(16),
++    asicFbSram = args.contains("--asic-fb-sram"),
++    asicTexDevices = argIntValue("--asic-tex-devices").getOrElse(1)
    )
  
 -  val report = GenSupport.simVerilog().generate(CoreSim(config, memTiming))
@@ -1746,10 +1760,10 @@ index 6051025..c754285 100644
    GenSupport.mirrorRomSidecars("emu/sim/rtl", report.toplevelName)
  }
 diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
-index 1bfe40c..e219c87 100644
+index 1bfe40c..967fe5a 100644
 --- a/src/voodoo/SimBmbMemory.scala
 +++ b/src/voodoo/SimBmbMemory.scala
-@@ -9,9 +9,23 @@ case class SimMemoryTiming(
+@@ -9,9 +9,25 @@ case class SimMemoryTiming(
      fixedReadLatency: Int = 0,
      burstSetupLatency: Int = 12,
      burstBeatLatency: Int = 1,
@@ -1765,7 +1779,9 @@ index 1bfe40c..e219c87 100644
 +    texChanOverhead: Int = 0,
 +    // "asic": the GF180 SLI chip's uncore on HyperRAM models (CoreSim).
 +    hbLatency: Int = 6,
-+    hbReadChunk: Int = 16
++    hbReadChunk: Int = 16,
++    asicFbSram: Boolean = false,
++    asicTexDevices: Int = 1
  ) {
 -  require(Set("onchip", "ideal", "fixed", "burst").contains(mode))
 +  // "pipelined": one independent port per memory client (SimBmbMultiPortMemory),
@@ -1775,7 +1791,7 @@ index 1bfe40c..e219c87 100644
    require(fixedReadLatency >= 0)
    require(burstSetupLatency >= 0)
    require(burstBeatLatency >= 0)
-@@ -96,9 +110,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
+@@ -96,9 +112,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
      }
    }
  
@@ -1989,10 +2005,10 @@ index 0000000..3478c00
 +}
 diff --git a/src/voodoo/asic/AsicChip.scala b/src/voodoo/asic/AsicChip.scala
 new file mode 100644
-index 0000000..db08859
+index 0000000..3a9f4f4
 --- /dev/null
 +++ b/src/voodoo/asic/AsicChip.scala
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,200 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -2017,15 +2033,21 @@ index 0000000..db08859
 +    hbLatency: Int = 6,
 +    sliResetCountLog2: Int = 0,
 +    sliResetIndex: Int = 0,
-+    hbReadChunk: Int = 16
++    hbReadChunk: Int = 16,
++    // Framebuffer on a 32-bit async SRAM bank (SramController) instead of
++    // the 16-bit HyperBus; texture HyperBus devices (1 = x8, 2 = x16).
++    fbSram: Boolean = false,
++    texDevices: Int = 1
 +) extends Component {
++  val fbSramAddrWidth = 20 // 4 MB of 32-bit words
 +  require(c.fbFillOffload, "AsicUncore: the fill engine sits on the memory side")
 +  require(!c.separateScanoutMem)
 +  val io = new Bundle {
 +    val link = slave Stream (Bits(16 bits))
 +    val linkRsp = master Flow (Bits(8 bits))
-+    val fbHb = master(HyperBusIo(2))
-+    val texHb = master(HyperBusIo(1))
++    val fbHb = if (!fbSram) master(HyperBusIo(2)) else null
++    val fbSramBus = if (fbSram) master(SramIo(fbSramAddrWidth)) else null
++    val texHb = master(HyperBusIo(texDevices))
 +
 +    // Core side
 +    val cpuBus = master(Bmb(Core.cpuBmbParams))
@@ -2065,11 +2087,18 @@ index 0000000..db08859
 +  for (i <- 0 until Core.fbMemPortCount) fbArbiter.io.inputs(i) <> io.fbPorts(i)
 +  fbArbiter.io.inputs(Core.fbMemPortCount) <> fill.io.bus
 +
-+  val fbCtrl = HyperBusController(fbShared, devices = 2, latencyBeats = hbLatency, readChunkWords = hbReadChunk)
-+  fbCtrl.io.bus <> fbArbiter.io.output
-+  io.fbHb <> fbCtrl.io.hb
++  val fbCtrl = if (!fbSram) new Area {
++    val ctrl = HyperBusController(fbShared, devices = 2, latencyBeats = hbLatency, readChunkWords = hbReadChunk)
++    ctrl.io.bus <> fbArbiter.io.output
++    io.fbHb <> ctrl.io.hb
++  } else null
++  val fbSramCtrl = if (fbSram) new Area {
++    val ctrl = SramController(fbShared, fbSramAddrWidth)
++    ctrl.io.bus <> fbArbiter.io.output
++    io.fbSramBus <> ctrl.io.sram
++  } else null
 +
-+  val texCtrl = HyperBusController(Core.texMemBmbParams(c), devices = 1, latencyBeats = hbLatency, readChunkWords = hbReadChunk)
++  val texCtrl = HyperBusController(Core.texMemBmbParams(c), devices = texDevices, latencyBeats = hbLatency, readChunkWords = hbReadChunk)
 +  texCtrl.io.bus <> io.texMem
 +  io.texHb <> texCtrl.io.hb
 +}
@@ -2095,21 +2124,22 @@ index 0000000..db08859
 +  * core's scanout port (every chip scans the whole frame, the board takes
 +  * each row from the chip that owns it).
 +  */
-+case class AsicChip(c: Config, hbLatency: Int = 6) extends Component {
++case class AsicChip(c: Config, hbLatency: Int = 3, fbSram: Boolean = true, texDevices: Int = 2) extends Component {
 +  val io = new Bundle {
 +    val link = slave Stream (Bits(16 bits))
 +    val linkRsp = master Flow (Bits(8 bits))
-+    val fbHb = master(HyperBusIo(2))
-+    val texHb = master(HyperBusIo(1))
++    val fbHb = if (!fbSram) master(HyperBusIo(2)) else null
++    val fbSramBus = if (fbSram) master(SramIo(20)) else null
++    val texHb = master(HyperBusIo(texDevices))
 +    val vRetrace = in Bool ()
 +    val hdmi = master(HdmiScanoutPort(c))
 +  }
 +  val core = Core(c)
-+  val uncore = AsicUncore(c, hbLatency)
++  val uncore = AsicUncore(c, hbLatency, hbReadChunk = 32, fbSram = fbSram, texDevices = texDevices)
 +  AsicUncore.attach(core, uncore)
 +  uncore.io.link << io.link
 +  io.linkRsp << uncore.io.linkRsp
-+  io.fbHb <> uncore.io.fbHb
++  if (fbSram) io.fbSramBus <> uncore.io.fbSramBus else io.fbHb <> uncore.io.fbHb
 +  io.texHb <> uncore.io.texHb
 +  core.io.statusInputs.vRetrace := io.vRetrace
 +  core.io.statusInputs.memFifoFree := 0xffff
@@ -2165,12 +2195,14 @@ index 0000000..db08859
 +      pixelConfigSlots = true,
 +      texCachePairedBanks = true,
 +      skipRedundantFbzSync = true,
-+      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64),
++      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(32),
++      paletteSingleRam = true,
++      maxFbDims = (640, 480),
 +      tripleBuffering = true,
-+      hdmiFifoDepth = 1024,
-+      hdmiPrefill = 512,
-+      hdmiRefillLow = 256,
-+      hdmiRefillHigh = 768,
++      hdmiFifoDepth = 256,
++      hdmiPrefill = 128,
++      hdmiRefillLow = 64,
++      hdmiRefillHigh = 192,
 +      sliMaxCount = 8,
 +      asicFifos = true,
 +      scanoutLineFetcher = true
@@ -2779,6 +2811,171 @@ index 0000000..f8b27b2
 +  val delayed = (0 until readDelay).foldLeft(dly)((f, _) => f.stage())
 +  io.hb.dqInValid := delayed.valid
 +  io.hb.dqIn := delayed.payload
++}
+diff --git a/src/voodoo/asic/SramBus.scala b/src/voodoo/asic/SramBus.scala
+new file mode 100644
+index 0000000..5235194
+--- /dev/null
++++ b/src/voodoo/asic/SramBus.scala
+@@ -0,0 +1,159 @@
++package voodoo.asic
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++
++/** 32-bit asynchronous SRAM bank at the controller side of the pads: two
++  * x16 parts (10 ns class) sharing address / CE# / OE# / WE#, byte enables per
++  * byte. One access per core cycle: the address (and for a write the data and
++  * WE#, pulsed inside the cycle by the pad logic) goes out at a clock edge,
++  * read data is sampled at the next one (readLatency cycles in the model).
++  */
++case class SramIo(addrWidth: Int) extends Bundle with IMasterSlave {
++  val addr = UInt(addrWidth bits) // 32-bit word address
++  val ceN = Bool()
++  val oeN = Bool()
++  val weN = Bool()
++  val beN = Bits(4 bits)
++  val dqOut = Bits(32 bits)
++  val dqOe = Bool()
++  val dqIn = Bits(32 bits)
++
++  override def asMaster(): Unit = {
++    out(addr, ceN, oeN, weN, beN, dqOut, dqOe)
++    in(dqIn)
++  }
++}
++
++/** BMB (32-bit, word-aligned bursts) to one SRAM bank, pipelined: write
++  * beats go out one per cycle as they arrive, reads one word per cycle, and
++  * the next command starts while earlier read data is still coming back. An
++  * order queue keeps the responses in command order (a write's single
++  * response waits behind earlier reads' data). Switching between reading and
++  * writing costs a cycle (bus turnaround).
++  */
++case class SramController(p: BmbParameter, addrWidth: Int, readLatency: Int = 1, rspDepth: Int = 8, orderDepth: Int = 4) extends Component {
++  require(p.access.dataWidth == 32)
++  val io = new Bundle {
++    val bus = slave(Bmb(p))
++    val sram = master(SramIo(addrWidth))
++  }
++  val countWidth = p.access.lengthWidth + 1
++
++  case class Order() extends Bundle {
++    val isWrite = Bool()
++    val words = UInt(countWidth bits)
++    val source = UInt(p.access.sourceWidth bits)
++    val context = Bits(p.access.contextWidth bits)
++  }
++  val order = StreamFifo(Order(), orderDepth)
++  order.io.push.valid := False
++  order.io.push.payload.assignDontCare()
++
++  val rspFifo = StreamFifo(Bits(32 bits), rspDepth)
++  val inflight = Reg(UInt(log2Up(rspDepth + 1) + 1 bits)) init (0)
++
++  val rdAddr = Reg(UInt(addrWidth bits))
++  val rdLeft = Reg(UInt(countWidth bits)) init (0) // words of the current read still to address
++  val writeBeat = Reg(UInt(countWidth bits)) init (0)
++  val lastWasWrite = RegInit(False)
++  val lastWasRead = RegInit(False)
++
++  val cmdIsRead = io.bus.cmd.opcode === Bmb.Cmd.Opcode.READ
++  val cmdWordAddr = io.bus.cmd.address(addrWidth + 1 downto 2)
++  val cmdWords = ((io.bus.cmd.length.resize(countWidth bits) + 1) >> 2).resize(countWidth bits)
++
++  io.sram.addr := rdAddr
++  io.sram.ceN := True
++  io.sram.oeN := True
++  io.sram.weN := True
++  io.sram.beN := B"1111"
++  io.sram.dqOut := io.bus.cmd.data
++  io.sram.dqOe := False
++  io.bus.cmd.ready := False
++
++  // Read issue: one word per cycle while the data FIFO can take it.
++  val issue = rdLeft =/= 0 && !lastWasWrite && (inflight + rspFifo.io.occupancy) < rspDepth
++  when(issue) {
++    io.sram.ceN := False
++    io.sram.oeN := False
++    rdAddr := rdAddr + 1
++    rdLeft := rdLeft - 1
++  }
++  val captured = Delay(issue, readLatency, init = False)
++  rspFifo.io.push.valid := captured
++  rspFifo.io.push.payload := io.sram.dqIn
++  inflight := inflight + U(issue) - U(captured)
++
++  // Commands: a read is taken once the previous read is fully addressed; a
++  // write beat goes straight out (not while reads are still addressing, and
++  // a cycle after the last read cycle).
++  val cmdFree = rdLeft === 0 || (rdLeft === 1 && issue)
++  when(io.bus.cmd.valid && cmdIsRead && writeBeat === 0 && cmdFree && order.io.push.ready) {
++    io.bus.cmd.ready := True
++    rdAddr := cmdWordAddr
++    rdLeft := cmdWords
++    order.io.push.valid := True
++    order.io.push.payload.isWrite := False
++    order.io.push.payload.words := cmdWords
++    order.io.push.payload.source := io.bus.cmd.source
++    if (p.access.contextWidth > 0) order.io.push.payload.context := io.bus.cmd.context
++  }
++  val writeGo = io.bus.cmd.valid && !cmdIsRead && rdLeft === 0 && !lastWasRead &&
++    (writeBeat =/= 0 || order.io.availability > 0) && !(io.bus.cmd.last && !order.io.push.ready)
++  when(writeGo) {
++    io.bus.cmd.ready := True
++    io.sram.addr := (cmdWordAddr + writeBeat.resize(addrWidth bits)).resized
++    io.sram.ceN := False
++    io.sram.weN := False
++    io.sram.beN := ~io.bus.cmd.mask
++    io.sram.dqOe := True
++    writeBeat := writeBeat + 1
++    when(io.bus.cmd.last) {
++      writeBeat := 0
++      order.io.push.valid := True
++      order.io.push.payload.isWrite := True
++      order.io.push.payload.words := 1
++      order.io.push.payload.source := io.bus.cmd.source
++      if (p.access.contextWidth > 0) order.io.push.payload.context := io.bus.cmd.context
++    }
++  }
++  lastWasWrite := writeGo
++  lastWasRead := issue
++
++  // Responses in command order.
++  val head = order.io.pop.payload
++  val rspIndex = Reg(UInt(countWidth bits)) init (0)
++  io.bus.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
++  io.bus.rsp.source := head.source
++  if (p.access.contextWidth > 0) io.bus.rsp.context := head.context
++  io.bus.rsp.data := rspFifo.io.pop.payload
++  io.bus.rsp.valid := order.io.pop.valid && (head.isWrite || rspFifo.io.pop.valid)
++  io.bus.rsp.last := head.isWrite || rspIndex === head.words - 1
++  rspFifo.io.pop.ready := order.io.pop.valid && !head.isWrite && io.bus.rsp.ready
++  order.io.pop.ready := io.bus.rsp.fire && io.bus.rsp.last
++  when(io.bus.rsp.fire && !head.isWrite) {
++    rspIndex := Mux(io.bus.rsp.last, U(0, countWidth bits), rspIndex + 1)
++  }
++}
++
++/** Behavioural 32-bit SRAM bank (simulation), SimBmbMemory's array names. */
++case class SramModel(size: Int, readLatency: Int = 1) extends Component {
++  private val wordCount = size / 4
++  private val wordAddrWidth = log2Up(wordCount)
++  val io = new Bundle {
++    val sram = slave(SramIo(wordAddrWidth))
++  }
++  val ram_symbol0 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol1 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol2 = Mem(Bits(8 bits), wordCount)
++  val ram_symbol3 = Mem(Bits(8 bits), wordCount)
++  private val lanes = Seq(ram_symbol0, ram_symbol1, ram_symbol2, ram_symbol3)
++  val a = io.sram.addr
++  when(!io.sram.ceN && !io.sram.weN) {
++    for (l <- 0 until 4) when(!io.sram.beN(l)) { lanes(l)(a) := io.sram.dqOut(8 * l + 7 downto 8 * l) }
++  }
++  val rd = Cat(lanes.map(_.readAsync(a)))
++  io.sram.dqIn := Delay(rd, readLatency)
 +}
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
 index 3a197b9..2731d3b 100644
@@ -11458,10 +11655,25 @@ index 8b06179..091233f 100644
    }
  
 diff --git a/src/voodoo/texture/TmuTexelDecoder.scala b/src/voodoo/texture/TmuTexelDecoder.scala
-index d5f1a9b..51cc3c9 100644
+index d5f1a9b..9a157d0 100644
 --- a/src/voodoo/texture/TmuTexelDecoder.scala
 +++ b/src/voodoo/texture/TmuTexelDecoder.scala
-@@ -223,9 +223,13 @@ case class TmuTexelDecoder(c: voodoo.Config) extends Component {
+@@ -15,9 +15,12 @@ case class TmuTexelDecoder(c: voodoo.Config) extends Component {
+ 
+   // Quartus trips over the inferred 1W/4R synchronous RAM shape here during DE10 builds.
+   // Replicate the small palette RAM per tap so each copy is a simple 1W/1R memory.
+-  val paletteRam = Seq.fill(4)(Mem(Bits(24 bits), 256))
++  // Config.paletteSingleRam: one array, read four times.
++  val paletteRam =
++    if (c.paletteSingleRam) { val m = Mem(Bits(24 bits), 256); Seq.fill(4)(m) }
++    else Seq.fill(4)(Mem(Bits(24 bits), 256))
+   when(io.paletteWrite.valid) {
+-    for (ram <- paletteRam) {
++    for (ram <- paletteRam.distinct) {
+       ram.write(io.paletteWrite.payload.address, io.paletteWrite.payload.data)
+     }
+   }
+@@ -223,9 +226,13 @@ case class TmuTexelDecoder(c: voodoo.Config) extends Component {
        when(io.sendConfig) {
          result.texture.r := 0
          result.texture.g := 0
