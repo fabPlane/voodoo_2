@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..2894a1d 100644
+index 1b34fa2..838124e 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..2894a1d 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,117 @@ case class Config(
+@@ -31,6 +34,121 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1160,6 +1160,10 @@ index 1b34fa2..2894a1d 100644
 +    // (the copies work around Quartus' 1W/4R RAM inference; an ASIC keeps one
 +    // register array).
 +    paletteSingleRam: Boolean = false,
++    // Framebuffer plane readers fetch a span in chunks of at most this many
++    // 16-bit lanes (lane buffer: two chunks) instead of one burst for the
++    // whole span (lane buffer: a whole line). 0 = whole spans.
++    fbReaderChunkLanes: Int = 0,
 +    // HDMI scanout pixel FIFO depth, prefill before the first frame, and
 +    // refill hysteresis: start fetching at or below the low level, stop at
 +    // the high level.
@@ -1187,7 +1191,7 @@ index 1b34fa2..2894a1d 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..a84fc90 100644
+index 100f1c6..27ee0a7 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -1,5 +1,7 @@
@@ -1257,7 +1261,7 @@ index 100f1c6..a84fc90 100644
      // Texture memory bus (R/W, internal 2-port arbitration with texBaseAddr relocation)
      val texMem = master(Bmb(Core.texMemBmbParams(c)))
  
-@@ -92,25 +127,47 @@ case class Core(c: Config) extends Component {
+@@ -92,25 +127,51 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -1272,6 +1276,10 @@ index 100f1c6..a84fc90 100644
 +    // y % (1 << sliCountLog2) == sliIndex.
 +    val sliCountLog2 = in(UInt(2 bits)) default (U(log2Up(c.sliCount), 2 bits))
 +    val sliIndex = in(UInt(3 bits)) default (U(c.sliIndex, 3 bits))
++    // SLI: the other chips' busy (wired OR), shown in the status register's
++    // busy bits; busyOut = this chip's pipeline busy or commands queued.
++    val externalBusy = in(Bool()) default (False)
++    val busyOut = out Bool ()
 +
    }
 +  Core.Sli.countLog2 = io.sliCountLog2
@@ -1308,7 +1316,7 @@ index 100f1c6..a84fc90 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -124,7 +181,12 @@ case class Core(c: Config) extends Component {
+@@ -124,7 +185,12 @@ case class Core(c: Config) extends Component {
      pciFifo.io.texWrite << frontdoor.io.texWrite
      frontdoor.io.texBaseAddr := regBank.tmuConfig.texBaseAddr
  
@@ -1322,7 +1330,7 @@ index 100f1c6..a84fc90 100644
      pciFifo.io.regSide <> regBank.io.bus
      regBank.io.floatShadow <> pciFifo.io.floatShadow
      regBank.io.statusInputs <> io.statusInputs
-@@ -135,6 +197,8 @@ case class Core(c: Config) extends Component {
+@@ -135,6 +201,8 @@ case class Core(c: Config) extends Component {
      swapBuffer.io.vsyncEnable := regBank.commands.swapVsyncEnable
      swapBuffer.io.swapInterval := regBank.commands.swapInterval
      swapBuffer.io.swapCmdEnqueued := pciFifo.io.wasEnqueued
@@ -1331,7 +1339,7 @@ index 100f1c6..a84fc90 100644
  
      regBank.io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      regBank.io.swapsPending := framebufferLayout.swapsPending
-@@ -142,14 +206,14 @@ case class Core(c: Config) extends Component {
+@@ -142,14 +210,14 @@ case class Core(c: Config) extends Component {
      io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      io.swapsPending := framebufferLayout.swapsPending
  
@@ -1348,7 +1356,7 @@ index 100f1c6..a84fc90 100644
  
      pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
        c,
-@@ -157,14 +221,45 @@ case class Core(c: Config) extends Component {
+@@ -157,14 +225,45 @@ case class Core(c: Config) extends Component {
        framebufferLayout
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
@@ -1395,7 +1403,7 @@ index 100f1c6..a84fc90 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,16 +268,20 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +272,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -1419,7 +1427,7 @@ index 100f1c6..a84fc90 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +289,7 @@ case class Core(c: Config) extends Component {
+@@ -190,6 +293,7 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
@@ -1427,7 +1435,7 @@ index 100f1c6..a84fc90 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -199,10 +299,61 @@ case class Core(c: Config) extends Component {
+@@ -199,10 +303,64 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiClock := io.hdmi.clock
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
@@ -1437,6 +1445,9 @@ index 100f1c6..a84fc90 100644
 +  // Pipeline debug plus the framebuffer readers' state (hwDebugRegs 0x260+).
 +  val regDebug = voodoo.core.CoreDebug()
 +  regDebug := pixelPipeline.io.debug
++  regDebug.pipelineBusy.removeAssignments()
++  regDebug.pipelineBusy := pixelPipeline.io.debug.pipelineBusy || io.externalBusy
++  io.busyOut := pixelPipeline.io.debug.pipelineBusy || !pciFifo.io.fifoEmpty
 +  regDebug.allowOverride()
 +  regDebug.fbColorCache := framebufferMem.io.readerDebug(0)
 +  regDebug.fbColorCacheOccupancy := framebufferMem.io.readerDebug(1)
@@ -1492,7 +1503,7 @@ index 100f1c6..a84fc90 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..e3c826d 100644
+index 9effb48..f583d33 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
@@ -1516,7 +1527,7 @@ index 9effb48..e3c826d 100644
  ) extends Component {
    val io = new Bundle {
      // Unified CPU bus (24-bit address covers 16MB PCI BAR)
-@@ -27,26 +32,125 @@ case class CoreSim(
+@@ -27,26 +32,171 @@ case class CoreSim(
    }
  
    val core = Core(c)
@@ -1525,28 +1536,74 @@ index 9effb48..e3c826d 100644
 +  if (!asicMode) core.io.cpuBus <> io.cpuBus
 +
 +  if (asicMode) {
-+    // GF180 SLI chip study: the host link, external HyperRAM and the chip's
-+    // uncore (voodoo.asic), memories under the harness's names.
-+    val host = voodoo.asic.HostLinkHost()
-+    host.io.bus <> io.cpuBus
-+    val uncore = voodoo.asic.AsicUncore(c, memTiming.hbLatency, log2Up(c.sliCount), c.sliIndex, memTiming.hbReadChunk,
-+      fbSram = memTiming.asicFbSram, texDevices = memTiming.asicTexDevices, texSram = memTiming.asicTexSram)
-+    voodoo.asic.AsicUncore.attach(core, uncore)
-+    uncore.io.link << host.io.link
-+    host.io.rsp << uncore.io.linkRsp
++    // GF180 SLI chip study (voodoo.asic): `asicChips` chips, chip 0 being
++    // `core` (the harness's paths). Every chip's uncore shares one memory
++    // model per memory (SLI chips write disjoint rows; broadcast writes carry
++    // the same data), so the composed frame sits in the harness's arrays.
++    // Host: the simple link encoder, or (asicPci) a PCI master model, the PCI
++    // target and PciToLink broadcasting to every chip.
++    val nChips = memTiming.asicChips
++    val countLog2 = log2Up(nChips)
++    val sliCl = if (nChips > 1) countLog2 else log2Up(c.sliCount)
++    val sliIdx = if (nChips > 1) 0 else c.sliIndex
++    // Distinct module names: Verilator then inlines chip 0's core (the harness reads its signals flat).
++    val cores = Seq(core) ++ (1 until nChips).map(i => Core(c).setName(s"chip${i}_core").setDefinitionName(s"CoreChip$i"))
++    val uncores = cores.zipWithIndex.map { case (cr, i) =>
++      val u = voodoo.asic.AsicUncore(c, memTiming.hbLatency, sliCl, if (i == 0) sliIdx else i, memTiming.hbReadChunk,
++        fbSram = memTiming.asicFbSram, texDevices = memTiming.asicTexDevices, texSram = memTiming.asicTexSram)
++        .setName(if (i == 0) "uncore" else s"chip${i}_uncore")
++      voodoo.asic.AsicUncore.attach(cr, u)
++      u
++    }
++    for (cr <- cores.drop(1)) {
++      cr.io.statusInputs.vRetrace := io.vRetrace
++      cr.io.statusInputs.memFifoFree := 0xffff
++      cr.io.statusInputs.pciInterrupt := False
++      cr.io.fbBaseAddr := 0
++      cr.io.flushFbCaches := io.flushFbCaches
++      cr.io.hdmi.clock := False
++      cr.io.hdmi.reset := True
++    }
++    core.io.externalBusy := cores.drop(1).map(_.io.busyOut).foldLeft(False: Bool)(_ || _)
++
 +    if (memTiming.asicFbSram) {
-+      val fbWriteRam = voodoo.asic.SramModel(4 * 1024 * 1024).setName("fbWriteRam")
-+      fbWriteRam.io.sram <> uncore.io.fbSramBus
++      val fbWriteRam = voodoo.asic.SramModel(4 * 1024 * 1024, ports = nChips).setName("fbWriteRam")
++      for ((u, i) <- uncores.zipWithIndex) fbWriteRam.io.srams(i) <> u.io.fbSramBus
 +    } else {
-+      val fbWriteRam = voodoo.asic.HyperRamModel(2, 4 * 1024 * 1024, memTiming.hbLatency).setName("fbWriteRam")
-+      fbWriteRam.io.hb <> uncore.io.fbHb
++      val fbWriteRam = voodoo.asic.HyperRamModel(2, 4 * 1024 * 1024, memTiming.hbLatency, ports = nChips).setName("fbWriteRam")
++      for ((u, i) <- uncores.zipWithIndex) fbWriteRam.io.hbs(i) <> u.io.fbHb
 +    }
 +    if (memTiming.asicTexSram) {
-+      val texRam = voodoo.asic.SramModel(8 * 1024 * 1024).setName("texRam")
-+      texRam.io.sram <> uncore.io.texSramBus
++      val texRam = voodoo.asic.SramModel(8 * 1024 * 1024, ports = nChips).setName("texRam")
++      for ((u, i) <- uncores.zipWithIndex) texRam.io.srams(i) <> u.io.texSramBus
 +    } else {
-+      val texRam = voodoo.asic.HyperRamModel(memTiming.asicTexDevices, 8 * 1024 * 1024, memTiming.hbLatency).setName("texRam")
-+      texRam.io.hb <> uncore.io.texHb
++      val texRam = voodoo.asic.HyperRamModel(memTiming.asicTexDevices, 8 * 1024 * 1024, memTiming.hbLatency, ports = nChips).setName("texRam")
++      for ((u, i) <- uncores.zipWithIndex) texRam.io.hbs(i) <> u.io.texHb
++    }
++
++    // Host side: a packet stream to every chip, read bytes back from any.
++    val linkOut = Stream(Bits(16 bits))
++    val linkRsp = Flow(Bits(8 bits))
++    linkRsp.valid := uncores.map(_.io.linkRsp.valid).reduce(_ || _)
++    linkRsp.payload := uncores.map(u => u.io.linkRsp.payload & B(8 bits, default -> u.io.linkRsp.valid)).reduce(_ | _)
++    val fork = StreamFork(linkOut, nChips, synchronous = true)
++    for ((u, i) <- uncores.zipWithIndex) u.io.link << fork(i)
++    if (!memTiming.asicPci) {
++      val host = voodoo.asic.HostLinkHost()
++      host.io.bus <> io.cpuBus
++      linkOut << host.io.link
++      host.io.rsp << linkRsp
++    } else {
++      val pciMaster = voodoo.asic.PciMasterModel()
++      pciMaster.io.bmb <> io.cpuBus
++      val pciTarget = voodoo.asic.PciTarget()
++      pciTarget.io.bus <> pciMaster.io.bus
++      val toLink = voodoo.asic.PciToLink()
++      toLink.io.cmd << pciTarget.io.cmd.queue(8)
++      pciTarget.io.readData << toLink.io.readData.queue(2)
++      toLink.io.sliCountLog2 := U(sliCl, 2 bits)
++      linkOut << toLink.io.link
++      toLink.io.rsp << linkRsp
 +    }
 +  }
  
@@ -1554,6 +1611,20 @@ index 9effb48..e3c826d 100644
  
 -  val fbWriteRam = simRam(Core.fbMemBmbParams(c), 4 * 1024 * 1024)
 -  val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024)
+-
+-  val fbArbiter = BmbArbiter(
+-    inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
+-    outputParameter = Core.fbMemBmbParams(c),
+-    lowerFirstPriority = true
+-  )
+-
+-  fbArbiter.io.inputs(0) <> core.io.fbMemWrite
+-  fbArbiter.io.inputs(1) <> core.io.fbColorWriteMem
+-  fbArbiter.io.inputs(2) <> core.io.fbAuxWriteMem
+-  fbArbiter.io.inputs(3) <> core.io.fbColorReadMem
+-  fbArbiter.io.inputs(4) <> core.io.fbAuxReadMem
+-  fbArbiter.io.output <> fbWriteRam.io.bus
+-  core.io.texMem <> texRam.io.bus
 +  if (asicMode) {} else if (memTiming.mode == "pipelined") {
 +    // Every framebuffer client on its own pipelined port (board-like).
 +    require(!c.separateScanoutMem)
@@ -1627,25 +1698,13 @@ index 9effb48..e3c826d 100644
 +    val fbWriteRam = simRam(Core.fbMemSharedBmbParams(c), 4 * 1024 * 1024).setName("fbWriteRam")
 +    require(!c.fbFillOffload, "fbFillOffload needs --sim-mem-mode pipelined")
 +    val texRam = simRam(Core.texMemBmbParams(c), 8 * 1024 * 1024).setName("texRam")
- 
--  val fbArbiter = BmbArbiter(
--    inputsParameter = Seq.fill(5)(Core.fbMemBmbParams(c)),
--    outputParameter = Core.fbMemBmbParams(c),
--    lowerFirstPriority = true
--  )
++
 +    val fbArbiter = BmbArbiter(
 +      inputsParameter = Seq.fill(Core.fbMemPortCount)(Core.fbMemBmbParams(c)),
 +      outputParameter = Core.fbMemSharedBmbParams(c),
 +      lowerFirstPriority = true
 +    )
- 
--  fbArbiter.io.inputs(0) <> core.io.fbMemWrite
--  fbArbiter.io.inputs(1) <> core.io.fbColorWriteMem
--  fbArbiter.io.inputs(2) <> core.io.fbAuxWriteMem
--  fbArbiter.io.inputs(3) <> core.io.fbColorReadMem
--  fbArbiter.io.inputs(4) <> core.io.fbAuxReadMem
--  fbArbiter.io.output <> fbWriteRam.io.bus
--  core.io.texMem <> texRam.io.bus
++
 +    fbArbiter.io.inputs(0) <> core.io.fbMemWrite
 +    fbArbiter.io.inputs(1) <> core.io.fbColorWriteMem
 +    fbArbiter.io.inputs(2) <> core.io.fbAuxWriteMem
@@ -1658,7 +1717,7 @@ index 9effb48..e3c826d 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..09bb687 100644
+index 6051025..c31a8c7 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1706,7 +1765,7 @@ index 6051025..09bb687 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,36 @@ object CoreSimGen extends App {
+@@ -37,7 +49,37 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1740,11 +1799,12 @@ index 6051025..09bb687 100644
 +      sliMaxCount = argIntValue("--sli-max-count").getOrElse(1),
 +      asicFifos = args.contains("--asic-fifos"),
 +      paletteSingleRam = args.contains("--palette-single"),
++      fbReaderChunkLanes = argIntValue("--fb-reader-chunk").getOrElse(0),
 +      maxFbDims = if (args.contains("--max-fb-640")) (640, 480) else Config.voodoo1().maxFbDims
      )
  
    val memTiming = SimMemoryTiming(
-@@ -45,9 +86,18 @@ object CoreSimGen extends App {
+@@ -45,9 +87,20 @@ object CoreSimGen extends App {
      fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
      burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
      burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
@@ -1758,7 +1818,9 @@ index 6051025..09bb687 100644
 +    hbReadChunk = argIntValue("--sim-hb-read-chunk").getOrElse(16),
 +    asicFbSram = args.contains("--asic-fb-sram"),
 +    asicTexDevices = argIntValue("--asic-tex-devices").getOrElse(1),
-+    asicTexSram = args.contains("--asic-tex-sram")
++    asicTexSram = args.contains("--asic-tex-sram"),
++    asicChips = argIntValue("--asic-chips").getOrElse(1),
++    asicPci = args.contains("--asic-pci")
    )
  
 -  val report = GenSupport.simVerilog().generate(CoreSim(config, memTiming))
@@ -1766,10 +1828,10 @@ index 6051025..09bb687 100644
    GenSupport.mirrorRomSidecars("emu/sim/rtl", report.toplevelName)
  }
 diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
-index 1bfe40c..f34534b 100644
+index 1bfe40c..213ca70 100644
 --- a/src/voodoo/SimBmbMemory.scala
 +++ b/src/voodoo/SimBmbMemory.scala
-@@ -9,9 +9,26 @@ case class SimMemoryTiming(
+@@ -9,9 +9,28 @@ case class SimMemoryTiming(
      fixedReadLatency: Int = 0,
      burstSetupLatency: Int = 12,
      burstBeatLatency: Int = 1,
@@ -1788,7 +1850,9 @@ index 1bfe40c..f34534b 100644
 +    hbReadChunk: Int = 16,
 +    asicFbSram: Boolean = false,
 +    asicTexDevices: Int = 1,
-+    asicTexSram: Boolean = false
++    asicTexSram: Boolean = false,
++    asicChips: Int = 1,
++    asicPci: Boolean = false
  ) {
 -  require(Set("onchip", "ideal", "fixed", "burst").contains(mode))
 +  // "pipelined": one independent port per memory client (SimBmbMultiPortMemory),
@@ -1798,7 +1862,7 @@ index 1bfe40c..f34534b 100644
    require(fixedReadLatency >= 0)
    require(burstSetupLatency >= 0)
    require(burstBeatLatency >= 0)
-@@ -96,9 +113,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
+@@ -96,9 +115,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
      }
    }
  
@@ -2012,10 +2076,10 @@ index 0000000..3478c00
 +}
 diff --git a/src/voodoo/asic/AsicChip.scala b/src/voodoo/asic/AsicChip.scala
 new file mode 100644
-index 0000000..9a14341
+index 0000000..23c19f4
 --- /dev/null
 +++ b/src/voodoo/asic/AsicChip.scala
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,260 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -2046,7 +2110,8 @@ index 0000000..9a14341
 +    fbSram: Boolean = false,
 +    texDevices: Int = 1,
 +    // Texture memory on its own 32-bit SRAM bank instead of HyperBus.
-+    texSram: Boolean = false
++    texSram: Boolean = false,
++    useStraps: Boolean = false
 +) extends Component {
 +  val texSramAddrWidth = 21 // 8 MB of 32-bit words
 +  val fbSramAddrWidth = 20 // 4 MB of 32-bit words
@@ -2067,9 +2132,11 @@ index 0000000..9a14341
 +    val fillDone = out Bool ()
 +    val texMem = slave(Bmb(Core.texMemBmbParams(c)))
 +    val sli = out(HostLink.SliCfg())
++    val sliStrap = if (useStraps) in(HostLink.SliCfg()) else null
 +  }
 +
-+  val link = HostLinkChip(sliResetCountLog2, sliResetIndex)
++  val link = HostLinkChip(sliResetCountLog2, sliResetIndex, useStraps)
++  if (useStraps) link.io.strap := io.sliStrap
 +  link.io.link << io.link
 +  io.linkRsp << link.io.rsp
 +  io.cpuBus <> link.io.bus
@@ -2138,26 +2205,69 @@ index 0000000..9a14341
 +  }
 +}
 +
-+/** One SLI chip, the die top for synthesis: core + uncore; video is the
-+  * core's scanout port (every chip scans the whole frame, the board takes
-+  * each row from the chip that owns it).
++/** One SLI chip, the die top for synthesis. The same die is the SLI master
++  * (pciMaster strap: PCI target, link driver) or a slave (link receiver).
++  * Pins (wafer.space 1x1_max_all, 168 I/O): PCI 47 (AD 32, C/BE# 4, PAR,
++  * FRAME#, IRDY#, TRDY#, STOP#, DEVSEL#, IDSEL, CLK, RST#, INTA#, PERR#),
++  * framebuffer SRAM 59, texture HyperRAM x16 20, link 11, video RGB565 + DE /
++  * HS / VS 19 + pixel clock, busy in / out 2, straps 6, core clock 1 = 166.
++  * Video: every chip runs the scanout; the board takes each row from the
++  * chip that owns it (shared RGB bus, a chip drives it on its own rows).
 +  */
-+case class AsicChip(c: Config, hbLatency: Int = 3, fbSram: Boolean = true, texDevices: Int = 2, texSram: Boolean = true) extends Component {
++case class AsicChip(c: Config, hbLatency: Int = 3, fbSram: Boolean = true, texDevices: Int = 2, texSram: Boolean = false) extends Component {
 +  val io = new Bundle {
-+    val link = slave Stream (Bits(16 bits))
-+    val linkRsp = master Flow (Bits(8 bits))
++    // PCI (master chip)
++    val pciClk = in Bool ()
++    val pciRstN = in Bool ()
++    val pci = slave(PciTargetIo())
++    // SLI
++    val pciMaster = in Bool ()
++    val sliStrap = in(HostLink.SliCfg())
++    val linkIn = slave Stream (Bits(16 bits))
++    val linkOut = master Stream (Bits(16 bits))
++    val linkRspIn = slave Flow (Bits(8 bits))
++    val linkRspOut = master Flow (Bits(8 bits))
++    val busyIn = in Bool ()
++    val busyOut = out Bool ()
++    // Memories
 +    val fbHb = if (!fbSram) master(HyperBusIo(2)) else null
 +    val fbSramBus = if (fbSram) master(SramIo(20)) else null
 +    val texHb = if (!texSram) master(HyperBusIo(texDevices)) else null
 +    val texSramBus = if (texSram) master(SramIo(21)) else null
++    // Video
 +    val vRetrace = in Bool ()
 +    val hdmi = master(HdmiScanoutPort(c))
 +  }
 +  val core = Core(c)
-+  val uncore = AsicUncore(c, hbLatency, hbReadChunk = 32, fbSram = fbSram, texDevices = texDevices, texSram = texSram)
++  val uncore = AsicUncore(c, hbLatency, hbReadChunk = 32, fbSram = fbSram, texDevices = texDevices, texSram = texSram,
++    useStraps = true)
 +  AsicUncore.attach(core, uncore)
-+  uncore.io.link << io.link
-+  io.linkRsp << uncore.io.linkRsp
++  uncore.io.sliStrap := io.sliStrap
++
++  // PCI target in its clock domain, into the core clock.
++  val pciCd = ClockDomain(io.pciClk, io.pciRstN, config = ClockDomainConfig(resetKind = ASYNC, resetActiveLevel = LOW))
++  val pciTarget = pciCd(PciTarget())
++  pciTarget.io.bus <> io.pci
++  val cmdCc = StreamFifoCC(Pci.Cmd(), 8, pushClock = pciCd, popClock = ClockDomain.current)
++  cmdCc.io.push << pciTarget.io.cmd
++  val rdCc = StreamFifoCC(Bits(32 bits), 2, pushClock = ClockDomain.current, popClock = pciCd)
++  pciTarget.io.readData << rdCc.io.pop
++
++  val toLink = PciToLink()
++  toLink.io.cmd << cmdCc.io.pop.throwWhen(!io.pciMaster)
++  rdCc.io.push << toLink.io.readData
++  toLink.io.sliCountLog2 := io.sliStrap.countLog2
++  // Master: packets to this chip and the link; slave: from the link.
++  val fork = StreamFork(toLink.io.link, 2, synchronous = true)
++  io.linkOut << fork(1)
++  uncore.io.link << StreamMux(io.pciMaster.asUInt, Vec(io.linkIn, fork(0)))
++  toLink.io.rsp.valid := uncore.io.linkRsp.valid || io.linkRspIn.valid
++  toLink.io.rsp.payload := Mux(uncore.io.linkRsp.valid, uncore.io.linkRsp.payload, io.linkRspIn.payload)
++  io.linkRspOut << uncore.io.linkRsp
++
++  core.io.externalBusy := io.busyIn
++  io.busyOut := core.io.busyOut
++
 +  if (fbSram) io.fbSramBus <> uncore.io.fbSramBus else io.fbHb <> uncore.io.fbHb
 +  if (texSram) io.texSramBus <> uncore.io.texSramBus else io.texHb <> uncore.io.texHb
 +  core.io.statusInputs.vRetrace := io.vRetrace
@@ -2207,7 +2317,8 @@ index 0000000..9a14341
 +      texMaxOutstanding = argIntValue("--tex-max-outstanding").getOrElse(15),
 +      texFillRequestWindow = argIntValue("--tex-fill-request-window").getOrElse(16),
 +      fbFillOffload = true,
-+      spanQueueDepth = 16,
++      spanQueueDepth = 4,
++      texSampleQueueDepth = 8,
 +      tmuCount = 1,
 +      texHintValidCheck = true,
 +      triangleSnapshot = false,
@@ -2216,6 +2327,7 @@ index 0000000..9a14341
 +      skipRedundantFbzSync = true,
 +      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64), // Voodoo software expects 64 (32 starves the host)
 +      paletteSingleRam = true,
++      fbReaderChunkLanes = 64,
 +      maxFbDims = (640, 480),
 +      tripleBuffering = true,
 +      hdmiFifoDepth = 256,
@@ -2320,10 +2432,10 @@ index 0000000..9cae88b
 +}
 diff --git a/src/voodoo/asic/HostLink.scala b/src/voodoo/asic/HostLink.scala
 new file mode 100644
-index 0000000..6bc4b43
+index 0000000..e69ee51
 --- /dev/null
 +++ b/src/voodoo/asic/HostLink.scala
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,164 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -2349,18 +2461,21 @@ index 0000000..6bc4b43
 +}
 +
 +/** Chip side: link packets to the core's CPU bus. */
-+case class HostLinkChip(sliResetCountLog2: Int = 0, sliResetIndex: Int = 0) extends Component {
++case class HostLinkChip(sliResetCountLog2: Int = 0, sliResetIndex: Int = 0, useStraps: Boolean = false) extends Component {
 +  val p = Core.cpuBmbParams
 +  val io = new Bundle {
 +    val link = slave Stream (Bits(16 bits))
 +    val rsp = master Flow (Bits(8 bits))
 +    val bus = master(Bmb(p))
 +    val sli = out(HostLink.SliCfg())
++    // useStraps: the SLI row select comes from strap pins, not config writes.
++    val strap = if (useStraps) in(HostLink.SliCfg()) else null
 +  }
 +
-+  val sli = Reg(HostLink.SliCfg())
-+  sli.countLog2.init(sliResetCountLog2)
-+  sli.index.init(sliResetIndex)
++  val sliReg = Reg(HostLink.SliCfg())
++  sliReg.countLog2.init(sliResetCountLog2)
++  sliReg.index.init(sliResetIndex)
++  val sli = if (useStraps) io.strap else sliReg
 +  io.sli := sli
 +
 +  val idx = Reg(UInt(2 bits)) init (0)
@@ -2389,7 +2504,10 @@ index 0000000..6bc4b43
 +  }
 +
 +  val cfg = h0(14)
-+  io.bus.cmd.valid := full && !cfg
++  // A read is for one chip (h0[9:8], PciToLink); the others drop it.
++  val mine = !h0(15) || h0(9 downto 8).asUInt === sli.index.resize(2 bits)
++  when(full && !cfg && !mine) { full := False }
++  io.bus.cmd.valid := full && !cfg && mine
 +  io.bus.cmd.last := True
 +  io.bus.cmd.opcode := Mux(h0(15), B(Bmb.Cmd.Opcode.READ, 1 bits), B(Bmb.Cmd.Opcode.WRITE, 1 bits))
 +  io.bus.cmd.address := (h0(7 downto 0) ## h1).asUInt
@@ -2398,8 +2516,8 @@ index 0000000..6bc4b43
 +  io.bus.cmd.data := d1 ## d0
 +  io.bus.cmd.mask := h0(13 downto 10)
 +  when(full && cfg) {
-+    sli.countLog2 := d0(1 downto 0).asUInt
-+    sli.index := d0(6 downto 4).asUInt
++    sliReg.countLog2 := d0(1 downto 0).asUInt
++    sliReg.index := d0(6 downto 4).asUInt
 +    full := False
 +  }
 +  when(io.bus.cmd.fire) {
@@ -2484,10 +2602,10 @@ index 0000000..6bc4b43
 +}
 diff --git a/src/voodoo/asic/HyperBus.scala b/src/voodoo/asic/HyperBus.scala
 new file mode 100644
-index 0000000..f8b27b2
+index 0000000..0c21d9a
 --- /dev/null
 +++ b/src/voodoo/asic/HyperBus.scala
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,345 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -2758,10 +2876,10 @@ index 0000000..f8b27b2
 +  * trip). Storage keeps SimBmbMemory's names (ram_symbol0..3, 32-bit words)
 +  * so the C++ harness loads and reads it unchanged.
 +  */
-+case class HyperRamModel(devices: Int, size: Int, latencyBeats: Int = 6, readDelay: Int = 2) extends Component {
++case class HyperRamModel(devices: Int, size: Int, latencyBeats: Int = 6, readDelay: Int = 2, ports: Int = 1) extends Component {
 +  require(devices == 1 || devices == 2)
 +  val io = new Bundle {
-+    val hb = slave(HyperBusIo(devices))
++    val hbs = Vec(slave(HyperBusIo(devices)), ports)
 +  }
 +  private val wordCount = size / 4
 +  private val wordAddrWidth = log2Up(wordCount)
@@ -2772,71 +2890,497 @@ index 0000000..f8b27b2
 +  val ram_symbol3 = Mem(Bits(8 bits), wordCount)
 +  private val lanes = Seq(ram_symbol0, ram_symbol1, ram_symbol2, ram_symbol3)
 +
-+  val beat = Reg(UInt(12 bits)) init (0)
-+  val caHigh = Reg(Bits(32 bits)) init (0)
-+  val isRead = Reg(Bool()) init (False)
-+  val addr = Reg(UInt(32 bits)) init (0) // device word address
++  for (hb <- io.hbs) new Area {
++    val beat = Reg(UInt(12 bits)) init (0)
++    val caHigh = Reg(Bits(32 bits)) init (0)
++    val isRead = Reg(Bool()) init (False)
++    val addr = Reg(UInt(32 bits)) init (0) // device word address
 +
-+  val slice = io.hb.dqOut(15 downto 0) // device 0 carries the CA
-+  val dataBeat = beat >= 3 + latencyBeats
++    val slice = hb.dqOut(15 downto 0) // device 0 carries the CA
++    val dataBeat = beat >= 3 + latencyBeats
 +
-+  val rdValid = False
-+  val rdData = Bits(16 * devices bits)
-+  rdData := 0
++    val rdValid = False
++    val rdData = Bits(16 * devices bits)
++    rdData := 0
 +
-+  when(io.hb.csN) {
-+    beat := 0
-+  }.elsewhen(io.hb.ckEn) {
-+    when(!dataBeat) { beat := beat + 1 }
-+    when(beat < 2) { caHigh := caHigh(15 downto 0) ## slice }
-+    when(beat === 2) {
-+      val ca = caHigh ## slice
-+      isRead := ca(47)
-+      addr := (ca(44 downto 16) ## ca(2 downto 0)).asUInt
-+    }
-+    when(dataBeat) {
-+      addr := addr + 1
-+      if (devices == 2) {
-+        val w = addr.resize(wordAddrWidth bits)
-+        when(isRead) {
-+          rdValid := True
-+          rdData := Cat(lanes.map(_.readAsync(w)))
-+        }.otherwise {
-+          for (l <- 0 until 4) when(io.hb.rwdsOut(l)) { lanes(l)(w) := io.hb.dqOut(8 * l + 7 downto 8 * l) }
-+        }
-+      } else {
-+        val w = (addr >> 1).resize(wordAddrWidth bits)
-+        val hi = addr(0)
-+        when(isRead) {
-+          rdValid := True
-+          rdData := Mux(hi, lanes(3).readAsync(w) ## lanes(2).readAsync(w), lanes(1).readAsync(w) ## lanes(0).readAsync(w))
-+        }.otherwise {
-+          for (l <- 0 until 4) {
-+            val lo = l % 2 == 0
-+            when((hi === Bool(l >= 2)) && io.hb.rwdsOut(if (lo) 0 else 1)) {
-+              val (msb, lsb) = if (lo) (7, 0) else (15, 8)
-+              lanes(l)(w) := io.hb.dqOut(msb downto lsb)
++    when(hb.csN) {
++      beat := 0
++    }.elsewhen(hb.ckEn) {
++      when(!dataBeat) { beat := beat + 1 }
++      when(beat < 2) { caHigh := caHigh(15 downto 0) ## slice }
++      when(beat === 2) {
++        val ca = caHigh ## slice
++        isRead := ca(47)
++        addr := (ca(44 downto 16) ## ca(2 downto 0)).asUInt
++      }
++      when(dataBeat) {
++        addr := addr + 1
++        if (devices == 2) {
++          val w = addr.resize(wordAddrWidth bits)
++          when(isRead) {
++            rdValid := True
++            rdData := Cat(lanes.map(_.readAsync(w)))
++          }.otherwise {
++            for (l <- 0 until 4) when(hb.rwdsOut(l)) { lanes(l)(w) := hb.dqOut(8 * l + 7 downto 8 * l) }
++          }
++        } else {
++          val w = (addr >> 1).resize(wordAddrWidth bits)
++          val hi = addr(0)
++          when(isRead) {
++            rdValid := True
++            rdData := Mux(hi, lanes(3).readAsync(w) ## lanes(2).readAsync(w), lanes(1).readAsync(w) ## lanes(0).readAsync(w))
++          }.otherwise {
++            for (l <- 0 until 4) {
++              val lo = l % 2 == 0
++              when((hi === Bool(l >= 2)) && hb.rwdsOut(if (lo) 0 else 1)) {
++                val (msb, lsb) = if (lo) (7, 0) else (15, 8)
++                lanes(l)(w) := hb.dqOut(msb downto lsb)
++              }
 +            }
 +          }
 +        }
 +      }
 +    }
++
++    // PHY round trip
++    val dly = Flow(Bits(16 * devices bits))
++    dly.valid := rdValid
++    dly.payload := rdData
++    val delayed = (0 until readDelay).foldLeft(dly)((f, _) => f.stage())
++    hb.dqInValid := delayed.valid
++    hb.dqIn := delayed.payload
++  }
++}
+diff --git a/src/voodoo/asic/Pci.scala b/src/voodoo/asic/Pci.scala
+new file mode 100644
+index 0000000..83133c5
+--- /dev/null
++++ b/src/voodoo/asic/Pci.scala
+@@ -0,0 +1,418 @@
++package voodoo.asic
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo._
++
++/** PCI 2.x pins of a 32-bit target, split into the master-driven inputs and
++  * the target's outputs with their enables (the pads do the tri-states). */
++case class PciTargetIo() extends Bundle with IMasterSlave {
++  val frameN = Bool()
++  val irdyN = Bool()
++  val idsel = Bool()
++  val cbeN = Bits(4 bits)
++  val adIn = Bits(32 bits)
++  val adOut = Bits(32 bits)
++  val adOe = Bool()
++  val parOut = Bool()
++  val parOe = Bool()
++  val trdyN = Bool()
++  val stopN = Bool()
++  val devselN = Bool()
++  val ctlOe = Bool() // TRDY# / STOP# / DEVSEL# driven
++
++  /** asMaster = the bus side (drives the inputs). */
++  override def asMaster(): Unit = {
++    out(frameN, irdyN, idsel, cbeN, adIn)
++    in(adOut, adOe, parOut, parOe, trdyN, stopN, devselN, ctlOe)
++  }
++}
++
++object Pci {
++  /** A target access in BAR0 byte offsets, as it crosses into the core. */
++  case class Cmd() extends Bundle {
++    val isRead = Bool()
++    val address = UInt(24 bits)
++    val data = Bits(32 bits)
++    val mask = Bits(4 bits) // byte enables, active high
++  }
++  // C/BE# commands
++  val MEM_READ = 0x6; val MEM_WRITE = 0x7; val CFG_READ = 0xa; val CFG_WRITE = 0xb
++  val MEM_READ_MULT = 0xc; val MEM_READ_LINE = 0xe; val MEM_WRITE_INV = 0xf
++  // 3dfx Voodoo Graphics (SST-1), so Glide finds the chip as one.
++  val vendorId = 0x121a; val deviceId = 0x0001
++}
++
++/** 32-bit / 33 MHz PCI target (runs in the PCI clock domain): type-0
++  * configuration space (3dfx IDs, BAR0 = 16 MB memory, Voodoo initEnable at
++  * 0x40), memory writes posted into `cmd` (bursts, one word per data phase,
++  * disconnect when the queue is full), memory reads as delayed transactions
++  * (the first attempt queues the read and retries the master; a repeat of the
++  * same read gets the data). Every output is a register; DEVSEL# medium.
++  */
++case class PciTarget(revision: Int = 2) extends Component {
++  val io = new Bundle {
++    val bus = slave(PciTargetIo())
++    val cmd = master Stream (Pci.Cmd())
++    val readData = slave Stream (Bits(32 bits))
++    val initEnable = out Bits (32 bits)
 +  }
 +
-+  // PHY round trip
-+  val dly = Flow(Bits(16 * devices bits))
-+  dly.valid := rdValid
-+  dly.payload := rdData
-+  val delayed = (0 until readDelay).foldLeft(dly)((f, _) => f.stage())
-+  io.hb.dqInValid := delayed.valid
-+  io.hb.dqIn := delayed.payload
++  // Configuration registers
++  val memEnable = RegInit(False)
++  val parityResp = RegInit(False)
++  val serrEnable = RegInit(False)
++  val cacheLine = Reg(Bits(8 bits)) init (0)
++  val latency = Reg(Bits(8 bits)) init (0)
++  val bar0 = Reg(Bits(8 bits)) init (0) // BAR0[31:24]
++  val intLine = Reg(Bits(8 bits)) init (0)
++  val initEnable = Reg(Bits(32 bits)) init (0)
++  io.initEnable := initEnable
++
++  def cfgRead(dw: UInt): Bits = {
++    val r = Bits(32 bits)
++    r := 0
++    switch(dw) {
++      is(0) { r := B(Pci.deviceId, 16 bits) ## B(Pci.vendorId, 16 bits) }
++      is(1) { r := B"16'x0200" ## B(0, 7 bits) ## serrEnable ## B(0, 1 bits) ## parityResp ## B(0, 4 bits) ## memEnable ## False }
++      is(2) { r := B"24'x040000" ## B(revision, 8 bits) }
++      is(3) { r := B(0, 8 bits) ## B(0, 8 bits) ## latency ## cacheLine }
++      is(4) { r := bar0 ## B(0, 24 bits) } // 16 MB, 32-bit, not prefetchable
++      is(15) { r := B(0, 16 bits) ## B(0, 8 bits) ## intLine }
++      is(16) { r := initEnable }
++    }
++    r
++  }
++
++  object State extends SpinalEnum {
++    val IDLE, CLAIM, DATA, BACKOFF, TURN = newElement()
++  }
++  val state = RegInit(State.IDLE)
++  val frameWas = RegNext(io.bus.frameN) init (True)
++  val addr = Reg(UInt(32 bits))
++  val cmdCode = Reg(Bits(4 bits))
++  val isCfg = Reg(Bool())
++  val isRead = Reg(Bool())
++
++  val trdyN = RegInit(True)
++  val stopN = RegInit(True)
++  val devselN = RegInit(True)
++  val ctlOe = RegInit(False)
++  val adOut = Reg(Bits(32 bits)) init (0)
++  val adOe = RegInit(False)
++  val parOut = RegNext(adOut.xorR ^ io.bus.cbeN.xorR) init (False)
++  val parOe = RegNext(adOe) init (False)
++  io.bus.trdyN := trdyN
++  io.bus.stopN := stopN
++  io.bus.devselN := devselN
++  io.bus.ctlOe := ctlOe
++  io.bus.adOut := adOut
++  io.bus.adOe := adOe
++  io.bus.parOut := parOut
++  io.bus.parOe := parOe
++
++  // Delayed read: one at a time
++  val readPending = RegInit(False)
++  val readAddr = Reg(UInt(24 bits))
++
++  io.cmd.valid := False
++  io.cmd.payload.isRead := False
++  io.cmd.payload.address := addr(23 downto 0)
++  io.cmd.payload.data := io.bus.adIn
++  io.cmd.payload.mask := ~io.bus.cbeN
++  io.readData.ready := False
++
++  val addrPhase = !io.bus.frameN && frameWas && state === State.IDLE
++  val cbe = io.bus.cbeN.asUInt
++  val memCmd = cbe === Pci.MEM_READ || cbe === Pci.MEM_WRITE || cbe === Pci.MEM_READ_MULT ||
++    cbe === Pci.MEM_READ_LINE || cbe === Pci.MEM_WRITE_INV
++  val hitCfg = io.bus.idsel && (cbe === Pci.CFG_READ || cbe === Pci.CFG_WRITE) &&
++    io.bus.adIn(1 downto 0) === 0 && io.bus.adIn(10 downto 8) === 0
++  val hitMem = memEnable && memCmd && io.bus.adIn(31 downto 24) === bar0
++
++  // A data phase completes at an edge where IRDY# and TRDY# are both low.
++  val transfer = state === State.DATA && !io.bus.irdyN && !trdyN
++  val lastPhase = io.bus.frameN // FRAME# high during a data phase = last
++
++  switch(state) {
++    is(State.IDLE) {
++      ctlOe := False
++      adOe := False
++      when(addrPhase && (hitCfg || hitMem)) {
++        addr := io.bus.adIn.asUInt
++        cmdCode := io.bus.cbeN
++        isCfg := hitCfg
++        isRead := !io.bus.cbeN(0)
++        state := State.CLAIM
++      }
++    }
++    is(State.CLAIM) {
++      // DEVSEL# out; decide how this access goes.
++      devselN := False
++      ctlOe := True
++      state := State.DATA
++      when(isCfg) {
++        trdyN := False
++        when(isRead) { adOut := cfgRead(addr(7 downto 2)); adOe := True; stopN := False }
++      }.elsewhen(isRead) {
++        when(readPending && readAddr === addr(23 downto 0) && io.readData.valid) {
++          adOut := io.readData.payload
++          adOe := True
++          trdyN := False
++          stopN := False // one data phase
++        }.otherwise {
++          when(!readPending) {
++            // Queue the read for the core; the master retries meanwhile.
++            io.cmd.valid := True
++            io.cmd.payload.isRead := True
++            io.cmd.payload.mask := B"1111"
++            when(io.cmd.ready) {
++              readPending := True
++              readAddr := addr(23 downto 0)
++            }
++          }
++          stopN := False // retry
++          state := State.BACKOFF
++        }
++      }.otherwise {
++        trdyN := !io.cmd.ready
++        stopN := io.cmd.ready
++        when(!io.cmd.ready) { state := State.BACKOFF }
++      }
++    }
++    is(State.DATA) {
++      when(transfer) {
++        when(isCfg) {
++          when(!isRead) {
++            val d = io.bus.adIn
++            val be = ~io.bus.cbeN
++            switch(addr(7 downto 2)) {
++              is(1) { when(be(0)) { memEnable := d(1); parityResp := d(6) }; when(be(1)) { serrEnable := d(8) } }
++              is(3) { when(be(0)) { cacheLine := d(7 downto 0) }; when(be(1)) { latency := d(15 downto 8) } }
++              is(4) { when(be(3)) { bar0 := d(31 downto 24) } }
++              is(15) { when(be(0)) { intLine := d(7 downto 0) } }
++              is(16) { for (i <- 0 until 4) when(be(i)) { initEnable(8 * i + 7 downto 8 * i) := d(8 * i + 7 downto 8 * i) } }
++            }
++          }
++          trdyN := True
++          stopN := True
++          devselN := True
++          adOe := False
++          state := State.TURN
++        }.elsewhen(isRead) {
++          io.readData.ready := True
++          readPending := False
++          trdyN := True
++          stopN := True
++          devselN := True
++          adOe := False
++          state := State.TURN
++        }.otherwise {
++          io.cmd.valid := True // ready was seen when TRDY# went low
++          addr := addr + 4
++          when(lastPhase) {
++            trdyN := True
++            stopN := True
++            devselN := True
++            state := State.TURN
++          }.otherwise {
++            // Next data phase if the queue has room again, else disconnect.
++            trdyN := True
++            state := State.CLAIM
++          }
++        }
++      }
++      // Master gave up (FRAME# and IRDY# high) without a transfer.
++      when(!transfer && io.bus.frameN && io.bus.irdyN) {
++        trdyN := True
++        stopN := True
++        devselN := True
++        adOe := False
++        state := State.TURN
++      }
++    }
++    is(State.BACKOFF) {
++      // STOP# held until the master ends the transaction (FRAME# high).
++      when(io.bus.frameN) {
++        trdyN := True
++        stopN := True
++        devselN := True
++        adOe := False
++        state := State.TURN
++      }
++    }
++    is(State.TURN) {
++      // s/t/s signals driven high for one clock, then released.
++      ctlOe := False
++      adOe := False
++      state := State.IDLE
++    }
++  }
++}
++
++/** Core side of the PCI target on the SLI master chip: PCI commands to link
++  * packets (HostLink format) for every chip, read data back. A read goes to
++  * one chip: linear frame buffer reads (BAR0 0x400000-0x7fffff, y = addr
++  * bits 20:11) to the chip that owns the row, everything else to chip 0.
++  */
++case class PciToLink() extends Component {
++  val io = new Bundle {
++    val cmd = slave Stream (Pci.Cmd())
++    val link = master Stream (Bits(16 bits))
++    val rsp = slave Flow (Bits(8 bits))
++    val readData = master Stream (Bits(32 bits))
++    val sliCountLog2 = in UInt (2 bits)
++  }
++  val busy = RegInit(False)
++  val idx = Reg(UInt(2 bits)) init (0)
++  val isRead = Reg(Bool())
++  val h0, h1, d0, d1 = Reg(Bits(16 bits))
++  val waitRead = RegInit(False)
++  val rdData = Reg(Bits(32 bits))
++  val rdCount = Reg(UInt(3 bits)) init (0)
++  val rdValid = RegInit(False)
++
++  val a = io.cmd.payload.address
++  val isLfb = a(23 downto 22) === 1
++  val rowMask = U"11" & ~(U"11" |<< io.sliCountLog2)
++  val target = Mux(isLfb, a(12 downto 11) & rowMask, U(0, 2 bits))
++
++  io.cmd.ready := !busy && !waitRead && !rdValid
++  when(io.cmd.fire) {
++    val read = io.cmd.payload.isRead
++    isRead := read
++    h0 := read ## False ## io.cmd.payload.mask ## target.asBits ## a(23 downto 16).asBits
++    h1 := a(15 downto 0).asBits
++    d0 := io.cmd.payload.data(15 downto 0)
++    d1 := io.cmd.payload.data(31 downto 16)
++    busy := True
++    idx := 0
++  }
++  val words = Vec(h0, h1, d0, d1)
++  io.link.valid := busy
++  io.link.payload := words(idx)
++  when(io.link.fire) {
++    idx := idx + 1
++    when((idx === 1 && isRead) || idx === 3) {
++      busy := False
++      when(isRead) { waitRead := True; rdCount := 0 }
++    }
++  }
++  when(io.rsp.valid && waitRead) {
++    rdData := io.rsp.payload ## rdData(31 downto 8)
++    rdCount := rdCount + 1
++    when(rdCount === 3) { waitRead := False; rdValid := True }
++  }
++  io.readData.valid := rdValid
++  io.readData.payload := rdData
++  when(io.readData.fire) { rdValid := False }
++}
++
++/** Simulation PCI master (host bridge): BMB from the trace harness to PCI
++  * transactions, one data phase each, retried when the target signals STOP#
++  * without TRDY#. At reset it writes the target's BAR0 (0) and command
++  * register (memory enable). Writes are answered as soon as they complete
++  * on the bus. */
++case class PciMasterModel() extends Component {
++  val p = Core.cpuBmbParams
++  val io = new Bundle {
++    val bmb = slave(Bmb(p))
++    val bus = master(PciTargetIo())
++  }
++  object S extends SpinalEnum { val INIT_BAR, INIT_CMD, IDLE, ADDR, DATA, GAP = newElement() }
++  val state = RegInit(S.INIT_BAR)
++  val initStep = RegInit(False)
++
++  val frameN = RegInit(True)
++  val irdyN = RegInit(True)
++  val idsel = RegInit(False)
++  val cbeN = Reg(Bits(4 bits)) init (B"1111")
++  val adDrive = Reg(Bits(32 bits)) init (0)
++  val adMasterOe = RegInit(False)
++  io.bus.frameN := frameN
++  io.bus.irdyN := irdyN
++  io.bus.idsel := idsel
++  io.bus.cbeN := cbeN
++  io.bus.adIn := Mux(io.bus.adOe, io.bus.adOut, adDrive) // resolved AD bus
++
++  val curIsRead = Reg(Bool())
++  val curIsCfg = Reg(Bool())
++  val curAddr = Reg(Bits(32 bits))
++  val curData = Reg(Bits(32 bits))
++  val curMask = Reg(Bits(4 bits))
++  val curSource = Reg(UInt(p.access.sourceWidth bits))
++  val rspValid = RegInit(False)
++  val rspData = Reg(Bits(32 bits))
++  val fromBmb = RegInit(False)
++  val gap = Reg(UInt(3 bits)) init (0)
++
++  io.bmb.cmd.ready := state === S.IDLE && !rspValid
++  io.bmb.rsp.valid := rspValid
++  io.bmb.rsp.last := True
++  io.bmb.rsp.opcode := Bmb.Rsp.Opcode.SUCCESS
++  io.bmb.rsp.source := curSource
++  io.bmb.rsp.data := rspData
++  when(io.bmb.rsp.fire) { rspValid := False }
++
++  def start(read: Bool, cfg: Bool, a: Bits, d: Bits, m: Bits): Unit = {
++    curIsRead := read; curIsCfg := cfg; curAddr := a; curData := d; curMask := m
++    state := S.ADDR
++  }
++
++  switch(state) {
++    is(S.INIT_BAR) { start(False, True, B(0x10, 32 bits), B(0, 32 bits), B"1111"); initStep := False }
++    is(S.INIT_CMD) { start(False, True, B(0x04, 32 bits), B(0x0002, 32 bits), B"0011"); initStep := True }
++    is(S.IDLE) {
++      when(io.bmb.cmd.fire) {
++        fromBmb := True
++        curSource := io.bmb.cmd.source
++        start(io.bmb.cmd.opcode === Bmb.Cmd.Opcode.READ, False,
++          B(0, 8 bits) ## io.bmb.cmd.address.asBits, io.bmb.cmd.data, io.bmb.cmd.mask)
++      }
++    }
++    is(S.ADDR) {
++      frameN := False
++      idsel := curIsCfg
++      adDrive := curAddr
++      adMasterOe := True
++      cbeN := Mux(curIsCfg, Mux(curIsRead, B(Pci.CFG_READ, 4 bits), B(Pci.CFG_WRITE, 4 bits)),
++        Mux(curIsRead, B(Pci.MEM_READ, 4 bits), B(Pci.MEM_WRITE, 4 bits)))
++      state := S.DATA
++    }
++    is(S.DATA) {
++      // Single data phase: FRAME# high, IRDY# low until TRDY# or STOP#.
++      frameN := True
++      idsel := False
++      irdyN := False
++      cbeN := ~curMask
++      adDrive := curData
++      adMasterOe := !curIsRead
++      when(!irdyN && !io.bus.trdyN) {
++        irdyN := True
++        adMasterOe := False
++        cbeN := B"1111"
++        when(curIsRead) { rspData := io.bus.adOut }
++        gap := 1
++        state := S.GAP
++        when(fromBmb) { rspValid := True; fromBmb := False }
++      }.elsewhen(!irdyN && !io.bus.stopN) {
++        // Retry: end the transaction, come back with the same request.
++        irdyN := True
++        adMasterOe := False
++        cbeN := B"1111"
++        gap := 3
++        state := S.GAP
++      }
++    }
++    is(S.GAP) {
++      gap := gap - 1
++      when(gap === 0) {
++        // A retried access goes again; a finished one moves on.
++        when(fromBmb) { state := S.ADDR }
++          .elsewhen(!initStep && curIsCfg && curAddr === B(0x10, 32 bits) && !rspValid) { state := S.INIT_CMD }
++          .otherwise { state := S.IDLE }
++      }
++    }
++  }
 +}
 diff --git a/src/voodoo/asic/SramBus.scala b/src/voodoo/asic/SramBus.scala
 new file mode 100644
-index 0000000..5235194
+index 0000000..9aa4819
 --- /dev/null
 +++ b/src/voodoo/asic/SramBus.scala
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,164 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -2977,24 +3521,29 @@ index 0000000..5235194
 +  }
 +}
 +
-+/** Behavioural 32-bit SRAM bank (simulation), SimBmbMemory's array names. */
-+case class SramModel(size: Int, readLatency: Int = 1) extends Component {
++/** Behavioural 32-bit SRAM bank (simulation), SimBmbMemory's array names.
++  * `ports` > 1: several SLI chips on one storage (their framebuffer writes
++  * hit disjoint rows, broadcast writes carry the same data), so the frame is
++  * whole in one array. */
++case class SramModel(size: Int, readLatency: Int = 1, ports: Int = 1) extends Component {
 +  private val wordCount = size / 4
 +  private val wordAddrWidth = log2Up(wordCount)
 +  val io = new Bundle {
-+    val sram = slave(SramIo(wordAddrWidth))
++    val srams = Vec(slave(SramIo(wordAddrWidth)), ports)
 +  }
 +  val ram_symbol0 = Mem(Bits(8 bits), wordCount)
 +  val ram_symbol1 = Mem(Bits(8 bits), wordCount)
 +  val ram_symbol2 = Mem(Bits(8 bits), wordCount)
 +  val ram_symbol3 = Mem(Bits(8 bits), wordCount)
 +  private val lanes = Seq(ram_symbol0, ram_symbol1, ram_symbol2, ram_symbol3)
-+  val a = io.sram.addr
-+  when(!io.sram.ceN && !io.sram.weN) {
-+    for (l <- 0 until 4) when(!io.sram.beN(l)) { lanes(l)(a) := io.sram.dqOut(8 * l + 7 downto 8 * l) }
++  for (sram <- io.srams) {
++    val a = sram.addr
++    when(!sram.ceN && !sram.weN) {
++      for (l <- 0 until 4) when(!sram.beN(l)) { lanes(l)(a) := sram.dqOut(8 * l + 7 downto 8 * l) }
++    }
++    val rd = Cat(lanes.map(_.readAsync(a)))
++    sram.dqIn := Delay(rd, readLatency)
 +  }
-+  val rd = Cat(lanes.map(_.readAsync(a)))
-+  io.sram.dqIn := Delay(rd, readLatency)
 +}
 diff --git a/src/voodoo/bus/BmbBusInterface.scala b/src/voodoo/bus/BmbBusInterface.scala
 index 3a197b9..2731d3b 100644
@@ -5179,10 +5728,10 @@ index bf8fd33..6e4c2e7 100644
  }
  
 diff --git a/src/voodoo/framebuffer/FramebufferPlaneReader.scala b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-index 9d1e15f..e681dae 100644
+index 9d1e15f..fb03455 100644
 --- a/src/voodoo/framebuffer/FramebufferPlaneReader.scala
 +++ b/src/voodoo/framebuffer/FramebufferPlaneReader.scala
-@@ -6,7 +6,11 @@ import spinal.core.sim._
+@@ -6,13 +6,20 @@ import spinal.core.sim._
  import spinal.lib._
  import spinal.lib.bus.bmb._
  
@@ -5195,7 +5744,17 @@ index 9d1e15f..e681dae 100644
    import FramebufferPlaneBuffer._
  
    val addrWidth = c.addressWidth.value
-@@ -34,6 +38,12 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   val maxSpanPixels = c.maxFbDims._1
+   val spanLaneCountWidth = log2Up(maxSpanPixels + 1)
+-  val lineBufferLanes = (maxSpanPixels + 1) max 16
++  // Config.fbReaderChunkLanes: room for two chunks instead of a whole line.
++  val chunkWords = c.fbReaderChunkLanes / 2
++  require(c.fbReaderChunkLanes == 0 || (c.fbReaderChunkLanes % 2 == 0 && c.fbReaderChunkLanes >= 4))
++  val lineBufferLanes = if (chunkWords > 0) (2 * c.fbReaderChunkLanes) max 16 else (maxSpanPixels + 1) max 16
+ 
+   case class SpanCmd() extends Bundle {
+     val startAddress = UInt(addrWidth bits)
+@@ -34,6 +41,12 @@ case class FramebufferPlaneReader(c: Config) extends Component {
      val fillBurstCount = out UInt (32 bits)
      val fillBurstBeats = out UInt (32 bits)
      val fillStallCycles = out UInt (32 bits)
@@ -5208,7 +5767,7 @@ index 9d1e15f..e681dae 100644
      val reqCount = out UInt (32 bits)
      val reqForwardStepCount = out UInt (32 bits)
      val reqBackwardStepCount = out UInt (32 bits)
-@@ -66,9 +76,20 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -66,9 +79,20 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    io.mem.rsp.valid.simPublic()
    io.mem.rsp.ready.simPublic()
  
@@ -5231,7 +5790,7 @@ index 9d1e15f..e681dae 100644
    val laneFifo = StreamFifo(Bits(16 bits), lineBufferLanes)
    val directMissLaneQueue = StreamFifo(Bool(), 8)
    val readRspFifo = StreamFifo(ReadRsp(), 16)
-@@ -161,8 +182,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -161,8 +185,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // The cached reader is fed by a span prefetch stream, while the later pixel
    // stream can legally skip pixels before framebuffer access (for example due
    // to pipeline-side kills).  Track the next prefetched lane expected by the
@@ -5241,7 +5800,7 @@ index 9d1e15f..e681dae 100644
    val consumeQueue = StreamFifo(HardType(SpanCmd()), issueQueueDepth)
    val consumeActive = RegInit(False)
    val consumeExpectedAddr = Reg(UInt(addrWidth bits)) init (0)
-@@ -178,7 +198,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -178,7 +201,15 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    }
    val consumeExpectedValid = consumeActive || consumeBoot
    val consumeAddrMatches = io.readReq.address === consumeCurrentAddr
@@ -5258,7 +5817,7 @@ index 9d1e15f..e681dae 100644
    val consumeInvariantOk = !io.readReq.valid || (consumeExpectedValid && consumeAddrMatches)
  
    spanIssueQueue.io.push.valid := io.prefetchReq.valid && consumeQueue.io.push.ready
-@@ -216,8 +244,26 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -216,46 +247,91 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    // available), fall back to an ordered direct read.
    val directMissNeeded = !consumeExpectedValid ||
      (consumeExpectedValid && !consumeAddrMatches && !consumeAddrAhead)
@@ -5274,9 +5833,29 @@ index 9d1e15f..e681dae 100644
 +  //    and not yet popped, i.e. in flight + pendingLane + queued);
 +  //  - direct misses: readRspFifo slots (cached hits stop while one is
 +  //    outstanding, so only direct-miss responses push behind them).
-+  val laneCreditWidth = log2Up(lineBufferLanes + 1) + 1
++  val laneCreditWidth = (log2Up(lineBufferLanes + 1) max spanLaneCountWidth) + 1
 +  val laneCredits = Reg(UInt(laneCreditWidth bits)) init (0)
-+  val prefetchLaneCount = spanIssueQueue.io.pop.payload.laneCount.resize(laneCreditWidth bits)
++  // The head span's next burst: the whole span, or (fbReaderChunkLanes) its
++  // next chunk of at most chunkWords words.
++  val head = spanIssueQueue.io.pop.payload
++  val issuedWords = Reg(UInt(spanLaneCountWidth bits)) init (0)
++  val headLeftWords = head.wordCount - issuedWords
++  val burstWords = UInt(spanLaneCountWidth bits)
++  val burstFirst = issuedWords === 0
++  val burstLast = Bool()
++  if (chunkWords > 0) {
++    burstLast := headLeftWords <= chunkWords
++    burstWords := Mux(burstLast, headLeftWords, U(chunkWords, spanLaneCountWidth bits))
++  } else {
++    burstLast := True
++    burstWords := head.wordCount
++  }
++  val burstFirstWordAddress = (head.firstWordAddress + (issuedWords.resize(addrWidth bits) << 2)).resize(addrWidth bits)
++  val burstStartHigh = burstFirst && head.startAddress(1)
++  val burstEndHigh = !burstLast || head.endAddress(1)
++  val prefetchLaneCount =
++    if (chunkWords == 0) head.laneCount.resize(laneCreditWidth bits)
++    else ((burstWords.resize(laneCreditWidth bits) << 1) - U(burstStartHigh) - U(!burstEndHigh)).resize(laneCreditWidth bits)
 +  val prefetchLanesFit =
 +    laneCredits === 0 || (laneCredits + prefetchLaneCount) <= U(lineBufferLanes, laneCreditWidth bits)
 +  val directMissRspRoom =
@@ -5287,18 +5866,32 @@ index 9d1e15f..e681dae 100644
    val directMissCmdSelected = directMissCmdValid
    val prefetchCmdSelected = prefetchCmdValid && !directMissCmdSelected
  
-@@ -234,12 +280,18 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+   internalMem.cmd.valid := directMissCmdSelected || prefetchCmdSelected
+   internalMem.cmd.fragment.address := directMissCmdSelected ? alignedWordAddress(
+     io.readReq.address
+-  ) | spanIssueQueue.io.pop.payload.firstWordAddress
++  ) | burstFirstWordAddress
+   internalMem.cmd.fragment.opcode := Bmb.Cmd.Opcode.READ
+   internalMem.cmd.fragment.length := directMissCmdSelected ? U(
+     3,
+     internalMem.cmd.fragment.length.getWidth bits
+-  ) | (spanIssueQueue.io.pop.payload.lastWordAddress - spanIssueQueue.io.pop.payload.firstWordAddress + 3).resized
++  ) | ((burstWords.resize(internalMem.cmd.fragment.length.getWidth + 2 bits) << 2) - 1).resized
+   internalMem.cmd.fragment.source := directMissCmdSelected.asUInt.resized
    internalMem.cmd.fragment.data := 0
    internalMem.cmd.fragment.mask := 0
    internalMem.cmd.last := True
 -  spanIssueQueue.io.pop.ready := internalMem.cmd.ready && issuedSpanQueue.io.push.ready && !directMissCmdSelected
-+  spanIssueQueue.io.pop.ready := internalMem.cmd.ready && prefetchCmdSelected
++  spanIssueQueue.io.pop.ready := internalMem.cmd.ready && prefetchCmdSelected && burstLast
++  when(internalMem.cmd.fire && prefetchCmdSelected) {
++    issuedWords := Mux(burstLast, U(0, spanLaneCountWidth bits), issuedWords + burstWords)
++  }
    issuedSpanQueue.io.push.valid := internalMem.cmd.fire && prefetchCmdSelected
 -  issuedSpanQueue.io.push.payload := spanIssueQueue.io.pop.payload
-+  issuedSpanQueue.io.push.payload.firstWordAddress := spanIssueQueue.io.pop.payload.firstWordAddress
-+  issuedSpanQueue.io.push.payload.wordCount := spanIssueQueue.io.pop.payload.wordCount
-+  issuedSpanQueue.io.push.payload.startHigh := spanIssueQueue.io.pop.payload.startAddress(1)
-+  issuedSpanQueue.io.push.payload.endHigh := spanIssueQueue.io.pop.payload.endAddress(1)
++  issuedSpanQueue.io.push.payload.firstWordAddress := burstFirstWordAddress
++  issuedSpanQueue.io.push.payload.wordCount := burstWords
++  issuedSpanQueue.io.push.payload.startHigh := burstStartHigh
++  issuedSpanQueue.io.push.payload.endHigh := burstEndHigh
    directMissLaneQueue.io.push.valid := internalMem.cmd.fire && directMissCmdSelected
    directMissLaneQueue.io.push.payload := io.readReq.address(1)
    issuedSpanQueue.io.pop.ready := False
@@ -5307,8 +5900,13 @@ index 9d1e15f..e681dae 100644
 +  laneCredits := laneCredits + laneCreditAdd - laneCreditSub
    when(internalMem.cmd.fire && prefetchCmdSelected) {
      fillBurstCount := fillBurstCount + 1
-     fillBurstBeats := fillBurstBeats + spanIssueQueue.io.pop.payload.wordCount.resize(32 bits)
-@@ -250,12 +302,10 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+-    fillBurstBeats := fillBurstBeats + spanIssueQueue.io.pop.payload.wordCount.resize(32 bits)
+-    when(spanIssueQueue.io.pop.payload.wordCount === 1) {
++    fillBurstBeats := fillBurstBeats + burstWords.resize(32 bits)
++    when(burstWords === 1) {
+       singleBeatBurstCount := singleBeatBurstCount + 1
+     }.otherwise {
+       multiBeatBurstCount := multiBeatBurstCount + 1
      }
    }
  
@@ -5325,7 +5923,7 @@ index 9d1e15f..e681dae 100644
    val readDataLo = internalMem.rsp.fragment.data(15 downto 0)
    val readDataHi = internalMem.rsp.fragment.data(31 downto 16)
    val prefetchMemRspValid = internalMem.rsp.valid && internalMem.rsp.source === 0
-@@ -281,7 +331,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -281,7 +357,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
  
      // `rsp.last` may mark the end of a splitter fragment rather than the end
      // of the original fill span. Retire only after all requested words return.
@@ -5334,7 +5932,7 @@ index 9d1e15f..e681dae 100644
        issuedSpanQueue.io.pop.ready := True
        activeFillWordIndex := 0
      }.otherwise {
-@@ -314,6 +364,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -314,6 +390,14 @@ case class FramebufferPlaneReader(c: Config) extends Component {
    when(io.readReq.valid && !io.readReq.ready) {
      fillStallCycles := fillStallCycles + 1
    }
@@ -5349,7 +5947,7 @@ index 9d1e15f..e681dae 100644
  
    when(io.readReq.fire) {
      recordReadRequest(io.readReq.address)
-@@ -376,7 +434,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
+@@ -376,7 +460,7 @@ case class FramebufferPlaneReader(c: Config) extends Component {
      cacheDebugOccupancy := 0
      cacheDebugOccupancy(6 downto 0) := consumeQueue.io.occupancy.asBits.resized
      cacheDebugOccupancy(15 downto 8) := laneFifo.io.occupancy.asBits.resized
