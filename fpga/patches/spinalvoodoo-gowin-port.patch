@@ -614,7 +614,7 @@ index d36865c..c1657e3 100644
      }
  }
 diff --git a/emu/sim/harness/sim_harness.cpp b/emu/sim/harness/sim_harness.cpp
-index eda5bba..0476105 100644
+index eda5bba..324be73 100644
 --- a/emu/sim/harness/sim_harness.cpp
 +++ b/emu/sim/harness/sim_harness.cpp
 @@ -474,6 +474,88 @@ static void tick_one(void) {
@@ -706,6 +706,21 @@ index eda5bba..0476105 100644
      /* Check cycle limit (sim_time/2 = tick count) */
      if (cycle_limit && (sim_time / 2) >= cycle_limit) {
          fprintf(stderr, "[sim_harness] Cycle limit reached (%lu ticks), shutting down.\n",
+@@ -1004,6 +1086,14 @@ void sim_read_tex(uint32_t byte_offset, uint32_t *dst, uint32_t word_count) {
+ 
+ void sim_set_swap_count(uint32_t count) {
+     top->rootp->CoreSim__DOT__core_1__DOT__controlPlane_swapBuffer__DOT__swapCountReg = count & 0x3;
++#if defined(SIM_ASIC_CHIPS) && SIM_ASIC_CHIPS >= 2
++    /* ASIC SLI study: every chip restores the same swap state. */
++    top->rootp->CoreSim__DOT__chip1__DOT__core_1__DOT__controlPlane_swapBuffer__DOT__swapCountReg = count & 0x3;
++#endif
++#if defined(SIM_ASIC_CHIPS) && SIM_ASIC_CHIPS >= 4
++    top->rootp->CoreSim__DOT__chip2__DOT__core_1__DOT__controlPlane_swapBuffer__DOT__swapCountReg = count & 0x3;
++    top->rootp->CoreSim__DOT__chip3__DOT__core_1__DOT__controlPlane_swapBuffer__DOT__swapCountReg = count & 0x3;
++#endif
+ }
+ 
+ uint32_t sim_get_swap_count(void) {
 diff --git a/emu/sim/harness/sim_trace_harness.c b/emu/sim/harness/sim_trace_harness.c
 index 67ca828..1b11e83 100644
 --- a/emu/sim/harness/sim_trace_harness.c
@@ -812,10 +827,29 @@ index 67ca828..1b11e83 100644
                              (addr & 0x2u) ? VOODOO_TRACE_READ_FB_W : VOODOO_TRACE_READ_FB_L,
                              addr,
 diff --git a/emu/test/Makefile b/emu/test/Makefile
-index 42ba1a3..5b6c8c3 100644
+index 42ba1a3..53999b6 100644
 --- a/emu/test/Makefile
 +++ b/emu/test/Makefile
-@@ -123,6 +123,9 @@ $(OBJ_DIR)/vid_voodoo_texture.o: $(EBOX_SRC)/vid_voodoo_texture.c
+@@ -29,6 +29,9 @@ TRACE_DIR  = ../trace
+ VERILATOR       = verilator
+ VERILATOR_ROOT ?= $(shell $(VERILATOR) --getenv VERILATOR_ROOT)
+ VERILATOR_FLAGS = --cc --output-split 20000 --output-split-cfuncs 5000 --decorations none --public-flat-rw --x-assign fast --x-initial fast --noassert -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-CMPCONST -Wno-UNSIGNED
++# Extra Verilator flags (e.g. --flatten for multi-chip ASIC study builds, so
++# chip 0's signals stay at the flat paths the harness reads).
++VERILATOR_FLAGS += $(EXTRA_VERILATOR_FLAGS)
+ SCALA_CLI ?= scala-cli
+ SCALA_CLI_FLAGS ?= --power
+ CORE_SIM_GEN_ARGS ?=
+@@ -49,6 +52,8 @@ endif
+ CFLAGS   = -O2 -fwrapv -w -I$(STUBS_DIR) -I$(EBOX_INC) -I$(TRACE_DIR)
+ CXXFLAGS = -O2 -std=c++17 -I$(OBJ_DIR) -I$(VERILATOR_ROOT)/include -I$(VERILATOR_ROOT)/include/vltstd \
+            -I$(SIM_DIR)/harness -I$(TRACE_DIR) -I. -DVL_TIME_CONTEXT
++# EXTRA_CXXFLAGS: e.g. -DSIM_ASIC_CHIPS=2 (ASIC study multi-chip builds).
++CXXFLAGS += $(EXTRA_CXXFLAGS)
+ ifeq ($(SIM_INTERFACE),de10)
+ CXXFLAGS += -DSIM_INTERFACE_DE10
+ endif
+@@ -123,6 +128,9 @@ $(OBJ_DIR)/vid_voodoo_texture.o: $(EBOX_SRC)/vid_voodoo_texture.c
  $(OBJ_DIR)/vid_voodoo_reg.o: $(EBOX_SRC)/vid_voodoo_reg.c
  	$(OBJCACHE) $(CC) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
  
@@ -825,7 +859,7 @@ index 42ba1a3..5b6c8c3 100644
  $(OBJ_DIR)/vid_voodoo_fb.o: $(EBOX_SRC)/vid_voodoo_fb.c
  	$(OBJCACHE) $(CC) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
  
-@@ -154,6 +157,7 @@ OBJS = $(OBJ_DIR)/trace_test.o \
+@@ -154,6 +162,7 @@ OBJS = $(OBJ_DIR)/trace_test.o \
         $(OBJ_DIR)/vid_voodoo_render.o \
         $(OBJ_DIR)/vid_voodoo_texture.o \
         $(OBJ_DIR)/vid_voodoo_reg.o \
@@ -833,7 +867,7 @@ index 42ba1a3..5b6c8c3 100644
         $(OBJ_DIR)/vid_voodoo_fb.o \
         $(OBJ_DIR)/vid_voodoo_blitter.o \
         $(OBJ_DIR)/voodoo_trace_writer.o \
-@@ -173,6 +177,7 @@ ROUNDTRIP_OBJS = $(OBJ_DIR)/state_roundtrip_test.o \
+@@ -173,6 +182,7 @@ ROUNDTRIP_OBJS = $(OBJ_DIR)/state_roundtrip_test.o \
                   $(OBJ_DIR)/vid_voodoo_render.o \
                   $(OBJ_DIR)/vid_voodoo_texture.o \
                   $(OBJ_DIR)/vid_voodoo_reg.o \
@@ -1503,7 +1537,7 @@ index 100f1c6..27ee0a7 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..f583d33 100644
+index 9effb48..a107b7c 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
@@ -1527,7 +1561,7 @@ index 9effb48..f583d33 100644
  ) extends Component {
    val io = new Bundle {
      // Unified CPU bus (24-bit address covers 16MB PCI BAR)
-@@ -27,26 +32,171 @@ case class CoreSim(
+@@ -27,26 +32,165 @@ case class CoreSim(
    }
  
    val core = Core(c)
@@ -1537,57 +1571,51 @@ index 9effb48..f583d33 100644
 +
 +  if (asicMode) {
 +    // GF180 SLI chip study (voodoo.asic): `asicChips` chips, chip 0 being
-+    // `core` (the harness's paths). Every chip's uncore shares one memory
-+    // model per memory (SLI chips write disjoint rows; broadcast writes carry
-+    // the same data), so the composed frame sits in the harness's arrays.
-+    // Host: the simple link encoder, or (asicPci) a PCI master model, the PCI
-+    // target and PciToLink broadcasting to every chip.
++    // `core` (the harness's paths), chips 1.. each in a SliChipSim wrapper
++    // (a second Core directly in CoreSim shifts chip 0's names). Every chip
++    // shares one memory model per memory (SLI chips write disjoint rows;
++    // broadcast writes carry the same data), so the composed frame sits in
++    // the harness's arrays. Host: the simple link encoder, or (asicPci) a PCI
++    // master model, the PCI target and PciToLink broadcasting to every chip.
 +    val nChips = memTiming.asicChips
-+    val countLog2 = log2Up(nChips)
-+    val sliCl = if (nChips > 1) countLog2 else log2Up(c.sliCount)
++    val sliCl = if (nChips > 1) log2Up(nChips) else log2Up(c.sliCount)
 +    val sliIdx = if (nChips > 1) 0 else c.sliIndex
-+    // Distinct module names: Verilator then inlines chip 0's core (the harness reads its signals flat).
-+    val cores = Seq(core) ++ (1 until nChips).map(i => Core(c).setName(s"chip${i}_core").setDefinitionName(s"CoreChip$i"))
-+    val uncores = cores.zipWithIndex.map { case (cr, i) =>
-+      val u = voodoo.asic.AsicUncore(c, memTiming.hbLatency, sliCl, if (i == 0) sliIdx else i, memTiming.hbReadChunk,
-+        fbSram = memTiming.asicFbSram, texDevices = memTiming.asicTexDevices, texSram = memTiming.asicTexSram)
-+        .setName(if (i == 0) "uncore" else s"chip${i}_uncore")
-+      voodoo.asic.AsicUncore.attach(cr, u)
-+      u
++    val uncore0 = voodoo.asic.AsicUncore(c, memTiming.hbLatency, sliCl, sliIdx, memTiming.hbReadChunk,
++      fbSram = memTiming.asicFbSram, texDevices = memTiming.asicTexDevices, texSram = memTiming.asicTexSram)
++      .setName("uncore")
++    voodoo.asic.AsicUncore.attach(core, uncore0)
++    val others = (1 until nChips).map(i => voodoo.asic.SliChipSim(c, memTiming, sliCl, i).setName(s"chip$i"))
++    for (o <- others) {
++      o.io.vRetrace := io.vRetrace
++      o.io.flushFbCaches := io.flushFbCaches
 +    }
-+    for (cr <- cores.drop(1)) {
-+      cr.io.statusInputs.vRetrace := io.vRetrace
-+      cr.io.statusInputs.memFifoFree := 0xffff
-+      cr.io.statusInputs.pciInterrupt := False
-+      cr.io.fbBaseAddr := 0
-+      cr.io.flushFbCaches := io.flushFbCaches
-+      cr.io.hdmi.clock := False
-+      cr.io.hdmi.reset := True
-+    }
-+    core.io.externalBusy := cores.drop(1).map(_.io.busyOut).foldLeft(False: Bool)(_ || _)
++    core.io.externalBusy := others.map(_.io.busyOut).foldLeft(False: Bool)(_ || _)
++    val ports = Seq(voodoo.asic.ChipPorts(uncore0.io.link, uncore0.io.linkRsp, uncore0.io.fbSramBus, uncore0.io.fbHb,
++      uncore0.io.texSramBus, uncore0.io.texHb)) ++
++      others.map(o => voodoo.asic.ChipPorts(o.io.link, o.io.linkRsp, o.io.fbSramBus, o.io.fbHb, o.io.texSramBus, o.io.texHb))
 +
 +    if (memTiming.asicFbSram) {
 +      val fbWriteRam = voodoo.asic.SramModel(4 * 1024 * 1024, ports = nChips).setName("fbWriteRam")
-+      for ((u, i) <- uncores.zipWithIndex) fbWriteRam.io.srams(i) <> u.io.fbSramBus
++      for ((p, i) <- ports.zipWithIndex) fbWriteRam.io.srams(i) <> p.fbSram
 +    } else {
 +      val fbWriteRam = voodoo.asic.HyperRamModel(2, 4 * 1024 * 1024, memTiming.hbLatency, ports = nChips).setName("fbWriteRam")
-+      for ((u, i) <- uncores.zipWithIndex) fbWriteRam.io.hbs(i) <> u.io.fbHb
++      for ((p, i) <- ports.zipWithIndex) fbWriteRam.io.hbs(i) <> p.fbHb
 +    }
 +    if (memTiming.asicTexSram) {
 +      val texRam = voodoo.asic.SramModel(8 * 1024 * 1024, ports = nChips).setName("texRam")
-+      for ((u, i) <- uncores.zipWithIndex) texRam.io.srams(i) <> u.io.texSramBus
++      for ((p, i) <- ports.zipWithIndex) texRam.io.srams(i) <> p.texSram
 +    } else {
 +      val texRam = voodoo.asic.HyperRamModel(memTiming.asicTexDevices, 8 * 1024 * 1024, memTiming.hbLatency, ports = nChips).setName("texRam")
-+      for ((u, i) <- uncores.zipWithIndex) texRam.io.hbs(i) <> u.io.texHb
++      for ((p, i) <- ports.zipWithIndex) texRam.io.hbs(i) <> p.texHb
 +    }
 +
 +    // Host side: a packet stream to every chip, read bytes back from any.
 +    val linkOut = Stream(Bits(16 bits))
 +    val linkRsp = Flow(Bits(8 bits))
-+    linkRsp.valid := uncores.map(_.io.linkRsp.valid).reduce(_ || _)
-+    linkRsp.payload := uncores.map(u => u.io.linkRsp.payload & B(8 bits, default -> u.io.linkRsp.valid)).reduce(_ | _)
++    linkRsp.valid := ports.map(_.linkRsp.valid).reduce(_ || _)
++    linkRsp.payload := ports.map(p => p.linkRsp.payload & B(8 bits, default -> p.linkRsp.valid)).reduce(_ | _)
 +    val fork = StreamFork(linkOut, nChips, synchronous = true)
-+    for ((u, i) <- uncores.zipWithIndex) u.io.link << fork(i)
++    for ((p, i) <- ports.zipWithIndex) p.link << fork(i)
 +    if (!memTiming.asicPci) {
 +      val host = voodoo.asic.HostLinkHost()
 +      host.io.bus <> io.cpuBus
@@ -2076,10 +2104,10 @@ index 0000000..3478c00
 +}
 diff --git a/src/voodoo/asic/AsicChip.scala b/src/voodoo/asic/AsicChip.scala
 new file mode 100644
-index 0000000..23c19f4
+index 0000000..339ccdb
 --- /dev/null
 +++ b/src/voodoo/asic/AsicChip.scala
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,305 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -2339,6 +2367,51 @@ index 0000000..23c19f4
 +      scanoutLineFetcher = true
 +    )
 +  }
++}
++
++/** One chip's external ports, for wiring several chips the same way. */
++case class ChipPorts(
++    link: Stream[Bits],
++    linkRsp: Flow[Bits],
++    fbSram: SramIo,
++    fbHb: HyperBusIo,
++    texSram: SramIo,
++    texHb: HyperBusIo
++)
++
++/** CoreSim's SLI chips 1..: core + uncore with the uncore's external ports. */
++case class SliChipSim(c: Config, t: SimMemoryTiming, sliCountLog2: Int, index: Int) extends Component {
++  val io = new Bundle {
++    val link = slave Stream (Bits(16 bits))
++    val linkRsp = master Flow (Bits(8 bits))
++    val fbSramBus = if (t.asicFbSram) master(SramIo(20)) else null
++    val fbHb = if (!t.asicFbSram) master(HyperBusIo(2)) else null
++    val texSramBus = if (t.asicTexSram) master(SramIo(21)) else null
++    val texHb = if (!t.asicTexSram) master(HyperBusIo(t.asicTexDevices)) else null
++    val vRetrace = in Bool ()
++    val flushFbCaches = in Bool ()
++    val busyOut = out Bool ()
++  }
++  val core = Core(c)
++  val uncore = AsicUncore(c, t.hbLatency, sliCountLog2, index, t.hbReadChunk,
++    fbSram = t.asicFbSram, texDevices = t.asicTexDevices, texSram = t.asicTexSram)
++  AsicUncore.attach(core, uncore)
++  uncore.io.link << io.link
++  io.linkRsp << uncore.io.linkRsp
++  if (t.asicFbSram) io.fbSramBus <> uncore.io.fbSramBus else io.fbHb <> uncore.io.fbHb
++  if (t.asicTexSram) io.texSramBus <> uncore.io.texSramBus else io.texHb <> uncore.io.texHb
++  core.io.statusInputs.vRetrace := io.vRetrace
++  core.io.statusInputs.memFifoFree := 0xffff
++  core.io.statusInputs.pciInterrupt := False
++  core.io.fbBaseAddr := 0
++  core.io.flushFbCaches := io.flushFbCaches
++  core.io.hdmi.clock := False
++  core.io.hdmi.reset := True
++  io.busyOut := core.io.busyOut
++  // Own module names: chip 0's Core / PciFifo / ... modules must stay the
++  // only ones with those names, or Spinal renames chip 0's instances (an
++  // instance may not match a module name) away from the harness's paths.
++  this.walkComponents(cc => if (cc ne this) cc.setDefinitionName(s"Chip${index}_" + cc.getClass.getSimpleName, false))
 +}
 diff --git a/src/voodoo/asic/FillToBmb.scala b/src/voodoo/asic/FillToBmb.scala
 new file mode 100644
