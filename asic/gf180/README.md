@@ -157,3 +157,36 @@ Risks: async SRAM read through GF180 pads in one 25 ns cycle (pad delays
 2.4-6.6 ns + 10 ns SRAM: tight at the slow corner, or pipeline), WE# pulse
 timing, simultaneous switching on ~60 pins, 3.3 V I/O supply, bond-out of a
 200-pad die on chip-on-board.
+
+## SRAM chip and area diet (2026-10-27)
+
+RTL: `SramController` (pipelined: reads overlap the next command, order queue
+for BMB responses) + `SramModel`; framebuffer and texture memory each on a
+32-bit async SRAM bank (`--asic-fb-sram`, `--asic-tex-sram`), ~59 pins each.
+Area options: `Config.paletteSingleRam` (one 4-read palette instead of four
+copies, a Quartus workaround), 640x480 max, HDMI FIFO 256, write slots 2x16
+words, texture cache 32 lines. PCI FIFO must stay 64: at 32 the trace host
+starves (31M cycles). FPGA debug features (frame DMA, scanout tap, OSD, ADC
+monitor) are in fpga/src/voodoo/gowin, never in the core; hwDebugRegs perf
+counters and debug registers are off / simulation-only in the die.
+
+| run (fps at 40 MHz) | cycles/frame | fps |
+|---|---|---|
+| SRAM fb (first, non-pipelined controller), 2 chips | 1,115,978 | 36 |
+| SRAM fb pipelined, x16 HyperRAM tex, 2 chips | 1,000,952 | 40 |
+| + single palette + 640 | 1,030,931 | 39 |
+| no fb write buffer / no fb read cache / neither | 1.246M / 1.211M / 1.766M | 32 / 33 / 23 |
+| SRAM tex, cache 64 / 32 / 16 / 8 lines, 2 chips | 0.991 / 1.071 / 1.191 / 1.561M | 40 / 37 / 34 / 26 |
+| **fit config** (SRAM fb + tex, cache 32, slots 2x16), 1 / 2 / 4 chips | 1.916M / 1.111M / 0.686M | 21 / **36** / 58 |
+
+All pixel-exact (chip 0 of a pair: the known 2-px write-buffer quirk; it
+disappears without the write buffer).
+
+Die (fit config): logic 4.56 mm² cells, 4.79 after buffering (incl. ~0.46
+mm² of RAM stand-in flops), meets 40 MHz typical. On-chip RAM 15.8 KiB =
+7.44 mm² (`memarea.py`: GF180 5 V SRAM macros lose to flip-flops for almost
+every memory here). Total ≈ 15-16 mm² vs 12.92: still ~2.5 mm² over. Next
+cuts: plane-reader line buffers → 64-lane windows (~1.2 mm²), PCI FIFO
+entries 124 → ~56 bits (~0.25), spanVar FIFO 16 → 8 (~0.19), texture cache
+16 lines (~1 mm², -11%). 3.3 V cells + 3.3 V SRAM: cells ~20-40% slower,
+and the 1024x8 macros only help the line buffers.
