@@ -88,6 +88,11 @@ monitor), DDR PHY clocks >= +1.4, pixel +30; hold >= +0.037.
 Times: IP generate + OOC synth ~4 min, top synth 3.1 min, place 1.9 min,
 route 1.1 min, bitstream ~2 min: ~15 min end to end.
 
+At CORE_DIV=7.375 (135.6 MHz core) the full board build also meets every
+constraint: core +0.087 ns, pcie +0.662, MIG ui +0.582, hold >= +0.038;
+82.7% slices. So adding pcie_7x and MIG costs no core Fmax against the
+135 MHz OOC result.
+
 The PCIe user clocks derive from the GT's TXOUTCLK (`txoutclk_x0y0` in the
 IP's XDC), not from the refclk pin: the asynchronous clock group has to
 name it, or the core <-> PCIe async FIFOs (barCc) time as synchronous
