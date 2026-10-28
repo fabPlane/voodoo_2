@@ -155,7 +155,27 @@ class XilinxMemStylePhase(registersMaxDepth: Int, distMaxDepth: Int, distMaxBits
 object KintexGenSupport {
   // Same core configuration as the Pro Dock (GOWIN_TMU_COUNT etc. apply);
   // only the memory mapping pass differs.
-  def config: Config = GowinGenSupport.config
+  def config: Config = if (sys.env.contains("KINTEX_FULL")) fullConfig else GowinGenSupport.config
+
+  // KINTEX_FULL: everything the dock build has (rtl_b199: two TMUs, 1024-line
+  // texture caches for both, line validity as a tag generation) plus what it
+  // leaves out only for GW5AST area or timing: the Voodoo 2 setup engine
+  // (B175/B176 missed timing at 86% CLS), 8 texture fill slots (B171: -13.8%
+  // Quake II replay cycles, failed every placement), the triangleCMD register
+  // copy and hint lineValid checks.
+  def fullConfig: Config = GowinGenSupport.config.copy(
+    tmuCount = 2,
+    texSampleQueueDepth = 12,
+    texCachePairedBanks = true,
+    pixelConfigSlots = true,
+    texSmallCacheLines = 1024,
+    tmu1SmallCacheLines = 1024,
+    texValidEpochBits = 6,
+    setupEngine = true,
+    texSmallFillSlots = 8,
+    triangleSnapshot = true,
+    texHintValidCheck = true
+  )
 
   def verilog(targetDirectory: String = "rtl/kintex"): SpinalConfig =
     SpinalConfig(
