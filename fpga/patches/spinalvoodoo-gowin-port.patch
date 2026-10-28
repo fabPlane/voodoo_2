@@ -1556,7 +1556,7 @@ index 100f1c6..27ee0a7 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..9c2bb55 100644
+index 9effb48..1cdcd40 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
@@ -1596,7 +1596,7 @@ index 9effb48..9c2bb55 100644
 +    // core path (its swap counter), the dies on the shared memory models.
 +    val n = memTiming.splitDies
 +    val w = memTiming.splitLinkBits
-+    val front = voodoo.split.CoreFront(c, w, n).setDefinitionName("Core").setName("core")
++    val front = voodoo.split.CoreFront(c, w, n).setDefinitionName("Core").setName("core_1")
 +    front.io.cpuBus <> io.cpuBus
 +    front.io.statusInputs.vRetrace := io.vRetrace
 +    front.io.statusInputs.memFifoFree := 0xffff

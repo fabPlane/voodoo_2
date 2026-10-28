@@ -260,3 +260,46 @@ Board-FPGA split tiers (placed ≈ logic / 0.7 + latch RAM):
 - + TMU (Voodoo 1 FBI / TMU split, texture memory on the FPGA): ~6-7 mm²
   total, but one TMU per die on the FPGA (8.7k LUT4, 17 multipliers each)
   and a per-pixel texel bus (~36 pins per die).
+
+## Split chip, rev B: board FPGA + dies (2026-10-28)
+
+`voodoo.split` (port patch): `CoreFront` (board FPGA: CPU bus / PCI side,
+PCI FIFO, register bank, swap control, triangle setup) and `CoreBack` (die:
+pixel pipeline with `Config.externalSetup`, framebuffer / texture memory,
+`RowStreamer` sending its own rows to the FPGA for video). One ordered down
+link (32 bits per core cycle, broadcast to every die) carries typed messages:
+register-mirror chunks (2.5 kbit of pipeline state on the die, sent when a
+32-bit chunk changes), palette writes, set-up triangles (2297 bits = 72
+words), fills, texture writes, LFB and texture-read commands, video frames.
+Each die sends back 8 bits per cycle: busy + messages acted on (the front's
+PCI FIFO sync waits on these), LFB / texture read data, statistics. Die top
+`SplitDie` (`SplitDieGen`): link, video, straps, fb SRAM, tex HyperRAM x16.
+CoreSim `--split-dies N --split-link-bits W` (FPGA modelled with an ideal
+host bus, no PCI timing: ~3% optimistic against the PCI rows above).
+
+Die (16-line texture cache): cells 3.82 mm² (4.00 after buffering) against
+4.61 / 4.86 for the PCI die; core clock 40 MHz met at the typical corner
+with +1.01 ns (PCI die +0.23); the fb SRAM address outputs miss their 5 ns
+output budget (tns -9 ns; register them). RAM (latch / macro model,
+`memcost.py`): 3.99 mm² against 5.04 for the PCI die at the same cache.
+
+| die, latch RAM | logic / 0.7 | RAM | total of 12.92 mm² |
+|---|---|---|---|
+| PCI die, tex cache 16 (previous fit) | 6.94 | 5.04 | ~12.0 |
+| split die, tex cache 16 | 5.71 | 3.99 | ~9.7 |
+| split die, tex cache 32 | 5.71 | 5.08 | ~10.8 |
+| split die, tex cache 64 | 5.71+ | 6.66 | ~12.4 (tight) |
+
+GLQuake frame 1923, SRAM framebuffer (all pixel-exact against the
+single-chip build except the known write-buffer pixels: +2 for 2 dies, +5
+for 4):
+
+| system | cycles/frame | fps @40 MHz |
+|---|---|---|
+| 1 die, SRAM tex, cache 32 | 1,735,778 | 23 (1-chip PCI die: 22) |
+| 2 dies, SRAM tex, cache 32 | 975,836 | 41 (2-chip PCI: 37) |
+| previous fit: 2 PCI dies, HyperRAM tex, cache 16 | 1,331,363 | 30 |
+| 2 dies, HyperRAM tex, cache 32 | 1,090,798 | 37 |
+| 2 dies, HyperRAM tex, cache 64 | 940,800 | 43 |
+| previous fit: 4 PCI dies, cache 16 | 856,391 | 47 |
+| 4 dies, HyperRAM tex, cache 64 | 570,798 | 70 |
