@@ -30,6 +30,9 @@ Timing met on all clocks, first run, default strategies:
 
 Second run at a 120 MHz core target: met, core WNS +0.414 ns (~126 MHz),
 pcie +2.607, ddr_ui +4.532. Same worst path (12 levels).
+At 140 MHz: met by +0.006 ns (the ceiling with default strategies);
+pcie +2.253, ddr_ui +4.831. The 20 worst core paths: TMU hintTagMem
+write enable and triangle setup (scanX / yrange registers).
 
 Worst core path: TMU1 texturePath hintTagMem BRAM -> its own write
 enable, 11 levels (3 CARRY4), 65% routing.
