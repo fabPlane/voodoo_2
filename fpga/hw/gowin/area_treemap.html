@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<!-- Template for area_treemap.py: the script replaces the DATA placeholder. -->
+<style>
+.viz-root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6;
+  --other: #898781; --on-fill: #ffffff; --on-yellow: #0b0b0b;
+  --tip-bg: #ffffff; --shadow: 0 4px 16px rgba(0,0,0,.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9;
+    --other: #6b6a65; --on-yellow: #ffffff; --tip-bg: #242423; --shadow: 0 4px 16px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface-1: #1a1a19;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9;
+  --other: #6b6a65; --on-yellow: #ffffff; --tip-bg: #242423; --shadow: 0 4px 16px rgba(0,0,0,.5);
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+body:has(.viz-root.page) { background: #f9f9f7; }
+@media (prefers-color-scheme: dark) { body:has(.viz-root.page) { background: #0d0d0d; } }
+.viz-root { color: var(--text-primary); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.viz-root.page { padding: 20px 24px 40px; }
+h1 { font-size: 20px; margin: 0 0 2px; font-weight: 600; }
+h2 { font-size: 15px; margin: 28px 0 8px; font-weight: 600; }
+.sub { color: var(--text-secondary); margin: 0 0 16px; }
+.tiles { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.tile { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 8px; padding: 10px 14px; min-width: 132px; }
+.tile .k { color: var(--text-secondary); font-size: 12px; }
+.tile .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .d { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.meter { height: 4px; border-radius: 2px; background: var(--grid); margin-top: 6px; overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--text-secondary); border-radius: 2px; }
+.controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 6px; overflow: hidden; }
+.seg button { font: inherit; background: var(--surface-1); color: var(--text-primary); border: 0; padding: 5px 10px; cursor: pointer; border-left: 1px solid var(--axis); }
+.seg button:first-child { border-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); }
+.crumbs { color: var(--text-secondary); }
+.crumbs a { color: var(--text-primary); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--text-secondary); margin: 6px 0 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; cursor: default; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+#map { position: relative; width: 100%; height: 640px; background: var(--surface-1); border: 1px solid var(--ring); border-radius: 8px; overflow: hidden; }
+.cell { position: absolute; border-radius: 4px; overflow: hidden; cursor: pointer; }
+.cell.leaf:hover, .cell.group > .hdr:hover { filter: brightness(1.08); }
+.cell.group { background: transparent; box-shadow: inset 0 0 0 1px var(--ring); }
+.cell .hdr { position: absolute; left: 0; right: 0; top: 0; height: 18px; padding: 1px 6px; font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 4px 4px 0 0; }
+.cell.leaf { padding: 3px 6px; font-size: 11px; line-height: 1.25; }
+.cell .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell .vl { opacity: .85; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cell.selfcell { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.16) 0 2px, transparent 2px 7px); }
+#tip { position: fixed; pointer-events: none; background: var(--tip-bg); color: var(--text-primary); border: 1px solid var(--ring); border-radius: 8px; box-shadow: var(--shadow); padding: 8px 10px; font-size: 12px; max-width: 380px; display: none; z-index: 10; }
+#tip .t { font-weight: 600; margin-bottom: 2px; word-break: break-all; }
+#tip .m { color: var(--text-secondary); margin-bottom: 6px; word-break: break-all; }
+#tip table, .panel table, .tbl table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+#tip td { padding: 0 10px 0 0; }
+#tip td.n, .panel td.n, .tbl td.n, .tbl th.n { text-align: right; }
+.panel { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 8px; padding: 12px 14px; max-height: 640px; overflow: auto; }
+.panel h3 { margin: 0 0 2px; font-size: 14px; word-break: break-all; }
+.panel .m { color: var(--text-secondary); font-size: 12px; margin-bottom: 8px; word-break: break-all; }
+.panel table { width: 100%; font-size: 12px; margin-bottom: 10px; }
+.panel th { text-align: left; color: var(--text-secondary); font-weight: 500; border-bottom: 1px solid var(--grid); padding: 2px 4px 2px 0; }
+.panel td { padding: 2px 4px 2px 0; border-bottom: 1px solid var(--grid); word-break: break-all; }
+.panel .hint { color: var(--text-muted); font-size: 12px; }
+.tbl { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 8px; padding: 8px 12px; overflow: auto; }
+.tbl table { width: 100%; font-size: 12px; }
+.tbl th { text-align: left; color: var(--text-secondary); font-weight: 500; border-bottom: 1px solid var(--axis); padding: 4px 8px 4px 0; position: sticky; top: 0; background: var(--surface-1); }
+.tbl td { padding: 3px 8px 3px 0; border-bottom: 1px solid var(--grid); }
+.tbl tr { cursor: pointer; }
+.tbl tr:hover td { background: var(--grid); }
+.sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.notes { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.note { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 8px; padding: 10px 14px; }
+.note .h { font-weight: 600; }
+.note .e { color: var(--text-secondary); font-size: 12px; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+.note p { margin: 0 0 6px; color: var(--text-primary); }
+.note a { color: var(--text-primary); cursor: pointer; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.foot { color: var(--text-muted); font-size: 12px; margin-top: 18px; max-width: 980px; }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<div class="viz-root page">
+  <h1 id="title"></h1>
+  <p class="sub" id="subtitle"></p>
+  <div class="tiles" id="tiles"></div>
+  <div class="controls">
+    <div class="seg" id="metric" role="group" aria-label="Size by"></div>
+    <div class="seg" id="depth" role="group" aria-label="Levels shown"></div>
+    <div class="crumbs" id="crumbs"></div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div class="layout">
+    <div id="map" role="img" aria-label="Treemap of FPGA resources by module"></div>
+    <div class="panel" id="panel"><div class="hint">Hover a block for numbers; click to zoom in and list its largest flops and memories. Click the path above to zoom out.</div></div>
+  </div>
+  <div id="notesWrap" hidden><h2>Optimization candidates</h2><div class="notes" id="notes"></div></div>
+  <h2 id="tblTitle">Largest blocks by own logic</h2>
+  <div class="tbl"><table id="tbl"></table></div>
+  <p class="foot" id="foot"></p>
+</div>
+<div id="tip"></div>
+<script>
+const DATA = /*DATA*/null;
+const METRICS = [
+  {k: 'cells', label: 'LUT+ALU+FF', f: r => r.lut + r.alu + r.ff},
+  {k: 'logic', label: 'LUT+ALU', f: r => r.lut + r.alu},
+  {k: 'ff', label: 'FF', f: r => r.ff},
+  {k: 'bsram', label: 'BSRAM', f: r => r.bsram},
+  {k: 'dsp', label: 'DSP', f: r => r.dsp},
+];
+// Subsystem colour: by the path, so a block keeps its colour when zoomed.
+const GROUPS = [
+  {name: 'TMUs (texture units)', v: '--s1', test: p => /\/tmu_\d+(\/|$)/.test(p)},
+  {name: 'Triangle setup + raster', v: '--s2', test: p => /\/(rasterizer_1|triangleSetup_1)(\/|$)/.test(p)},
+  {name: 'Pixel pipeline (rest)', v: '--s3', test: p => /\/pixelPipeline_1(\/|$)/.test(p)},
+  {name: 'Framebuffer / texture memory paths', v: '--s4', test: p => /\/(framebufferMem|textureMem|fbAxi|auxAxi|colAxi|auxWAxi|texAxi|scanAxi)(\/|$)/.test(p)},
+  {name: 'Register bank / PCI FIFO / front end', v: '--s5', test: p => /\/core_1\/core_1\/(regBank|pciFifo_1|frontdoor|addressRemapper_1|controlPlane\w*|\(self\))(\/|$)/.test(p)},
+  {name: 'DDR3 controller + crossings', v: '--s6', test: p => /\/(u_ddr3|ddr|fbCc|texCc|auxCc|colCc|auxWCc|scanCc|streamCCByToggle_1)(\/|$)|ddrDbg/.test(p)},
+  {name: 'PCIe + host interface', v: '--s7', test: p => /\/(u_pcie|pcie_\w+|barCc|raw_\w+)(\/|$)/.test(p)},
+  {name: 'Other (scanout, video, PLL, glue)', v: '--other', test: p => true},
+];
+let metric = METRICS[0], maxDepth = 5, zoom = null;
+const $ = id => document.getElementById(id);
+const fmt = n => n >= 10000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+const css = v => getComputedStyle(document.querySelector('.viz-root')).getPropertyValue(v).trim();
+function groupOf(path) { const p = '/' + path.join('/'); return GROUPS.find(g => g.test(p)); }
+function inkOn(g) { return g.v === '--s4' ? 'var(--on-yellow)' : 'var(--on-fill)'; }
+
+// Parent links + pseudo "(self)" children for logic that sits in a parent itself.
+(function prep(n, parent) {
+  n.parent = parent;
+  if (!n.path) n.path = parent ? parent.path.concat(n.name) : [n.name];
+  if (typeof n.src === 'number') n.src = DATA.srcs[n.src];
+  if (n.children.length) {
+    const s = n.self;
+    if (s.lut + s.alu + s.ff + s.bsram + s.dsp > 0)
+      n.children.push({name: '(self)', path: n.path.concat('(self)'), module: n.module, cls: n.cls, src: n.src, self: s, total: s,
+        children: [], isSelf: true, ffs: n.ffs, mems: n.mems, ffBits: n.ffBits});
+    n.children.forEach(c => prep(c, n));
+  }
+})(DATA.tree, null);
+
+function val(n) { return metric.f(n.total); }
+
+// Squarified treemap (Bruls et al.).
+function squarify(items, x, y, w, h) {
+  const out = [], total = items.reduce((a, b) => a + b.v, 0);
+  if (total <= 0 || w <= 0 || h <= 0) return out;
+  const scale = (w * h) / total;
+  let rest = items.map(it => ({...it, a: it.v * scale})).filter(it => it.a > 0);
+  while (rest.length) {
+    const short = Math.min(w, h);
+    let row = [rest[0]], worst = ratio(row, short), i = 1;
+    while (i < rest.length) {
+      const nr = row.concat(rest[i]), nw = ratio(nr, short);
+      if (nw > worst) break;
+      row = nr; worst = nw; i++;
+    }
+    const sum = row.reduce((a, b) => a + b.a, 0);
+    if (w >= h) { const cw = sum / h; let cy = y; row.forEach(r => { const ch = r.a / cw; out.push({...r, x, y: cy, w: cw, h: ch}); cy += ch; }); x += cw; w -= cw; }
+    else { const ch = sum / w; let cx = x; row.forEach(r => { const cw = r.a / ch; out.push({...r, x: cx, y, w: cw, h: ch}); cx += cw; }); y += ch; h -= ch; }
+    rest = rest.slice(i);
+  }
+  return out;
+  function ratio(row, s) {
+    const sum = row.reduce((a, b) => a + b.a, 0); let mx = 0, mn = Infinity;
+    row.forEach(r => { mx = Math.max(mx, r.a); mn = Math.min(mn, r.a); });
+    return Math.max((s * s * mx) / (sum * sum), (sum * sum) / (s * s * mn));
+  }
+}
+
+function render() {
+  const map = $('map'); map.innerHTML = '';
+  const W = map.clientWidth, H = map.clientHeight, root = zoom || DATA.tree;
+  draw(root, 0, 0, W, H, 0, map);
+  crumbs(root); table(); detail(root);
+}
+function draw(node, x, y, w, h, depth, host) {
+  const kids = node.children.map(c => ({n: c, v: val(c)})).filter(k => k.v > 0).sort((a, b) => b.v - a.v);
+  const G = 2; // surface gap between fills
+  squarify(kids, x, y, w, h).forEach(r => {
+    const n = r.n, cx = r.x + G / 2, cy = r.y + G / 2, cw = r.w - G, ch = r.h - G;
+    if (cw < 2 || ch < 2) return;
+    const g = groupOf(n.path), el = document.createElement('div');
+    el.style.left = cx + 'px'; el.style.top = cy + 'px'; el.style.width = cw + 'px'; el.style.height = ch + 'px';
+    const canNest = depth + 1 < maxDepth && n.children.length && cw > 40 && ch > 40;
+    if (canNest) {
+      el.className = 'cell group';
+      const hd = document.createElement('div'); hd.className = 'hdr';
+      hd.style.background = `var(${g.v})`; hd.style.color = inkOn(g);
+      hd.textContent = `${n.name}  ${fmt(val(n))}`;
+      el.appendChild(hd); host.appendChild(el);
+      hookup(hd, n); hookup(el, n, true);
+      draw(n, cx + 1, cy + 19, cw - 2, ch - 20, depth + 1, host);
+    } else {
+      el.className = 'cell leaf' + (n.isSelf ? ' selfcell' : '');
+      el.style.background = `var(${g.v})`; el.style.color = inkOn(g);
+      if (cw > 46 && ch > 16) el.innerHTML = `<div class="nm"></div>` + (ch > 30 ? `<div class="vl"></div>` : '');
+      host.appendChild(el);
+      const nm = el.querySelector('.nm'); if (nm) nm.textContent = n.isSelf ? `${n.parent.name} (own logic)` : n.name;
+      const vl = el.querySelector('.vl'); if (vl) vl.textContent = `${fmt(val(n))} ${metric.label}`;
+      hookup(el, n);
+    }
+  });
+}
+function hookup(el, n, passive) {
+  if (!passive) {
+    el.addEventListener('mousemove', e => tip(e, n));
+    el.addEventListener('mouseleave', () => $('tip').style.display = 'none');
+  }
+  el.addEventListener('click', e => { e.stopPropagation(); select(n); });
+}
+function select(n) {
+  if (n.isSelf) { detail(n); return; }
+  if (n.children.length) { zoom = n; render(); } else detail(n);
+}
+function pct(v, k) { const c = DATA.chip && DATA.chip[k]; return c ? ` (${(100 * v / c[1]).toFixed(1)}% of chip)` : ''; }
+function resRows(n) {
+  const t = n.total, s = n.self, own = n.children.length > 0;
+  const row = (k, a, b, ck) => `<tr><td>${k}</td><td class="n">${a.toLocaleString()}</td>${own ? `<td class="n">${b.toLocaleString()}</td>` : ''}<td class="n">${ck ? pct(a, ck).replace(/[()]/g, '').replace(' of chip', '') : ''}</td></tr>`;
+  return `<table><tr><th></th><th class="n">${own ? 'total' : ''}</th>${own ? '<th class="n">own</th>' : ''}<th class="n">of chip</th></tr>` +
+    row('LUT', t.lut, s.lut) + row('ALU', t.alu, s.alu) + row('LUT+ALU', t.lut + t.alu, s.lut + s.alu, 'logic') +
+    row('FF', t.ff, s.ff, 'ff') + row('BSRAM', t.bsram, s.bsram) + row('DSP', t.dsp, s.dsp, 'dsp') + '</table>';
+}
+function tip(e, n) {
+  const t = $('tip'), g = groupOf(n.path);
+  t.innerHTML = `<div class="t"></div><div class="m"></div>` + resRows(n);
+  t.querySelector('.t').textContent = n.isSelf ? `${n.parent.name}: own logic (not in a sub-module)` : n.path.slice(1).join(' / ');
+  t.querySelector('.m').textContent = `${n.module || '?'} · ${n.src || 'source unknown'} · ${g.name}`;
+  t.style.display = 'block';
+  const r = t.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  t.style.left = x + 'px'; t.style.top = y + 'px';
+}
+function detail(n) {
+  const p = $('panel'), g = groupOf(n.path);
+  let h = `<h3></h3><div class="m"></div>` + resRows(n);
+  if (n.ffs && n.ffs.length) {
+    h += `<div class="m">Largest RTL flops in <code>${esc(n.module)}</code>${n.ffBits ? ` (${n.ffBits.toLocaleString()} bits in the Verilog; synthesis may merge or drop some)` : ''}</div>`;
+    h += '<table><tr><th>register</th><th class="n">bits</th></tr>' + n.ffs.slice(0, 24).map(f => `<tr><td><code>${esc(f[0])}</code></td><td class="n">${f[1]}</td></tr>`).join('') + '</table>';
+  }
+  if (n.mems && n.mems.length) {
+    h += '<div class="m">Memories (arrays; small ones become flops: the GW5AST has no LUT-RAM)</div>';
+    h += '<table><tr><th>array</th><th class="n">width × depth</th><th class="n">bits</th></tr>' + n.mems.slice(0, 12).map(m => `<tr><td><code>${esc(m[0])}</code></td><td class="n">${m[1]} × ${m[2]}</td><td class="n">${(m[1] * m[2]).toLocaleString()}</td></tr>`).join('') + '</table>';
+  }
+  if (!n.isSelf && n.children.length) {
+    const kids = n.children.slice().sort((a, b) => val(b) - val(a)).slice(0, 12);
+    h += `<div class="m">Largest parts by ${metric.label}</div><table>` + kids.map(c => `<tr><td>${esc(c.isSelf ? '(own logic)' : c.name)}</td><td class="n">${val(c).toLocaleString()}</td></tr>`).join('') + '</table>';
+  }
+  p.innerHTML = h;
+  p.querySelector('h3').textContent = n.isSelf ? `${n.parent.name} (own logic)` : (n.path.slice(1).join(' / ') || n.name);
+  p.querySelector('.m').textContent = `${n.module || '?'} · ${n.src || 'source unknown'} · ${g.name}`;
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
+function crumbs(root) {
+  const c = $('crumbs'), chain = [];
+  for (let n = root; n; n = n.parent) chain.unshift(n);
+  c.innerHTML = '';
+  chain.forEach((n, i) => {
+    if (i) c.append(' / ');
+    if (i < chain.length - 1) { const a = document.createElement('a'); a.textContent = n.name; a.onclick = () => { zoom = n.parent ? n : null; render(); }; c.append(a); }
+    else { const b = document.createElement('b'); b.textContent = n.name; c.append(b); }
+  });
+}
+function allNodes(n, out = []) { out.push(n); n.children.forEach(c => allNodes(c, out)); return out; }
+function table() {
+  const root = zoom || DATA.tree;
+  const rows = allNodes(root).filter(n => n.isSelf || !n.children.length).map(n => ({n, v: metric.f(n.self)})).filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 40);
+  $('tblTitle').textContent = `Largest blocks by own ${metric.label} (logic not in a sub-module)` + (zoom ? ` inside ${root.name}` : '');
+  const t = $('tbl');
+  t.innerHTML = `<tr><th>block</th><th>module</th><th>source</th><th class="n">LUT</th><th class="n">ALU</th><th class="n">FF</th><th class="n">BSRAM</th><th class="n">DSP</th></tr>` +
+    rows.map((r, i) => { const n = r.n, s = n.self, g = groupOf(n.path), p = n.isSelf ? n.parent : n;
+      return `<tr data-i="${i}"><td><span class="sw" style="background:var(${g.v})"></span>${esc(p.path.slice(1).join('/'))}</td><td>${esc(n.module || '?')}</td><td><code>${esc(n.src || '')}</code></td><td class="n">${s.lut.toLocaleString()}</td><td class="n">${s.alu.toLocaleString()}</td><td class="n">${s.ff.toLocaleString()}</td><td class="n">${s.bsram}</td><td class="n">${s.dsp}</td></tr>`; }).join('');
+  t.querySelectorAll('tr[data-i]').forEach(tr => tr.onclick = () => { const n = rows[+tr.dataset.i].n; detail(n); window.scrollTo({top: 0, behavior: 'smooth'}); });
+}
+function findPath(path) { let n = DATA.tree; for (const seg of path.slice(1)) { n = n.children.find(c => c.name === seg); if (!n) return null; } return n; }
+function setup() {
+  $('title').textContent = DATA.title; $('subtitle').textContent = DATA.subtitle || '';
+  const chip = DATA.chip || {}, tiles = $('tiles');
+  [['cls', 'CLS (logic slices)', 'what runs out first'], ['logic', 'LUT + ALU', ''], ['ff', 'Registers', ''], ['bsram', 'BSRAM', ''], ['dsp', 'DSP', '']].forEach(([k, label, note]) => {
+    const c = chip[k]; if (!c) return;
+    const p = 100 * c[0] / c[1], d = document.createElement('div'); d.className = 'tile';
+    d.innerHTML = `<div class="k">${label}</div><div class="v">${p.toFixed(0)}%</div><div class="d">${c[0].toLocaleString()} / ${c[1].toLocaleString()}${note ? ' · ' + note : ''}</div><div class="meter"><i style="width:${p}%"></i></div>`;
+    tiles.append(d);
+  });
+  METRICS.forEach(m => { const b = document.createElement('button'); b.textContent = m.label; b.setAttribute('aria-pressed', m === metric); b.onclick = () => { metric = m; [...$('metric').children].forEach(x => x.setAttribute('aria-pressed', x === b)); render(); }; $('metric').append(b); });
+  [3, 5, 7].forEach(d => { const b = document.createElement('button'); b.textContent = d + ' levels'; b.setAttribute('aria-pressed', d === maxDepth); b.onclick = () => { maxDepth = d; [...$('depth').children].forEach(x => x.setAttribute('aria-pressed', x === b)); render(); }; $('depth').append(b); });
+  GROUPS.forEach(g => { const s = document.createElement('span'); s.innerHTML = `<i style="background:var(${g.v})"></i>`; s.append(g.name); $('legend').append(s); });
+  if (DATA.notes && DATA.notes.length) {
+    $('notesWrap').hidden = false;
+    DATA.notes.forEach(nt => {
+      const d = document.createElement('div'); d.className = 'note';
+      d.innerHTML = `<div class="h"></div><div class="e"></div><p></p>`;
+      d.querySelector('.h').textContent = nt.title; d.querySelector('.e').textContent = nt.est || ''; d.querySelector('p').textContent = nt.detail || '';
+      (nt.paths || []).forEach(pth => { const n = findPath(pth.split('/')); if (!n) return; const a = document.createElement('a'); a.textContent = 'show ' + pth.split('/').slice(-1)[0]; a.style.marginRight = '10px';
+        a.onclick = () => { zoom = n.children.length ? n : (n.parent || null); render(); detail(n); window.scrollTo({top: 0, behavior: 'smooth'}); }; d.append(a); });
+      $('notes').append(d);
+    });
+  }
+  $('foot').textContent = DATA.foot || '';
+  addEventListener('resize', () => render());
+  render();
+}
+setup();
+</script>
+</body>
+</html>
