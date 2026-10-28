@@ -16,9 +16,9 @@
 // board specific.
 
 module board_top #(
-    // MIG app_addr width: rank + bank + row + column. 2 x MT41K256M16
-    // (512 MiB each, 32-bit bus): 3 + 15 + 10 = 28.
-    parameter MIG_ADDR_WIDTH = 28,
+    // MIG app_addr width: rank (1 bit even for one rank) + bank + row +
+    // column. 2 x MT41K256M16 (512 MiB each, 32-bit bus): 1 + 3 + 15 + 10.
+    parameter MIG_ADDR_WIDTH = 29,
     // Core clock = 1000 MHz VCO / CORE_DIV (10 = 100 MHz, 12.5 = 80 MHz).
     parameter real CORE_DIV = 10.0
 ) (

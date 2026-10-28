@@ -7,10 +7,13 @@
 
 set part [expr {[llength $argv] > 0 ? [lindex $argv 0] : "xc7k160tffg676-2"}]
 set here [file normalize [file dirname [info script]]]
-set rtl [file normalize $here/../../rtl/kintex]
+# RTL=<dir> (default rtl/kintex; rtl/kintex-full for KINTEX_FULL), BUILD=<dir>,
+# CORE_DIV=<MMCM divide of the 1000 MHz VCO> (8.375 = 119.4 MHz).
+set rtl [file normalize [expr {[info exists ::env(RTL)] ? $::env(RTL) : "$here/../../rtl/kintex"}]]
+set build [file normalize [expr {[info exists ::env(BUILD)] ? $::env(BUILD) : "$here/build"}]]
 set jobs [expr {[info exists ::env(JOBS)] ? $::env(JOBS) : 8}]
 
-create_project -force voodoo_k7 $here/build -part $part
+create_project -force voodoo_k7 $build -part $part
 set_property target_language Verilog [current_project]
 
 # ---------------------------------------------------------------- IP
@@ -54,19 +57,28 @@ synth_ip [get_ips]
 
 # ---------------------------------------------------------------- sources
 add_files -fileset sources_1 [glob $rtl/*.v]
-foreach f [glob -nocomplain $rtl/*.bin] { add_files -fileset sources_1 $f }
+# $readmemb tables: as memory files synthesis finds them by name.
+foreach f [glob -nocomplain $rtl/*.bin] {
+    add_files -fileset sources_1 $f
+    set_property file_type {Memory File} [get_files $f]
+}
 add_files -fileset sources_1 [list $here/src/board_top.v $here/src/dvi_tx.v]
 add_files -fileset constrs_1 $here/kintex.xdc
+# After the IP constraints: the clock groups need pcie_7x's user clocks.
+set_property PROCESSING_ORDER LATE [get_files $here/kintex.xdc]
 set_property top board_top [current_fileset]
+if {[info exists ::env(CORE_DIV)]} {
+    set_property generic "CORE_DIV=$::env(CORE_DIV)" [current_fileset]
+}
 
 launch_runs synth_1 -jobs $jobs
 wait_on_run synth_1
 open_run synth_1
-report_utilization -hierarchical -hierarchical_depth 4 -file $here/build/util_synth_hier.rpt
-report_utilization -file $here/build/util_synth.rpt
+report_utilization -hierarchical -hierarchical_depth 4 -file $build/util_synth_hier.rpt
+report_utilization -file $build/util_synth.rpt
 
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 wait_on_run impl_1
 open_run impl_1
-report_utilization -file $here/build/util_impl.rpt
-report_timing_summary -max_paths 50 -file $here/build/timing_impl.rpt
+report_utilization -file $build/util_impl.rpt
+report_timing_summary -max_paths 50 -file $build/timing_impl.rpt

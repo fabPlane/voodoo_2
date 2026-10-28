@@ -63,6 +63,36 @@ hold clean; worst paths are again the TMU tag BRAM -> fill mask /
 hintTagMem enable (12 levels). So the full feature set costs ~5 MHz
 of the 140 MHz ceiling.
 
+## Full board build: fabric + pcie_7x + MIG + pins (2026-10-29)
+
+`RTL=../../rtl/kintex-full CORE_DIV=8.375 vivado -mode batch -source
+build.tcl` (core 119.4 MHz). No board yet, so `ip/mig.prj` and the pins in
+`kintex.xdc` are a representative FFG676 pinout (see there); the result
+writes a bitstream (`board_top.bit`, 0 DRC errors) that is only a timing /
+area check until the pins match a real card.
+
+| | Routed | of XC7K160T |
+|---|---|---|
+| LUT | 52.0k (4.2k as LUT-RAM) | 51.3% |
+| FF | 59.6k | 29.4% |
+| Slices | 20.4k | 80.3% |
+| Block RAM | 114.5 tiles | 35.2% |
+| DSP | 87 | 14.5% |
+| GTX | 4 of 8 | |
+| MMCM / PLL | 3 / 1 (ours, pcie_7x, MIG) | |
+
+MIG adds ~5.4k LUT / 4.6k FF, pcie_7x ~1.5k LUT / 1.9k FF / 4 BRAM.
+All constraints met: core +0.035 ns, pcie user clock (clk_125mhz) +2.239,
+MIG ui clock +0.656 (its own reset fanout into the XADC temperature
+monitor), DDR PHY clocks >= +1.4, pixel +30; hold >= +0.037.
+Times: IP generate + OOC synth ~4 min, top synth 3.1 min, place 1.9 min,
+route 1.1 min, bitstream ~2 min: ~15 min end to end.
+
+The PCIe user clocks derive from the GT's TXOUTCLK (`txoutclk_x0y0` in the
+IP's XDC), not from the refclk pin: the asynchronous clock group has to
+name it, or the core <-> PCIe async FIFOs (barCc) time as synchronous
+(-2.5 ns).
+
 ## Area estimate (yosys synth_xilinx, 2026-10-28)
 
 `yosys synth_xilinx -family xc7 -flatten` on rtl/kintex (no vendor IP, no
@@ -117,7 +147,16 @@ shim assumes pcie_7x presents payload dwords like the Gowin block (PCIe
 byte order, lowest-addressed byte in 31:24). If BAR0+0x254 reads
 0x3ff0ff0f instead of 0x0ffff03f, swap bytes in the shim.
 
-## mig_7series_0 (needs the board)
+## mig_7series_0
+
+`ip/mig.prj` (made from Vivado's SP701 board prj): 2 x MT41K256M16XX-107
+(32-bit, 1 GB, 1.5 V), 400 MHz memory clock, 4:1, native UI (256-bit),
+Strict ordering, chip select on, system clock No Buffer, reference = system
+clock. Data in bank 33 (byte lane i = T<i>, DQS on the lane's DQS pair),
+address / control in bank 32 T0-T2. app_addr is 29 bits (rank bit
+included). For a real board replace the pins with the board's (or redo it
+in the MIG GUI with the settings below).
+
 
 Generate once in the MIG GUI and save the project file as `ip/mig.prj`:
 
