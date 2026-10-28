@@ -11,6 +11,11 @@ module board_top #(
 ) (
     input  wire        clk50,
     input  wire        pcie_rstn,
+`ifdef USE_AE350
+    // AE350 RISC-V console (UART2) on the BL616 USB-UART pins (P15 / N16).
+    output wire        ae_uart_tx,
+    input  wire        ae_uart_rx,
+`endif
     output wire [3:0]  led_n,
     output wire        tmds_clk_p,
     output wire        tmds_clk_n,
@@ -340,6 +345,26 @@ module board_top #(
         ~led_wedge                // [0]  host bridge wedged
     };
 
+`ifdef USE_AE350
+    // Optional hard RISC-V (fpga/hw/gowin/ae350): own PLL at PLL_R[0] for
+    // CORE_CLK (400 MHz), buses on the 50 MHz oscillator; its mailbox shows
+    // on JTAG diag page 5 (XOR with rx_tlps).
+    wire ae_clk_cpu, ae_pll_lock;
+    Gowin_PLL_Cpu_MOD u_pll_cpu (
+        .lock(ae_pll_lock), .clkout0(), .clkout1(ae_clk_cpu), .clkout2(),
+        .clkin(clk50), .reset(1'b0), .enclk0(1'b1), .enclk2(1'b0)
+    );
+    reg [3:0] ae_rst_sync = 4'd0;
+    always @(posedge clk50) ae_rst_sync <= {ae_rst_sync[2:0], ae_pll_lock};
+    wire [31:0] ae_reg;
+    ae350_addon u_ae350 (
+        .clk_cpu(ae_clk_cpu), .clk_bus(clk50), .rst_n(ae_rst_sync[3]),
+        .uart_txd(ae_uart_tx), .uart_rxd(ae_uart_rx), .cpu_reg(ae_reg)
+    );
+`else
+    wire [31:0] ae_reg = 32'd0;
+`endif
+
     jtag_diag u_diag (
         .tck_pad_i (tck_pad_i),
         .tms_pad_i (tms_pad_i),
@@ -350,7 +375,7 @@ module board_top #(
         .page2     (cnt_ddr),
         .page3     (cnt_tlp),
         .page4     (cnt_pix),
-        .page5     (rx_tlps),
+        .page5     (rx_tlps ^ ae_reg),
         .page6     (tx_tlps),
         .page7     (hdmi_frames)
     );
