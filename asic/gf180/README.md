@@ -226,3 +226,16 @@ stand-ins → ~4.39 logic; PCI target ~0.06), core 40 MHz +0.23 ns, PCI 33 MHz
 +2.68 ns, pixel clock met (typical corner). RAM 13.3 KiB = 6.11 mm².
 Total ≈ 13.5 mm² at 70% placement density (14.5 at 60%) vs 12.92; with the
 16-line texture cache ≈ 12.2 mm² at 70%: fits, tightly.
+
+## RAM cost correction (2026-10-28)
+
+`memarea.py` charged 64 µm²/bit for flip-flop memories (the dffq_1 cell
+alone). Measured with Yosys + GF180 liberty (1R1W, synchronous read):
+flip-flop RAM **118 µm²/bit** (flop + write-enable mux + read mux); latch RAM
+(registered write data/address, per-word latch enable in the low clock phase,
+DFFRAM style) **60 µm²/bit**. With a per-read-port model (flops 97 + 21/port,
+latch 44 + 16/port, foundry macros where cheaper) the PCI die's RAM is
+**6.0 mm² with latch RAM, 10.0 mm² with flops**: the earlier fit holds only
+if every memory is built as latch RAM or a macro (latch timing / DFT work).
+By group (latch): tex cache 1.97 (cache 32), pipeline FIFOs 1.57, palette
+0.66 (4 read ports), fb readers 0.66, video 0.60, PCI FIFO 0.56.
