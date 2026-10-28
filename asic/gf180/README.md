@@ -318,10 +318,11 @@ are: the texture cache data reads asynchronously.
 
 | die | cells after synthesis | placed (+ taps, buffers) | after CTS / repair | result |
 |---|---|---|---|---|
-| tex cache 32 | 9.35 mm² (72%) | 77% | 10.26 mm² (80%) | global route: 0 overflow, 18% of tracks; detailed route below |
+| tex cache 32 | 9.35 mm² (72%) | 77% | 10.26 mm² (80%) | **fits**: global route 0 overflow (18% of tracks); detailed route 103 DRC left after 30 iterations, all in one ~50 x 150 µm spot (TMU 1 texture path, x 1750-1790, y 4000-4180 µm: 71 shorts, 27 spacing, 5 notch) |
 | tex cache 64 | 12.15 mm² (94%) | 95% before repair | — | **does not fit**: 92k slew fixes (2.6k buffers, 11k resized cells) and detailed placement cannot legalize |
 
-Cache 32 timing at 40 MHz after CTS: register to register +0.25 ns (worst
+The leftover DRC spot is local congestion, the usual fix is a placement
+density screen or cell padding there, not more area. Cache 32 timing at 40 MHz after CTS: register to register +0.25 ns (worst
 path a palette RAM latch read: the latch clock comes ~14 ns late through
 the inverted clock tree and clock gates, so the half-cycle read is the
 limit); inputs +10 ns; the fb SRAM address outputs miss their 5 ns budget
