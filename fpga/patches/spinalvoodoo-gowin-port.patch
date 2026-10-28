@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..57d9067 100644
+index 1b34fa2..2fe3ea3 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..57d9067 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,100 @@ case class Config(
+@@ -31,6 +34,102 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1138,6 +1138,8 @@ index 1b34fa2..57d9067 100644
 +    // the host's status-read round trips (rasterizer idle ~29% on the board
 +    // while the host was stalled on a full FIFO 11 of 15 ms).
 +    pciFifoDepth: Int = 64,
++    // PciFifo ingress staging entries (flops on the GW5AST).
++    pciIngressDepth: Int = 16,
 +    // Triple buffering (fbiInit2 bit 4, as Voodoo 2): rendering goes on into
 +    // the third buffer while a swap waits for retrace. With two buffers GLQuake
 +    // at swap interval 1 lost ~1/4 of the frame time waiting (B164e: 34.1 fps,
@@ -1170,7 +1172,7 @@ index 1b34fa2..57d9067 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..c86c2c9 100644
+index 100f1c6..2a686f0 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -1,5 +1,7 @@
@@ -1227,7 +1229,7 @@ index 100f1c6..c86c2c9 100644
      // Texture memory bus (R/W, internal 2-port arbitration with texBaseAddr relocation)
      val texMem = master(Bmb(Core.texMemBmbParams(c)))
  
-@@ -92,25 +121,40 @@ case class Core(c: Config) extends Component {
+@@ -92,25 +121,41 @@ case class Core(c: Config) extends Component {
      // Simulation-only framebuffer cache flush request
      val flushFbCaches = in Bool ()
  
@@ -1252,7 +1254,8 @@ index 100f1c6..c86c2c9 100644
 +    blockingCommands = regBank.busif.getBlockingCommands,
 +    relaxedFbzSync = c.fbzModePerTriangle,
 +    skipRedundantFbzSync = c.skipRedundantFbzSync,
-+    depth = c.pciFifoDepth
++    depth = c.pciFifoDepth,
++    ingressDepth = c.pciIngressDepth
    )
  
    val frontdoor = CoreCpuFrontdoor(c)
@@ -1271,7 +1274,7 @@ index 100f1c6..c86c2c9 100644
  
    val controlPlane = new Area {
      val swapBuffer = SwapBuffer()
-@@ -124,7 +168,12 @@ case class Core(c: Config) extends Component {
+@@ -124,7 +169,12 @@ case class Core(c: Config) extends Component {
      pciFifo.io.texWrite << frontdoor.io.texWrite
      frontdoor.io.texBaseAddr := regBank.tmuConfig.texBaseAddr
  
@@ -1285,7 +1288,7 @@ index 100f1c6..c86c2c9 100644
      pciFifo.io.regSide <> regBank.io.bus
      regBank.io.floatShadow <> pciFifo.io.floatShadow
      regBank.io.statusInputs <> io.statusInputs
-@@ -135,6 +184,8 @@ case class Core(c: Config) extends Component {
+@@ -135,6 +185,8 @@ case class Core(c: Config) extends Component {
      swapBuffer.io.vsyncEnable := regBank.commands.swapVsyncEnable
      swapBuffer.io.swapInterval := regBank.commands.swapInterval
      swapBuffer.io.swapCmdEnqueued := pciFifo.io.wasEnqueued
@@ -1294,7 +1297,7 @@ index 100f1c6..c86c2c9 100644
  
      regBank.io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      regBank.io.swapsPending := framebufferLayout.swapsPending
-@@ -142,14 +193,14 @@ case class Core(c: Config) extends Component {
+@@ -142,14 +194,14 @@ case class Core(c: Config) extends Component {
      io.swapDisplayedBuffer := framebufferLayout.displayedBuffer
      io.swapsPending := framebufferLayout.swapsPending
  
@@ -1311,7 +1314,7 @@ index 100f1c6..c86c2c9 100644
  
      pixelPipeline.io.controls := PixelPipeline.Controls.fromRegisterBank(
        c,
-@@ -157,14 +208,45 @@ case class Core(c: Config) extends Component {
+@@ -157,14 +209,45 @@ case class Core(c: Config) extends Component {
        framebufferLayout
      )
      pixelPipeline.io.externalBusy := PixelPipeline.ExternalBusy.fromCore(regBank, swapBuffer)
@@ -1358,7 +1361,7 @@ index 100f1c6..c86c2c9 100644
    pixelPipeline.io.pciFifoEmpty := pciFifo.io.fifoEmpty
    pixelPipeline.io.fbStatus := framebufferMem.io.status
    pixelPipeline.io.fbStats := framebufferMem.io.stats
-@@ -173,16 +255,20 @@ case class Core(c: Config) extends Component {
+@@ -173,16 +256,20 @@ case class Core(c: Config) extends Component {
    framebufferMem.io.auxWrite << pixelPipeline.io.auxWrite
    framebufferMem.io.colorReadReq << pixelPipeline.io.colorReadReq
    pixelPipeline.io.colorReadRsp << framebufferMem.io.colorReadRsp
@@ -1382,7 +1385,7 @@ index 100f1c6..c86c2c9 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +276,7 @@ case class Core(c: Config) extends Component {
+@@ -190,6 +277,7 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
@@ -1390,7 +1393,7 @@ index 100f1c6..c86c2c9 100644
    textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -199,10 +286,61 @@ case class Core(c: Config) extends Component {
+@@ -199,10 +287,61 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiClock := io.hdmi.clock
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
@@ -2153,13 +2156,14 @@ index 0000000..a68563d
 +  finals.io.pop.ready := io.output.rsp.fire && rspIsWrite
 +}
 diff --git a/src/voodoo/bus/PciFifo.scala b/src/voodoo/bus/PciFifo.scala
-index 226d60e..cef9671 100644
+index 226d60e..5f1169b 100644
 --- a/src/voodoo/bus/PciFifo.scala
 +++ b/src/voodoo/bus/PciFifo.scala
-@@ -40,6 +40,15 @@ case class PciFifo(
+@@ -40,7 +40,19 @@ case class PciFifo(
      categories: Map[BigInt, RegisterCategory],
      floatAliases: Map[BigInt, PciFifo.FloatAliasConfig],
      commandAddresses: Seq[BigInt],
+-    formalStrong: Boolean = true
 +    blockingCommands: Set[BigInt] = Set(),
 +    // fbzMode (0x110) only waits for the pipeline to drain when it changes the
 +    // draw buffer or the y origin (Config.fbzModePerTriangle).
@@ -2169,10 +2173,14 @@ index 226d60e..cef9671 100644
 +    // RAM; deeper here keeps triangle data queued across the host's
 +    // status-read round trips (Config.pciFifoDepth).
 +    depth: Int = 64,
-     formalStrong: Boolean = true
++    formalStrong: Boolean = true,
++    // Ingress staging FIFO entries. It is built from flops (no LUT-RAM on the
++    // GW5AST): 16 entries were 1.3k FF on the dock (Config.pciIngressDepth).
++    ingressDepth: Int = 16
  ) extends Component {
  
-@@ -52,6 +61,10 @@ case class PciFifo(
+   private case class AddressDecodeInfo() extends Bundle {
+@@ -52,6 +64,10 @@ case class PciFifo(
    }
  
    val busAddrWidth: Int = busParams.access.addressWidth
@@ -2183,7 +2191,7 @@ index 226d60e..cef9671 100644
    val busDataWidth: Int = busParams.access.dataWidth
  
    val io = new Bundle {
-@@ -67,11 +80,19 @@ case class PciFifo(
+@@ -67,11 +83,19 @@ case class PciFifo(
  
      // Drain blocking inputs
      val pipelineBusy = in Bool ()
@@ -2204,7 +2212,7 @@ index 226d60e..cef9671 100644
  
      // Event signals
      val wasEnqueued = out Bool () // swapCmdEnqueued detection
-@@ -97,20 +118,57 @@ case class PciFifo(
+@@ -97,20 +121,57 @@ case class PciFifo(
    // ========================================================================
    // Address categorization signals (assigned in addPrePopTask)
    // ========================================================================
@@ -2269,7 +2277,13 @@ index 226d60e..cef9671 100644
  
    private case class StagedWrite() extends Bundle {
      val address = UInt(busAddrWidth bits)
-@@ -170,10 +228,10 @@ case class PciFifo(
+@@ -165,15 +226,15 @@ case class PciFifo(
+ 
+   // Small front-end staging FIFO decouples incoming PCI writes from float conversion bubbles.
+   private val ingress = new Area {
+-    val stageFifo = StreamFifo(StagedWrite(), depth = 16)
++    val stageFifo = StreamFifo(StagedWrite(), depth = ingressDepth)
+     val stagedWriteTx = Stream(StagedWrite())
      clearStaged(stagedWriteTx)
  
      when(queueableCpuWrite) {
@@ -2284,7 +2298,7 @@ index 226d60e..cef9671 100644
        stagedWriteTx.syncRequired := syncRequired
        stagedWriteTx.isFloatAlias := isFloatAlias
        stagedWriteTx.floatTargetAddr := floatTargetAddr
-@@ -268,13 +326,13 @@ case class PciFifo(
+@@ -268,13 +329,13 @@ case class PciFifo(
  
    // wasEnqueued: detect when a specific register write was actually enqueued
    io.wasEnqueued := queuedWriteTx.fire && !queuedWriteTx.isTexture &&
@@ -2300,7 +2314,7 @@ index 226d60e..cef9671 100644
      fifo.io.push << queuedWriteTx
      io.pciFifoFree := fifo.io.availability
    }
-@@ -283,6 +341,13 @@ case class PciFifo(
+@@ -283,6 +344,13 @@ case class PciFifo(
    // ========================================================================
    // Drain blocking logic
    // ========================================================================
@@ -2314,7 +2328,7 @@ index 226d60e..cef9671 100644
    private val drainControl = new Area {
      val canDrain = Bool()
      canDrain := True
-@@ -294,6 +359,44 @@ case class PciFifo(
+@@ -294,6 +362,44 @@ case class PciFifo(
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
        canDrain := False
      }
@@ -2359,7 +2373,7 @@ index 226d60e..cef9671 100644
  
      val commandStreamBlocked = Bool()
      commandStreamBlocked := False
-@@ -303,10 +406,17 @@ case class PciFifo(
+@@ -303,10 +409,17 @@ case class PciFifo(
  
      val fifoEmpty = Bool().setName("pciFifo_fifoEmpty")
      fifoEmpty.simPublic()
@@ -2378,7 +2392,7 @@ index 226d60e..cef9671 100644
    private val issuedWrite = drainControl.issuedWrite
    private val commandStreamBlocked = drainControl.commandStreamBlocked
    private val drainedWrite = issuedWrite
-@@ -324,11 +434,12 @@ case class PciFifo(
+@@ -324,11 +437,12 @@ case class PciFifo(
      io.texDrain.pciAddr := drainedWrite.texPciAddr
      io.texDrain.data := drainedWrite.data
      io.texDrain.mask := drainedWrite.mask
@@ -2395,7 +2409,7 @@ index 226d60e..cef9671 100644
    }
    val isTexDrain = drainRoute.isTexDrain
    val isRegDrain = drainRoute.isRegDrain
-@@ -341,31 +452,31 @@ case class PciFifo(
+@@ -341,31 +455,31 @@ case class PciFifo(
      // Uses isWriteCmd (cmd.valid) not doWriteImmediate (cmd.fire) to avoid combinatorial loop
      // through cmd.ready → fire → doWriteDirect → cpuPassthrough → stall → cmd.ready
      val doWriteDirect = isWriteCmd && fifoBypass
@@ -2444,7 +2458,7 @@ index 226d60e..cef9671 100644
        (isTexDrain && io.texDrain.ready)
    }
    private val doWriteDirect = regSideMux.doWriteDirect
-@@ -383,16 +494,16 @@ case class PciFifo(
+@@ -383,16 +497,16 @@ case class PciFifo(
      io.regSide.rsp.ready := True
  
      io.cpuSide.rsp.valid := RegNext(
@@ -2465,7 +2479,7 @@ index 226d60e..cef9671 100644
        pendingRead := True
      }
      when(pendingRead && io.regSide.rsp.valid) {
-@@ -414,18 +525,18 @@ case class PciFifo(
+@@ -414,18 +528,18 @@ case class PciFifo(
    // Stall logic
    // ========================================================================
    private val cpuReady = new Area {
@@ -2491,7 +2505,7 @@ index 226d60e..cef9671 100644
      }
    }
  
-@@ -453,33 +564,68 @@ case class PciFifo(
+@@ -453,33 +567,68 @@ case class PciFifo(
      println(s"[PciFifo] Sync addresses: ${syncCases.map(a => f"0x$a%03x").mkString(", ")}")
  
      // Default: unregistered addresses bypass FIFO
@@ -2575,7 +2589,7 @@ index 226d60e..cef9671 100644
        }
      }
  
-@@ -488,52 +634,74 @@ case class PciFifo(
+@@ -488,52 +637,74 @@ case class PciFifo(
        s"[PciFifo] Command stream addresses: ${commandAddresses.map(a => f"0x$a%03x").mkString(", ")}"
      )
      if (commandAddresses.nonEmpty) {
@@ -2671,7 +2685,7 @@ index 226d60e..cef9671 100644
      }
  
      when(pciFifo.io.pop.syncRequired && io.pipelineBusy) {
-@@ -550,8 +718,8 @@ case class PciFifo(
+@@ -550,8 +721,8 @@ case class PciFifo(
        assert(io.cpuSide.rsp.source === io.regSide.rsp.source)
      }
  
@@ -2682,7 +2696,7 @@ index 226d60e..cef9671 100644
      }
  
      when(floatWriteRequest && !floatConvertInFlight) {
-@@ -581,16 +749,14 @@ case class PciFifo(
+@@ -581,16 +752,14 @@ case class PciFifo(
        assert(queuedWriteTx.floatShadowRaw === rawSInt.resize(50 bits))
      }
  
@@ -2701,7 +2715,7 @@ index 226d60e..cef9671 100644
        when(queuedWriteTx.fire =/= drainedWrite.fire) {
          when(queuedWriteTx.fire) {
            fOccupancy := fOccupancy + 1
-@@ -598,7 +764,7 @@ case class PciFifo(
+@@ -598,7 +767,7 @@ case class PciFifo(
            fOccupancy := fOccupancy - 1
          }
        }

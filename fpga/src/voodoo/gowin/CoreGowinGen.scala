@@ -149,6 +149,8 @@ object GowinGenSupport {
       // between full (big triangles) and empty (runs of small ones: no
       // triangle 20% of cycles): 2048 entries, ~14 BSRAMs.
       pciFifoDepth = 2048,
+      // Ingress staging: 8 entries (16 were 1.3k FF); GOWIN_PCI_INGRESS overrides.
+      pciIngressDepth = sys.env.get("GOWIN_PCI_INGRESS").map(_.toInt).getOrElse(8),
       // fbiInit2 bit 4 triple buffering (Voodoo 2); off until software sets it.
       tripleBuffering = true,
       // Two TMUs: no triangleCMD register copy (~2.3k FFs); register writes
