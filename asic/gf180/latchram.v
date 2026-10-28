@@ -40,8 +40,9 @@ input [(WR_PORTS > 0 ? WR_PORTS : 1)*WIDTH-1:0] WR_DATA;
 
 wire _TECHMAP_FAIL_ = WR_PORTS != 1;
 
-localparam G = (WIDTH % 8 == 0) ? 8 : WIDTH;
-localparam NG = WIDTH / G;
+// Clock gates per word and byte (the last group may be narrower).
+localparam G = 8;
+localparam NG = (WIDTH + G - 1) / G;
 
 reg [WIDTH-1:0] wd;
 reg [ABITS-1:0] wa;
@@ -62,7 +63,7 @@ for (w = 0; w < SIZE; w = w + 1) begin : word
   for (g = 0; g < NG; g = g + 1) begin : grp
     wire gclk;
     gf180mcu_fd_sc_mcu7t5v0__icgtp_1 icg (.CLK(nclk), .E(sel & wg[g]), .TE(1'b0), .Q(gclk));
-    for (b = 0; b < G; b = b + 1) begin : bit
+    for (b = 0; b < G && g * G + b < WIDTH; b = b + 1) begin : bit
       gf180mcu_fd_sc_mcu7t5v0__latq_1 l (.E(gclk), .D(wd[g * G + b]), .Q(q[w * WIDTH + g * G + b]));
     end
   end
