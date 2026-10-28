@@ -28,7 +28,8 @@ module own_ddr3_ctrl #(
     parameter LANES = DQ_WIDTH / 8,
     parameter WDQ_DEPTH = 2,        // write data FIFO depth (2 or 4)
     parameter SIM = 0,              // shorten init waits
-    parameter DBG_MAP = 1,          // keep the per-lane gate pass maps
+    parameter DBG_MAP = 1,          // debug-port readout of the pass maps (the maps
+                                    // themselves are always kept: gate centring uses them)
     parameter [15:0] MR0_INIT = 16'h1520, // PPD fast, WR 6, DLL reset, CL 6, BL8
     parameter [15:0] MR1_INIT = 16'h0004, // DLL on, RZQ/6 drive, RTT_NOM RZQ/4
     parameter [15:0] MR2_INIT = 16'h0000, // CWL 5, RTT_WR off
@@ -905,7 +906,8 @@ module own_ddr3_ctrl #(
                 C_NEXTG: begin
                     for (i = 0; i < LANES; i = i + 1)
                         if (lpass_g[i]) begin
-                            if (DBG_MAP) pmap[i][cg] <= 1'b1;
+                            // Always kept: the gate centring below reads it.
+                            pmap[i][cg] <= 1'b1;
                             rowpass[i][cg[6:5]] <= 1'b1;
                         end
                     lpass_g <= 0;

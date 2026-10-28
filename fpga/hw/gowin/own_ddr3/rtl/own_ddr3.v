@@ -9,9 +9,11 @@
 // memory_clk is stopped and all of them start on the same edge.
 module own_ddr3 #(
     parameter SIM = 0,
-    // Per-lane gate pass maps for the debug port (ddrdbg.py dump): 512 flops,
-    // each with its own enable, plus the readout mux. Off since the B183b
-    // gate fix; set 1 to debug read gating again.
+    // Debug-port readout of the per-lane gate pass maps (ddrdbg.py dump).
+    // 0 drops only the readout mux: the maps stay, the B183b gate centring
+    // picks the middle of each lane's widest pass window from them
+    // (DBG_MAP=0 once removed the maps too: every gate landed on 27 and
+    // odd-pixel dashes came back, s197_2).
     parameter DBG_MAP = 0,
     parameter HOLD_RD = 1,
     parameter [11:0] RD_PNTR = 12'h000
