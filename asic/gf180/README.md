@@ -303,3 +303,32 @@ for 4):
 | 2 dies, HyperRAM tex, cache 64 | 940,800 | 43 |
 | previous fit: 4 PCI dies, cache 16 | 856,391 | 47 |
 | 4 dies, HyperRAM tex, cache 64 | 570,798 | 70 |
+
+### Place and route fit check (2026-10-29)
+
+`pnr.tcl` (OpenROAD): the slot's 12.92 mm² core, pins on the core edge in
+place of the pad ring, template-style power grid (Metal4 / Metal5 straps),
+tap cells, routability-driven placement, CTS, repair, global and detailed
+route, typical corner. Yosys maps every writable memory to latches with
+`latchram.v`: write data / address / enables registered, one clock gate per
+word and byte opening its latches in the low half of the next cycle, read
+port a binary mux tree (~84 µm²/bit with one read port, more than the 73 in
+the estimate above). Memories cannot use the foundry SRAM macros as they
+are: the texture cache data reads asynchronously.
+
+| die | cells after synthesis | placed (+ taps, buffers) | after CTS / repair | result |
+|---|---|---|---|---|
+| tex cache 32 | 9.35 mm² (72%) | 77% | 10.26 mm² (80%) | global route: 0 overflow, 18% of tracks; detailed route below |
+| tex cache 64 | 12.15 mm² (94%) | 95% before repair | — | **does not fit**: 92k slew fixes (2.6k buffers, 11k resized cells) and detailed placement cannot legalize |
+
+Cache 32 timing at 40 MHz after CTS: register to register +0.25 ns (worst
+path a palette RAM latch read: the latch clock comes ~14 ns late through
+the inverted clock tree and clock gates, so the half-cycle read is the
+limit); inputs +10 ns; the fb SRAM address outputs miss their 5 ns budget
+by 4.6 ns (5.7 ns clock insertion delay; register them in the pad ring or
+drive them from a launch-early clock). Power (default activity, 5 V): ~4 W.
+
+The 64-line die needs either about 1.5 mm² less (no room for the second
+TMU's cache at 64 lines) or a larger slot. A hardened latch-RAM block
+(DFFRAM-style, placed by hand) would pack the RAM denser than this
+flat-placed model.
