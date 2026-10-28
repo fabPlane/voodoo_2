@@ -118,7 +118,11 @@ object GowinGenSupport {
       texHintValidCheck = sys.env.get("GOWIN_TMU_COUNT").forall(_.toInt < 2),
       // TMU1 holds GLQuake's lightmaps: 256 lines missed twice as often as
       // 512 (multitexture GLQuake replay: 512 lines -7.3% cycles).
-      tmu1SmallCacheLines = 256,
+      tmu1SmallCacheLines = sys.env.get("GOWIN_TMU1_LINES").map(_.toInt).getOrElse(256),
+      // GOWIN_TEX_EPOCH=6: cache line validity as a generation in the tag
+      // BSRAM (tag 10-11 bits + 6 fits the 18-bit width) instead of a flop
+      // per line and its lines:1 mux: bigger caches cost BSRAM only.
+      texValidEpochBits = sys.env.get("GOWIN_TEX_EPOCH").map(_.toInt).getOrElse(0),
       // Prefetch lead: the TMU let 15 samples into flight, ~9 of them in its
       // own pipe, so line-fill hints ran only a few samples ahead of a ~40
       // cycle fill. 47 in flight (48-entry request FIFO): Quake II cut-frame
