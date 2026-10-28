@@ -37,6 +37,32 @@ write enable and triangle setup (scanX / yrange registers).
 Worst core path: TMU1 texturePath hintTagMem BRAM -> its own write
 enable, 11 levels (3 CARRY4), 65% routing.
 
+### Full feature set (KINTEX_FULL, rtl/kintex-full)
+
+`KINTEX_FULL=1 GOWIN_FB_LINESPLIT=1 GOWIN_FB_WLINESPLIT=1
+GOWIN_DDR_STAGERS=1 GOWIN_DDR_STATS=1`: the dock's rtl_b199 (two TMUs,
+1024-line caches on both with epoch validity, fb line split) plus what
+the GW5AST build drops for area: Voodoo 2 setup engine, 8 texture fill
+slots, triangleCMD register copy, hint lineValid checks, DDR read
+stagers and stats.
+
+| | Routed | of XC7K160T |
+|---|---|---|
+| LUT | 45.3k (3.5k as LUT-RAM) | 44.7% |
+| FF | 53.1k | 26.2% |
+| Slices | 18.9k | 74.7% |
+| Block RAM | 110.5 tiles | 34.0% |
+| DSP | 87 | 14.5% |
+
+Setup engine: ~3.7k LUT / 2.3k FF of that.
+At 120 MHz core: met, core +0.087 ns, pcie +2.102, ddr_ui +2.825,
+hold clean. Worst core path: PCI FIFO register data -> gamma LUT-RAM
+write address (0 logic levels: fanout / distance).
+At 135 MHz core: also met, core +0.017 ns, pcie +2.166, ddr_ui +4.257,
+hold clean; worst paths are again the TMU tag BRAM -> fill mask /
+hintTagMem enable (12 levels). So the full feature set costs ~5 MHz
+of the 140 MHz ceiling.
+
 ## Area estimate (yosys synth_xilinx, 2026-10-28)
 
 `yosys synth_xilinx -family xc7 -flatten` on rtl/kintex (no vendor IP, no
