@@ -963,15 +963,11 @@ module own_ddr3_ctrl #(
                     ck <= 4'd0;
                     ldone <= 0;
                     for (i = 0; i < LANES; i = i + 1)
-                        // A quarter into the run: on the dock the late half
-                        // of the gate window fails under back-to-back
+                        // Early half of the centre: on the dock the late
+                        // edge of the gate window failed under back-to-back
                         // traffic (odd-pixel dashes at the run's centre + 0
-                        // and + 1, clean at - 1 and - 2; 4-wide runs,
-                        // 2026-10-26). A 5-wide run's early-half centre
-                        // (start + 2, gate 26) showed no dashes but cost
-                        // ~5% GLQuake speed against start + 1 (s199b_2,
-                        // 2026-10-29); 4-wide runs keep start + 1.
-                        lg[i] <= sc_bstart[i] + (sc_blen[i] >> 2);
+                        // and + 1, clean at - 1 and - 2; 4-wide runs, 2026-10-26).
+                        lg[i] <= sc_bstart[i] + ((sc_blen[i] - 8'd1) >> 1);
                     cstate <= C_HOLD;
                 end
                 C_FINISH: begin
