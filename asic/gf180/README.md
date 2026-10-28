@@ -239,3 +239,24 @@ latch 44 + 16/port, foundry macros where cheaper) the PCI die's RAM is
 if every memory is built as latch RAM or a macro (latch timing / DFT work).
 By group (latch): tex cache 1.97 (cache 32), pipeline FIFOs 1.57, palette
 0.66 (4 read ports), fb readers 0.66, video 0.60, PCI FIFO 0.56.
+
+## Logic by block, and what a board FPGA could take (2026-10-28)
+
+Per-module generic cell counts (Yosys, before mapping, hierarchy kept;
+`~/.cache/asic-est/hierq/stat.txt`), share of the die's ~4.4 mm² logic,
+±30% (cell mix differs by block): TriangleSetup 22%, Tmu 20% (texel decoder
+5.5%, cache control 2.9%), SpanWalker 14%, framebuffer memory subsystem 11%
+(plane buffers / readers 5%), RegisterBank 4.8%, FramebufferAccess 3.2%,
+ColorCombine 2.3%, Fog 2.1%, HDMI scanout 2.0%, PciFifo 1.6%, uncore ~3%.
+GLQuake frame 1923: 2053 triangles, 57418 register writes (~28 / triangle).
+
+Board-FPGA split tiers (placed ≈ logic / 0.7 + latch RAM):
+- glue (PCI target + PCI FIFO + video + row merge): ~1.4 mm² off the die,
+  47 PCI pins freed.
+- + RegisterBank + TriangleSetup (per-triangle work; the FPGA sends the
+  setup result, ~100 link cycles per triangle, less than the ~4 x 28
+  halfwords of register writes it replaces): ~3.1 mm² total. FPGA ~10k LUT4,
+  ~6k FF, 9 multipliers, a few BSRAM (GW2A-18 / GW5A-25 class).
+- + TMU (Voodoo 1 FBI / TMU split, texture memory on the FPGA): ~6-7 mm²
+  total, but one TMU per die on the FPGA (8.7k LUT4, 17 multipliers each)
+  and a per-pixel texel bus (~36 pins per die).
