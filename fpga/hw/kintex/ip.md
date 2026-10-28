@@ -28,6 +28,9 @@ Timing met on all clocks, first run, default strategies:
 | ddr_ui | 100 MHz | +4.327 ns | ~176 MHz |
 | pixel | 25 MHz | +34.7 ns | |
 
+Second run at a 120 MHz core target: met, core WNS +0.414 ns (~126 MHz),
+pcie +2.607, ddr_ui +4.532. Same worst path (12 levels).
+
 Worst core path: TMU1 texturePath hintTagMem BRAM -> its own write
 enable, 11 levels (3 CARRY4), 65% routing.
 
