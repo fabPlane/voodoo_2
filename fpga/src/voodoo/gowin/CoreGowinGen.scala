@@ -188,6 +188,14 @@ object GowinGenSupport {
           // per TMU as registers, B153).
           sys.env.get("GOWIN_TMU_QUEUES_BSRAM")
             .map(_ => Seq("io_sampleRequest_translated_fifo", "sampleRequestBasePre_translated_fifo"))
+            .getOrElse(Nil) ++
+          // GOWIN_MORE_BSRAM: with Gowin's 32/36-bit SDP split off
+          // (convert_sdp32_36_to_sdp16_18 0: PnR BSRAM 297 -> 210) BSRAM is
+          // spare; the texture hint queues (757 FFs each, pop already
+          // registered) and the PCI ingress staging FIFO (80 FFs per entry)
+          // move out of flops.
+          sys.env.get("GOWIN_MORE_BSRAM")
+            .map(_ => Seq("hintIn_toFlow_toStream_fifo", "ingress_stageFifo"))
             .getOrElse(Nil)
       )
     )
