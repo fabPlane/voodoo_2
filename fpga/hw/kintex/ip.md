@@ -5,6 +5,32 @@ generates (`make rtl-kintex`), the PCIe shim passes its SpinalSim test, and
 yosys `synth_xilinx` gives the area estimate below. Everything that needs
 Vivado (IP generation, port-name check, P&R, timing) is still to do.
 
+## Vivado out-of-context P&R (2026-10-29)
+
+`ooc.tcl`: the fabric alone (Kintex7Voodoo, GOWIN_TMU_COUNT=2,
+GOWIN_TEX_LINES=512 like the dock's s197 builds) placed and routed on
+xc7k160tffg676-2 with Vivado 2025.2.1; no pcie_7x / MIG / MMCM / pins.
+
+| | Routed | of XC7K160T |
+|---|---|---|
+| LUT | 39.4k | 38.8% |
+| FF | 45.3k | 22.4% |
+| Slices | 16.2k | 64% |
+| Block RAM | 72.5 tiles | 22.3% |
+| DSP | 85 | 14.2% |
+
+Timing met on all clocks, first run, default strategies:
+
+| Clock | Target | WNS | Fmax |
+|---|---|---|---|
+| core | 100 MHz | +1.130 ns | ~113 MHz (dock: 53.3) |
+| pcie | 125 MHz | +2.771 ns | ~190 MHz |
+| ddr_ui | 100 MHz | +4.327 ns | ~176 MHz |
+| pixel | 25 MHz | +34.7 ns | |
+
+Worst core path: TMU1 texturePath hintTagMem BRAM -> its own write
+enable, 11 levels (3 CARRY4), 65% routing.
+
 ## Area estimate (yosys synth_xilinx, 2026-10-28)
 
 `yosys synth_xilinx -family xc7 -flatten` on rtl/kintex (no vendor IP, no
