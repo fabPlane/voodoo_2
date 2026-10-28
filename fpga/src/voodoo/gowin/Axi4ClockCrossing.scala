@@ -55,10 +55,18 @@ case class Axi4ClockCrossing(
   // the FIFO before their address went, so a burst could never show whole in
   // the FIFO and its address was never released (B117 hung GLQuake at start).
   w.io.push << io.input.w
+  //
+  // The count of unreleased beats is registered: gray decode -> subtract ->
+  // compare -> release -> wAllowed was a failing ddr_clk_out path (54.5 MHz
+  // trials, -0.2 ns). A W pop lowers occupancy and wAllowed together, new
+  // beats only raise it, so last cycle's count is too high only after a
+  // release: no release in the cycle after one (the adapter's AW half pipe
+  // takes one address every other cycle anyway).
   if (wFifoSize >= 8) new ClockingArea(outputCd) {
     val wAllowed = Reg(UInt(log2Up(wFifoSize) + 2 bits)) init (0)
-    val wHere = w.io.popOccupancy.resize(wAllowed.getWidth) - wAllowed
-    val wReady = !wHere.msb && wHere >= (aw.io.pop.len.resize(wAllowed.getWidth) + 1)
+    val wHere = RegNext(w.io.popOccupancy.resize(wAllowed.getWidth) - wAllowed) init (0)
+    val awFired = RegNext(io.output.aw.fire) init (False)
+    val wReady = !awFired && !wHere.msb && wHere >= (aw.io.pop.len.resize(wAllowed.getWidth) + 1)
     io.output.aw.valid := aw.io.pop.valid && wReady
     io.output.aw.payload := aw.io.pop.payload
     aw.io.pop.ready := io.output.aw.ready && wReady

@@ -26,3 +26,8 @@ set_false_path -from [get_regs {u_ddr3/u_ctrl/cal_done_s*}]
 # back or strobes a write (window 31 0x98 / 0x9C): not timed paths.
 set_false_path -from [get_regs {u_voodoo/pcie_ddrDbgCmd_buffercc/*}]
 set_false_path -from [get_regs {u_voodoo/pcie_ddrDbgWdata_buffercc/*}]
+# Own DDR3 write timing options: written only through the debug port,
+# static while traffic runs.
+set_false_path -from [get_regs {u_ddr3/u_ctrl/wr_dly*}]
+set_false_path -from [get_regs {u_ddr3/u_ctrl/opt_wr_shift*}]
+set_false_path -from [get_regs {u_ddr3/u_ctrl/p_wdq_dly*}]
