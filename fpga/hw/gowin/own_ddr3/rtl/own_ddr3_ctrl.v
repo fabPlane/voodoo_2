@@ -28,7 +28,8 @@ module own_ddr3_ctrl #(
     parameter LANES = DQ_WIDTH / 8,
     parameter WDQ_DEPTH = 2,        // write data FIFO depth (2 or 4)
     parameter SIM = 0,              // shorten init waits
-    parameter DBG_MAP = 1,          // keep the per-lane gate pass maps
+    parameter DBG_MAP = 1,          // debug-port readout of the pass maps (the maps
+                                    // themselves are always kept: gate centring uses them)
     parameter [15:0] MR0_INIT = 16'h1520, // PPD fast, WR 6, DLL reset, CL 6, BL8
     parameter [15:0] MR1_INIT = 16'h0004, // DLL on, RZQ/6 drive, RTT_NOM RZQ/4
     parameter [15:0] MR2_INIT = 16'h0000, // CWL 5, RTT_WR off
@@ -338,6 +339,10 @@ module own_ddr3_ctrl #(
     reg [3:0]  llat [0:LANES-1]; // read latency in frames
     reg [2:0]  lrot [0:LANES-1]; // CALIB pulses applied (mod 8)
     reg [LANES-1:0] lfound;      // this trial matched
+    // Set the cycle a trial's read issues; the trial state is cleared the
+    // cycle after (the clear on can_issue, through the request-queue mux,
+    // was the worst ddr_clk path: ~11 ns). Read data takes far longer.
+    reg             trial_clr;
     reg [LANES-1:0] lprevb;      // last frame held burst B
     reg [LANES-1:0] lprevb2;     // the frame before that did
     reg [3:0]  lfl  [0:LANES-1]; // frame it matched at
@@ -475,7 +480,7 @@ module own_ddr3_ctrl #(
             p_rd_gate <= 0;
             p_rclksel <= 0;
             cal_active <= 1'b0;
-            cal_req <= 1'b0;
+            cal_req <= 1'b0; trial_clr <= 1'b0;
             cal_done <= 1'b0;
             cal_fail <= 1'b0;
             cal_runs <= 4'd0;
@@ -784,6 +789,12 @@ module own_ddr3_ctrl #(
             end
 
             cal_req <= 1'b0;
+            trial_clr <= 1'b0;
+            if (trial_clr) begin
+                lfound <= 0;
+                a_seen <= 1'b0;
+                afcnt <= 5'd0;
+            end
             case (cstate)
                 C_IDLE: ;
                 C_WRA: begin
@@ -843,13 +854,11 @@ module own_ddr3_ctrl #(
                     cal_req <= 1'b1; cal_req_wr <= 1'b0; cal_req_b <= tsel;
                     if (cal_req && can_issue && cal_req_b == tsel) begin
                         cal_req <= 1'b0;
-                        lfound <= 0;
-                        a_seen <= 1'b0;
-                        afcnt <= 5'd0;
+                        trial_clr <= 1'b1;
                         cstate <= C_WAIT;
                     end
                 end
-                C_WAIT: if (a_seen && afcnt == WIN) cstate <= C_EVAL;
+                C_WAIT: if (!trial_clr && a_seen && afcnt == WIN) cstate <= C_EVAL;
                 C_EVAL: begin
                     tsel <= ~tsel;
 `ifdef OWN_DDR3_SIM
@@ -905,7 +914,8 @@ module own_ddr3_ctrl #(
                 C_NEXTG: begin
                     for (i = 0; i < LANES; i = i + 1)
                         if (lpass_g[i]) begin
-                            if (DBG_MAP) pmap[i][cg] <= 1'b1;
+                            // Always kept: the gate centring below reads it.
+                            pmap[i][cg] <= 1'b1;
                             rowpass[i][cg[6:5]] <= 1'b1;
                         end
                     lpass_g <= 0;

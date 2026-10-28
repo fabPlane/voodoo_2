@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..2fe3ea3 100644
+index 1b34fa2..08d2885 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..2fe3ea3 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,102 @@ case class Config(
+@@ -31,6 +34,107 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1106,6 +1106,11 @@ index 1b34fa2..2fe3ea3 100644
 +    texHintValidCheck: Boolean = true,
 +    // TMU1's small texture cache lines (0 = texSmallCacheLines).
 +    tmu1SmallCacheLines: Int = 0,
++    // Small texture cache: line validity as an N-bit generation stored with
++    // each tag in block RAM instead of one flop per line with a lines:1 read
++    // mux (0 = flops). A texture write starts a new generation; wraparound
++    // and reset sweep every tag (one line a cycle, lookups paused).
++    texValidEpochBits: Int = 0,
 +    // Rasterizer span queue (spans between the walker, which issues the
 +    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
 +    spanQueueDepth: Int = 4,
@@ -1458,7 +1463,7 @@ index 100f1c6..2a686f0 100644
    pciFifo.io.wasEnqueuedAddr := U(0x128, pciFifo.busAddrWidth bits)
    regBank.io.pciFifoEmpty := pciFifo.io.fifoEmpty
 diff --git a/src/voodoo/CoreSim.scala b/src/voodoo/CoreSim.scala
-index 9effb48..0af5fca 100644
+index 9effb48..35bee62 100644
 --- a/src/voodoo/CoreSim.scala
 +++ b/src/voodoo/CoreSim.scala
 @@ -3,6 +3,7 @@ package voodoo
@@ -1482,7 +1487,7 @@ index 9effb48..0af5fca 100644
  ) extends Component {
    val io = new Bundle {
      // Unified CPU bus (24-bit address covers 16MB PCI BAR)
-@@ -31,22 +36,91 @@ case class CoreSim(
+@@ -31,22 +36,92 @@ case class CoreSim(
  
    def simRam(p: BmbParameter, size: Int) = SimBmbMemory(p = p, size = size, timing = memTiming)
  
@@ -1531,8 +1536,8 @@ index 9effb48..0af5fca 100644
 +        fixer.io.input <> aligner.io.output
 +        fixer.io.output
 +      }
-+    def multiRam(ps: Seq[BmbParameter], size: Int, fill: Boolean = false) = SimBmbMultiPortMemory(
-+      ps, size, readLatency = memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency,
++    def multiRam(ps: Seq[BmbParameter], size: Int, fill: Boolean = false, readLatency: Int = -1) = SimBmbMultiPortMemory(
++      ps, size, readLatency = if (readLatency >= 0) readLatency else memTiming.fixedReadLatency, writeLatency = memTiming.writeLatency,
 +      fillPort = if (fill) c else null)
 +    // The harness reaches the arrays by these instance names.
 +    val lineSplit = boardBus && sys.env.contains("SIM_BUS_LINESPLIT")
@@ -1547,7 +1552,8 @@ index 9effb48..0af5fca 100644
 +      fbWriteRam.io.fill << core.io.fillOffload
 +      core.io.fillDone := fbWriteRam.io.fillDone
 +    }
-+    val texRam = multiRam(Seq(pieceParams(Core.texMemBmbParams(c))), 8 * 1024 * 1024).setName("texRam")
++    val texRam = multiRam(Seq(pieceParams(Core.texMemBmbParams(c))), 8 * 1024 * 1024,
++      readLatency = memTiming.texReadLatency).setName("texRam")
 +    fbWriteRam.io.buses(0) <> bridgedWrite(core.io.fbMemWrite)
 +    fbWriteRam.io.buses(1) <> bridgedWrite(core.io.fbColorWriteMem)
 +    fbWriteRam.io.buses(2) <> bridgedWrite(core.io.fbAuxWriteMem)
@@ -1589,7 +1595,7 @@ index 9effb48..0af5fca 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..df55393 100644
+index 6051025..8ddcf58 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1637,7 +1643,7 @@ index 6051025..df55393 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,30 @@ object CoreSimGen extends App {
+@@ -37,7 +49,31 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1657,6 +1663,7 @@ index 6051025..df55393 100644
 +      texSampleQueueDepth = argIntValue("--tex-sample-queue-depth").getOrElse(16),
 +      texHintValidCheck = !args.contains("--no-tex-hint-valid"),
 +      tmu1SmallCacheLines = argIntValue("--tmu1-cache-lines").getOrElse(0),
++      texValidEpochBits = argIntValue("--tex-valid-epoch").getOrElse(0),
 +      triangleSnapshot = !args.contains("--no-triangle-snapshot") || args.contains("--triangle-snapshot"),
 +      pixelConfigSlots = args.contains("--pixel-config-slots") && !args.contains("--no-pixel-config-slots"),
 +      tmuForkAsync = args.contains("--tmu-fork-async"),
@@ -1669,8 +1676,13 @@ index 6051025..df55393 100644
      )
  
    val memTiming = SimMemoryTiming(
-@@ -48,6 +83,6 @@ object CoreSimGen extends App {
-     writeLatency = argIntValue("--sim-mem-write-latency").getOrElse(0)
+@@ -45,9 +81,10 @@ object CoreSimGen extends App {
+     fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
+     burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
+     burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
+-    writeLatency = argIntValue("--sim-mem-write-latency").getOrElse(0)
++    writeLatency = argIntValue("--sim-mem-write-latency").getOrElse(0),
++    texReadLatency = argIntValue("--sim-tex-read-latency").getOrElse(-1)
    )
  
 -  val report = GenSupport.simVerilog().generate(CoreSim(config, memTiming))
@@ -1678,12 +1690,18 @@ index 6051025..df55393 100644
    GenSupport.mirrorRomSidecars("emu/sim/rtl", report.toplevelName)
  }
 diff --git a/src/voodoo/SimBmbMemory.scala b/src/voodoo/SimBmbMemory.scala
-index 1bfe40c..06e63fe 100644
+index 1bfe40c..cc4c2ec 100644
 --- a/src/voodoo/SimBmbMemory.scala
 +++ b/src/voodoo/SimBmbMemory.scala
-@@ -11,7 +11,10 @@ case class SimMemoryTiming(
+@@ -9,9 +9,15 @@ case class SimMemoryTiming(
+     fixedReadLatency: Int = 0,
+     burstSetupLatency: Int = 12,
      burstBeatLatency: Int = 1,
-     writeLatency: Int = 0
+-    writeLatency: Int = 0
++    writeLatency: Int = 0,
++    // Pipelined mode only: texture reads at their own latency (-1 = same as
++    // fixedReadLatency), to size an on-chip texture cache level.
++    texReadLatency: Int = -1
  ) {
 -  require(Set("onchip", "ideal", "fixed", "burst").contains(mode))
 +  // "pipelined": one independent port per memory client (SimBmbMultiPortMemory),
@@ -1693,7 +1711,7 @@ index 1bfe40c..06e63fe 100644
    require(fixedReadLatency >= 0)
    require(burstSetupLatency >= 0)
    require(burstBeatLatency >= 0)
-@@ -96,9 +99,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
+@@ -96,9 +102,14 @@ case class SimBmbMemory(p: BmbParameter, size: Int, timing: SimMemoryTiming) ext
      }
    }
  
@@ -7279,7 +7297,7 @@ index c6b2ec5..7437fb0 100644
      val coords = PixelCoords(c)
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
 diff --git a/src/voodoo/raster/FastfillWordWriter.scala b/src/voodoo/raster/FastfillWordWriter.scala
-index 3a41225..a2e4035 100644
+index 3a41225..dc899e0 100644
 --- a/src/voodoo/raster/FastfillWordWriter.scala
 +++ b/src/voodoo/raster/FastfillWordWriter.scala
 @@ -25,12 +25,22 @@ case class FastfillWordWriter(c: Config) extends Component {
@@ -7315,7 +7333,7 @@ index 3a41225..a2e4035 100644
      clipLeft := clipLeftCapture
      clipRight := clipRightCapture
      clipLowY := clipLowYCapture
-@@ -59,12 +69,52 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -59,12 +69,51 @@ case class FastfillWordWriter(c: Config) extends Component {
    val curWordX = Reg(UInt(10 bits)) init (0)
    val curY = Reg(UInt(10 bits)) init (0)
  
@@ -7327,12 +7345,11 @@ index 3a41225..a2e4035 100644
    when(io.cmd.fire) {
 -    active := !emptyRect
 +    active := !emptyRect && !offloadable
-+    offActive := !emptyRect && offloadable
++    if (c.fbFillOffload) offActive := !emptyRect && offloadable
      curWordX := alignedClipLeft
      curY := clipLowY
    }
 +  io.offloadActive := offActive
-+  if (!c.fbFillOffload) offActive := False
 +  val off = if (c.fbFillOffload) new Area {
 +    // Colour then aux, each once every earlier write has landed; done when
 +    // both commands report back.
@@ -7370,7 +7387,7 @@ index 3a41225..a2e4035 100644
  
    val wordStream = Stream(WordReq(c))
    val lane1X = (curWordX + 1).resize(10 bits)
-@@ -161,7 +211,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -161,7 +210,7 @@ case class FastfillWordWriter(c: Config) extends Component {
      .m2sPipe()
  
    val ditherJoined =
@@ -7379,7 +7396,7 @@ index 3a41225..a2e4035 100644
    val (forColor, forAux) = StreamFork2(ditherJoined, synchronous = true)
  
    io.colorWrite.valid := forColor.valid && forColor.payload._2.rgbWrite && anyLaneEnabled(
-@@ -188,7 +238,7 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -188,7 +237,7 @@ case class FastfillWordWriter(c: Config) extends Component {
      forAux.payload._2
    )) || io.auxWrite.ready
  
@@ -7388,7 +7405,7 @@ index 3a41225..a2e4035 100644
    io.wordValid := wordStream.valid
    io.wordReady := wordStream.ready
    io.generatedPixels := wordStream.fire ? laneCount(
-@@ -202,6 +252,18 @@ case class FastfillWordWriter(c: Config) extends Component {
+@@ -202,6 +251,18 @@ case class FastfillWordWriter(c: Config) extends Component {
  }
  
  object FastfillWordWriter {
@@ -10557,7 +10574,7 @@ index d5f1a9b..51cc3c9 100644
          result.trace := pass.trace
        }
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..465ad10 100644
+index 465ea78..cb38ad7 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -10646,7 +10663,7 @@ index 465ea78..465ad10 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,406 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,471 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
@@ -10732,8 +10749,15 @@ index 465ea78..465ad10 100644
 +  reqLookup.bilinear := req.bilinear
 +  reqLookup.passthrough := req.passthrough
 +
-+  val tagMem = Seq.fill(lanes)(Mem(UInt(tagBits bits), lines))
-+  val hintTagMem = Seq.fill(lanes)(Mem(UInt(tagBits bits), lines))
++  // c.texValidEpochBits > 0: each tag entry also holds the generation its
++  // line was filled in (see `ep`); a lane hits only on the current one.
++  val epochBits = c.texValidEpochBits
++  val useEpoch = epochBits > 0
++  val tagW = tagBits + epochBits
++  val tagMem = Seq.fill(lanes)(Mem(UInt(tagW bits), lines))
++  val hintTagMem = Seq.fill(lanes)(Mem(UInt(tagW bits), lines))
++  def tagOf(e: UInt): UInt = e(tagBits - 1 downto 0)
++  def epochOf(e: UInt): UInt = e(tagW - 1 downto tagBits)
 +  // Data: one copy per tap (lanes), or with texCachePairedBanks one per tap
 +  // pair, split by word parity: a tap and its right-hand neighbour are in the
 +  // same word or in adjacent words (power-of-two rows start on even words, so
@@ -10745,7 +10769,36 @@ index 465ea78..465ad10 100644
 +    if (paired) Seq.fill(2 * 2)(Mem(Bits(32 bits), lines * wordsPerLine / 2)) // (pair, parity)
 +    else Seq.fill(lanes)(Mem(Bits(32 bits), lines * wordsPerLine))
 +  def pairOf(i: Int): Int = i / 2
-+  val lineValid = Reg(Bits(lines bits)) init 0
++  val lineValid = if (useEpoch) null else Reg(Bits(lines bits)) init 0
++
++  // Generations: a tag written in generation `cur` is valid until the next
++  // texture write that follows a fill (`used`; back-to-back writes of one
++  // download share a generation). Generation 0 is never current: a fill an
++  // invalidate overlaps writes 0. Before `cur` wraps (and after reset, when
++  // the tag RAMs hold garbage) a sweep writes 0 into every tag, one index a
++  // cycle; the lookup stage evaluates nothing meanwhile and re-reads after.
++  val ep = if (useEpoch) new Area {
++    val cur = Reg(UInt(epochBits bits)) init 1
++    val used = RegInit(False)
++    val sweeping = RegInit(True)
++    val sweepIdx = Reg(UInt(idxBits bits)) init 0
++    val sweepLast = sweeping && sweepIdx.andR
++    val sweepDone = RegNext(sweepLast) init (False)
++    when(sweeping) { sweepIdx := sweepIdx + 1 }
++    when(sweepLast) {
++      sweeping := False
++      cur := 1
++      used := False
++    }
++    when(io.invalidate && used && !sweeping) {
++      used := False
++      when(cur.andR) {
++        sweeping := True
++        sweepIdx := 0
++      } otherwise { cur := cur + 1 }
++    }
++  } else null
++  def lookupOn: Bool = if (useEpoch) !ep.sweeping else True
 +
 +  // Lanes a fill of `line` may write, for a sample whose taps are `addr` /
 +  // `active` (see above; the lineValid part is added when the data arrives).
@@ -10794,7 +10847,12 @@ index 465ea78..465ad10 100644
 +  val doneIdx = doneLine(idxBits - 1 downto 0)
 +  val doneTag = doneLine(aw - offBits - 1 downto idxBits)
 +  val firstBeat = fill.beat === 0
-+  val beatMaskRaw = Mux(firstBeat, fill.mask(fill.donePtr) | Mux(lineValid(doneIdx), B(0, lanes bits), B((1 << lanes) - 1, lanes bits)), fill.writeMask)
++  // Flop validity: a fill of an invalid index writes every lane, so a valid
++  // index means every lane's copy is current. Generations are per lane, so
++  // a fill writes only the lanes its mask allows.
++  val beatMaskRaw =
++    if (useEpoch) Mux(firstBeat, fill.mask(fill.donePtr), fill.writeMask)
++    else Mux(firstBeat, fill.mask(fill.donePtr) | Mux(lineValid(doneIdx), B(0, lanes bits), B((1 << lanes) - 1, lanes bits)), fill.writeMask)
 +  // Paired: a pair copy is written only if both of its lanes allow it (the
 +  // lanes of a pair never need different lines at one index).
 +  val beatMask = Bits(lanes bits)
@@ -10820,12 +10878,27 @@ index 465ea78..465ad10 100644
 +    when(firstBeat) { fill.writeMask := beatMask }
 +    fill.beat := fill.beat + 1
 +    when(io.texRead.rsp.last) {
-+      for (j <- 0 until lanes) when(beatMask(j)) {
-+        tagMem(j).write(doneIdx, doneTag)
-+        hintTagMem(j).write(doneIdx, doneTag)
-+      }
-+      when(!fill.poisoned(fill.donePtr) && !io.invalidate) { lineValid(doneIdx) := True }
++      if (!useEpoch) {
++        for (j <- 0 until lanes) when(beatMask(j)) {
++          tagMem(j).write(doneIdx, doneTag)
++          hintTagMem(j).write(doneIdx, doneTag)
++        }
++        when(!fill.poisoned(fill.donePtr) && !io.invalidate) { lineValid(doneIdx) := True }
++      } else when(!fill.poisoned(fill.donePtr) && !io.invalidate && !ep.sweeping) { ep.used := True }
 +      fill.beat := 0
++    }
++  }
++  if (useEpoch) {
++    // One write port per tag RAM, shared by fills and the sweep (a fill
++    // completing during a sweep leaves its tags alone: the line stays invalid).
++    val fresh = !fill.poisoned(fill.donePtr) && !io.invalidate
++    val fillTag = Mux(fresh, ep.cur, U(0, epochBits bits)) @@ doneTag
++    val wAddr = Mux(ep.sweeping, ep.sweepIdx, doneIdx)
++    val wData = Mux(ep.sweeping, U(0, tagW bits), fillTag)
++    for (j <- 0 until lanes) {
++      val we = ep.sweeping || (io.texRead.rsp.valid && io.texRead.rsp.last && beatMask(j))
++      tagMem(j).write(wAddr, wData, enable = we)
++      hintTagMem(j).write(wAddr, wData, enable = we)
 +    }
 +  }
 +
@@ -10843,7 +10916,7 @@ index 465ea78..465ad10 100644
 +    s1 := reqLookup
 +  }
 +  val rdEnable = advance || reread
-+  val tagRd = Vec(UInt(tagBits bits), lanes)
++  val tagRd = Vec(UInt(tagW bits), lanes)
 +  val dataRd = Vec(Bits(32 bits), lanes)
 +  val rdConflict = Bits(lanes bits)
 +  val laneHit = Bits(lanes bits)
@@ -10896,10 +10969,15 @@ index 465ea78..465ad10 100644
 +    // fill-allocate / hint chain, the worst clk_core path in B121). A line
 +    // that turns valid after the sample only reads as a miss, and one is
 +    // re-read after every completed fill; invalidate clears the sample.
-+    val validRd = Reg(Bool()) init (False)
-+    when(rdEnable) { validRd := lineValid(lineIdx(rdAddr)) }
-+    when(io.invalidate) { validRd := False }
-+    val tagHit = !rdConflict(i) && validRd && tagRd(i) === lineTag(s1.addr(i))
++    val validRd =
++      if (useEpoch) epochOf(tagRd(i)) === ep.cur
++      else {
++        val v = Reg(Bool()) init (False)
++        when(rdEnable) { v := lineValid(lineIdx(rdAddr)) }
++        when(io.invalidate) { v := False }
++        v
++      }
++    val tagHit = !rdConflict(i) && validRd && tagOf(tagRd(i)) === lineTag(s1.addr(i))
 +    laneHit(i) := !s1.active(i) || (if (paired) s1Have(i) || (tagHit && !bankLost(i)) else tagHit)
 +    tagHitOnly(i) := tagHit && bankLost(i)
 +    lanePending(i) := fill.pending(lineOf(s1.addr(i)))
@@ -10907,9 +10985,9 @@ index 465ea78..465ad10 100644
 +  val allHit = laneHit.andR
 +  // Paired: lanes served by this read keep their word; lanes that only lost
 +  // their bank to the partner are read again at once (no fill).
-+  val bankRetry = s1Valid && !waitFill && !reread && !allHit && (~laneHit & ~tagHitOnly & s1.active) === 0
++  val bankRetry = lookupOn && s1Valid && !waitFill && !reread && !allHit && (~laneHit & ~tagHitOnly & s1.active) === 0
 +  if (paired) {
-+    when(s1Valid && !waitFill && !reread) {
++    when(lookupOn && s1Valid && !waitFill && !reread) {
 +      for (i <- 0 until lanes) when(s1.active(i) && laneHit(i) && !s1Have(i)) {
 +        s1Have(i) := True
 +        s1Data(i) := dataRd(i)
@@ -10917,7 +10995,7 @@ index 465ea78..465ad10 100644
 +    }
 +    when(advance) { s1Have := 0 }
 +  }
-+  val evaluate = s1Valid && !waitFill && !reread
++  val evaluate = lookupOn && s1Valid && !waitFill && !reread
 +  val lookupHit = evaluate && allHit
 +
 +  val out = Stream(NoData)
@@ -10938,6 +11016,8 @@ index 465ea78..465ad10 100644
 +    waitFill := False
 +    reread := True
 +  }
++  // Tags read during a sweep may predate it: read them again.
++  if (useEpoch) when(ep.sweepDone && s1Valid && !waitFill) { reread := True }
 +  when(backAlloc) {
 +    fill.allocate := True
 +    fill.allocLine := missLine
@@ -10960,10 +11040,10 @@ index 465ea78..465ad10 100644
 +  val h = Reg(Hint())
 +  val hTodo = Reg(Bits(lanes bits))
 +  hFresh := False
-+  val hTagRd = Vec(UInt(tagBits bits), lanes)
++  val hTagRd = Vec(UInt(tagW bits), lanes)
 +  for (i <- 0 until lanes)
 +    hTagRd(i) := hintTagMem(i).readSync(lineIdx(hintQ.payload.addr(i)), enable = hintQ.fire)
-+  val hTagKeep = Vec(Reg(UInt(tagBits bits)), lanes)
++  val hTagKeep = Vec(Reg(UInt(tagW bits)), lanes)
 +  val hTag = Vec((0 until lanes).map(i => Mux(hFresh, hTagRd(i), hTagKeep(i))))
 +  when(hFresh) { hTagKeep := hTagRd }
 +  // lineValid sampled with the hint tags (timing, as in the lookup stage); a
@@ -10973,12 +11053,13 @@ index 465ea78..465ad10 100644
 +  // reads fewer). A line invalidated by a texture download but still tagged
 +  // is then fetched on demand instead of ahead.
 +  for (i <- 0 until lanes) when(hintQ.fire) {
-+    hValidRd(i) := (if (c.texHintValidCheck) lineValid(lineIdx(hintQ.payload.addr(i))) else True)
++    hValidRd(i) := (if (c.texHintValidCheck && !useEpoch) lineValid(lineIdx(hintQ.payload.addr(i))) else True)
 +  }
 +  when(io.invalidate) { hValidRd := 0 }
 +  val hNeed = Bits(lanes bits)
 +  for (i <- 0 until lanes) {
-+    val present = hValidRd(i) && hTag(i) === lineTag(h.addr(i))
++    val hEpochOk = if (useEpoch && c.texHintValidCheck) epochOf(hTag(i)) === ep.cur else True
++    val present = hValidRd(i) && hEpochOk && tagOf(hTag(i)) === lineTag(h.addr(i))
 +    hNeed(i) := hTodo(i) && !present && !fill.pending(lineOf(h.addr(i)))
 +  }
 +  val hLane = OHToUInt(OHMasking.first(hNeed))
@@ -11016,7 +11097,7 @@ index 465ea78..465ad10 100644
 +  val validClr = Mux(slotDone, UIntToOh(fill.donePtr, fillSlots), B(0, fillSlots bits))
 +  fill.valid := (fill.valid & ~validClr) | validSet
 +  fill.poisoned := (fill.poisoned & ~validSet) | Mux(io.invalidate, fill.valid, B(0, fillSlots bits))
-+  when(io.invalidate) { lineValid := 0 }
++  if (!useEpoch) when(io.invalidate) { lineValid := 0 }
 +
 +  // Register the assembled sample; the next sample's lookup overlaps its
 +  // hand-off, so a hitting sample costs one cycle.
@@ -11038,7 +11119,8 @@ index 465ea78..465ad10 100644
 +  }
 +  io.sampleFetch.valid := outValid
 +  io.sampleFetch.payload := assembled
-+  io.busy := reqStream.valid || s1Valid || outValid || fill.valid.orR || hValid || hintQ.valid
++  io.busy := reqStream.valid || s1Valid || outValid || fill.valid.orR || hValid || hintQ.valid ||
++    (if (useEpoch) ep.sweeping else False)
 +
 +  private def counter(inc: UInt): UInt = {
 +    val r = Reg(UInt(32 bits)) init (0)
@@ -12572,10 +12654,10 @@ index 0000000..79c430a
 +}
 diff --git a/test/TmuSmallTextureCacheTest.scala b/test/TmuSmallTextureCacheTest.scala
 new file mode 100644
-index 0000000..a41b150
+index 0000000..2328784
 --- /dev/null
 +++ b/test/TmuSmallTextureCacheTest.scala
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,163 @@
 +//> using target.scope test
 +
 +package voodoo
@@ -12593,9 +12675,15 @@ index 0000000..a41b150
 +  * memory and invalidate, and invalidates that land while a line is filling.
 +  */
 +class TmuSmallTextureCacheTest extends AnyFunSuite {
-+  private val config = Config.voodoo1().copy(useTexFillCache = false, texSmallCacheLines = 16)
++  private val base = Config.voodoo1().copy(useTexFillCache = false, texSmallCacheLines = 16)
 +
-+  test("small texture cache returns current memory for random point and bilinear samples") {
++  // Line validity in flops, as a 2-bit generation in the tag RAMs (wraps
++  // every third download: many sweeps), and generations with paired banks.
++  for ((name, config) <- Seq(
++      "flop valid" -> base,
++      "epoch 2" -> base.copy(texValidEpochBits = 2),
++      "epoch 3 paired" -> base.copy(texValidEpochBits = 3, texCachePairedBanks = true)))
++  test(s"small texture cache returns current memory for random point and bilinear samples ($name)") {
 +    SimConfig.withIVerilog.compile(TmuSmallTextureCache(config)).doSim(seed = 3) { dut =>
 +      dut.clockDomain.forkStimulus(10)
 +      val rnd = new scala.util.Random(5)
