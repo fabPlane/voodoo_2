@@ -8,6 +8,7 @@ Board-specific packages for SpinalVoodoo. The Voodoo core itself is the upstream
 |---|---|---|---|---|
 | AMD Artix-7 AC701 (XC7A200T) | `voodoo.artix` | AXI PCIe BAR0 → AXI4-Lite | two AXI4 masters into MIG | parallel RGB → ADV7511 |
 | Sipeed Tang Mega 138K Pro Dock | `voodoo.gowin` | Gowin PCIe TLP BAR0 → AXI4-Lite | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
+| Kintex-7 PCIe card (XC7K160T/325T FFG676), prototype | `voodoo.kintex` | pcie_7x AXIS → dock TLP BAR target (shim) | dock DDR adapter → MIG native UI | `hw/kintex/src/dvi_tx.v` TMDS |
 | Sipeed Tang Retro Console 138K | `voodoo.gowin` | USB-pad Glide SDK tests + Tomb info | AXI4 → Gowin DDR3 native UI | parallel RGB → DVI_TX_Top |
 
 Upstream SpinalVoodoo only has the DE10-Nano (`CoreDe10`). `CoreArtix` /
@@ -30,6 +31,7 @@ make rtl          # Artix + Gowin Verilog
 make rtl-artix    # rtl/artix/AmdAc701.v
 make rtl-gowin    # rtl/gowin/TangMega138kPro.v
 make rtl-console  # rtl/gowin/TangConsole138k.v
+make rtl-kintex   # rtl/kintex/Kintex7Voodoo.v (Kintex-7 prototype, hw/kintex/ip.md)
 make test         # SpinalSim, including the TLP BAR target
 make artix        # Vivado bitstream (after generating IP)
 make gowin        # Gowin EDA bitstream (after generating IP)

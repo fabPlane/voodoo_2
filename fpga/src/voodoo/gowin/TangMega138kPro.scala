@@ -17,7 +17,7 @@ import voodoo.Config
   * SST-1 graphics clock); framebuffer / texture AXI cross into the DDR3
   * domain through Axi4ClockCrossing FIFOs.
   */
-case class TangMega138kPro(c: Config) extends Component {
+case class TangMega138kPro(c: Config, gowinAdc: Boolean = true) extends Component {
   noIoPrefix()
 
   val io = new Bundle {
@@ -190,15 +190,18 @@ case class TangMega138kPro(c: Config) extends Component {
     when(bar.io.localRaddr === 0x9c) { bar.io.localRdata := ddrDbgRdata }
   }
 
-  val adcMon = new ClockingArea(coreCd) {
+  // gowinAdc = false (other vendors' ports reuse this fabric): no Gowin ADC
+  // primitives, the supply / temperature registers read 0.
+  class AdcArea extends ClockingArea(coreCd) {
     val adc = AdcMonitor()
     val now = RegNext(adc.io.temp.asBits ## adc.io.vcc.asBits)
     val extremes = RegNext(adc.io.tempMax.asBits ## adc.io.vccMin.asBits)
     val samples = RegNext(adc.io.samples.asBits)
   }
-  pcie.adcNowIn := adcMon.now
-  pcie.adcExtremesIn := adcMon.extremes
-  pcie.adcSamplesIn := adcMon.samples
+  val adcMon: AdcArea = if (gowinAdc) new AdcArea else null
+  pcie.adcNowIn := (if (gowinAdc) adcMon.now else B(0, 32 bits))
+  pcie.adcExtremesIn := (if (gowinAdc) adcMon.extremes else B(0, 32 bits))
+  pcie.adcSamplesIn := (if (gowinAdc) adcMon.samples else B(0, 32 bits))
 
   // HDMI scanout -> RGB565 words -> TLP clock (see FrameDma).
   val hdmiCd = ClockDomain(

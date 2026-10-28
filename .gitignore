@@ -48,3 +48,4 @@ fpga/hw/gowin-[a-z]*/
 !fpga/hw/gowin-open/
 fpga/hw/gowin/ddr3_test_t*/
 fpga/hw/gowin/.build.lock
+fpga/hw/kintex/build/
