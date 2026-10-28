@@ -17,6 +17,10 @@ set_property target_language Verilog [current_project]
 # pcie_7x: endpoint, Gen1 x4, 64-bit / 125 MHz user clock (no TLP
 # straddling in a beat), BAR0 32-bit memory 1 MiB, like the dock.
 create_ip -name pcie_7x -vendor xilinx.com -library ip -module_name pcie_7x_0
+# Clocking module inside the core (default en_ext_clk = true leaves it to
+# the example design and adds pipe_* clock ports).
+set_property CONFIG.mode_selection {Advanced} [get_ips pcie_7x_0]
+set_property CONFIG.en_ext_clk {false} [get_ips pcie_7x_0]
 set_property -dict [list \
     CONFIG.Maximum_Link_Width {X4} \
     CONFIG.Link_Speed {2.5_GT/s} \

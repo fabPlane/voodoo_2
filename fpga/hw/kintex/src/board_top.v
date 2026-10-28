@@ -10,9 +10,9 @@
 //   MMCM            core clock and HDMI pixel / serial clocks from the
 //                   200 MHz board oscillator.
 //
-// Port names follow the generated IP's instantiation templates (.veo) as
-// documented in PG054 / UG586; check them against the .veo after
-// generating the IP (see ../ip.md). Pin locations are in kintex.xdc and are
+// The pcie_7x_0 port list matches the instantiation template Vivado 2025.2.1
+// generates with build.tcl's settings (checked with pcie_ip_check.tcl). MIG
+// ports follow UG586; check them against mig_7series_0.veo once mig.prj exists. Pin locations are in kintex.xdc and are
 // board specific.
 
 module board_top #(
@@ -166,6 +166,9 @@ module board_top #(
         .cfg_aer_rooterr_non_fatal_err_received(), .cfg_aer_rooterr_fatal_err_received(),
         .cfg_aer_ecrc_check_en(), .cfg_aer_ecrc_gen_en(),
         .cfg_aer_interrupt_msgnum(5'b0),
+        .cfg_err_aer_headerlog(128'b0), .cfg_err_aer_headerlog_set(),
+        .pcie_drp_clk(1'b1), .pcie_drp_en(1'b0), .pcie_drp_we(1'b0), .pcie_drp_addr(9'b0),
+        .pcie_drp_di(16'b0), .pcie_drp_do(), .pcie_drp_rdy(),
         .cfg_vc_tcvc_map(), .cfg_msg_received(), .cfg_msg_data(),
         .cfg_msg_received_err_cor(), .cfg_msg_received_err_non_fatal(), .cfg_msg_received_err_fatal(),
         .cfg_msg_received_pm_as_nak(), .cfg_msg_received_pme_to_ack(),
