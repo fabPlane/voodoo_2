@@ -121,9 +121,10 @@ constexpr uint32_t kPciFifoFreeMask = 0x3fu;
 // memory-FIFO field (bits 12-27, hard-wired 0xffff otherwise): one status
 // read then covers up to ~1000 writes instead of 59.
 constexpr uint32_t kMemFifoShift = 12, kMemFifoMask = 0xffffu << kMemFifoShift;
+uint32_t g_budgetCap = 1024; // VOODOO_PCI_BUDGET_CAP
 inline uint32_t budgetFrom(uint32_t status) {
   uint32_t mem = (status & kMemFifoMask) >> kMemFifoShift;
-  uint32_t freeEntries = (mem != 0xffffu) ? (mem > 1024 ? 1024 : mem) : (status & kPciFifoFreeMask);
+  uint32_t freeEntries = (mem != 0xffffu) ? (mem > g_budgetCap ? g_budgetCap : mem) : (status & kPciFifoFreeMask);
   return freeEntries > 4 ? freeEntries - 4 : 0;
 }
 // What Glide sees: the memory-FIFO field as it expects it (no memory FIFO).
@@ -323,6 +324,7 @@ extern "C" int sim_init(void) {
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
   g_sort = getenv("VOODOO_PCI_SORT") != nullptr;
+  if (const char *cap = getenv("VOODOO_PCI_BUDGET_CAP")) g_budgetCap = (uint32_t)atoi(cap);
   g_busySample = g_profile && getenv("VOODOO_BUSY_SAMPLE") != nullptr;
   g_perf = g_profile && getenv("VOODOO_PERF") != nullptr;
   if (const char *g = getenv("VOODOO_PCI_WRITE_GAP_NS")) g_writeGapNs = strtoull(g, nullptr, 0);
