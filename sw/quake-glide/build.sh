@@ -214,6 +214,9 @@ render() {
 # Everything lands in work/native/; run it with run-pcie.sh.
 build_pcie() {
   local N="$WORK/native" PH="$REPO/sw/glide-homebrew/pcie/sim_pcie_harness.cpp"
+  # Host-only binaries: SSE floating point instead of 32-bit x87 (Mesa's
+  # software transform is on the Quake II critical path). HOSTOPT="" turns it off.
+  local HOSTOPT="${HOSTOPT--march=native -mfpmath=sse}"
   local CXX32="${CXX32:-g++ -m32}" CC32="${CC32:-gcc -m32}"
   mkdir -p "$N"
   fetch_sources
@@ -225,6 +228,7 @@ build_pcie() {
   find "$GS" \( -name '*.o' -o -name '*.a' -o -name '*.so*' \) -delete
   (cd "$N/glide-src" && git init -q . && \
    git apply --include='emu/glide/*' "$HERE/patches/spinalvoodoo-glquake.patch" && rm -rf .git)
+  sed -i "s/^CFLAGS += -O1 -ffast-math/CFLAGS += -O2 -ffast-math $HOSTOPT/" "$GS/glide2x/sst1/glide/src/Makefile.sim"
   $CXX32 -O2 -Wall -I"$EXT/emu/sim/harness" -c "$PH" -o "$N/sim_pcie_harness.o"
   make -C "$GS/glide2x/sst1/glide/src" -f Makefile.sim -j"$(nproc)" \
     TRACE_CAPTURE=1 SIM_DIR="$EXT/emu/sim" CC="$CC32" CXX="$CXX32" \
@@ -266,6 +270,13 @@ build_pcie() {
   if ! grep -q RENDER_POLY_PLANAR "$N/Mesa-3.4.2/src/render_tmp.h"; then
     patch -d "$N/Mesa-3.4.2" -p1 <"$HERE/patches/mesa-planar-polygon.patch" >/dev/null
   fi
+  # HOSTOPT in Mesa's flags (objects rebuilt when they change: make does not
+  # track flags).
+  local mflags="-O3 -m32 $HOSTOPT"
+  if ! grep -qF -- "CFLAGS = $mflags -std" "$N/Mesa-3.4.2/Make-config"; then
+    sed -i "/^linux-glide:/,/^\$/ s/\"CFLAGS = -O3 -m32[^\"]*-std=gnu89/\"CFLAGS = $mflags -std=gnu89/" "$N/Mesa-3.4.2/Make-config"
+    find "$N/Mesa-3.4.2/src" "$N/Mesa-3.4.2/src-glu" -name '*.o' -delete 2>/dev/null || true
+  fi
   # libGL + libGLU (the widgets-sgi Motif target failing afterwards is fine).
   make -C "$N/Mesa-3.4.2" -j"$(nproc)" linux-glide >"$N/mesa.log" 2>&1 || true
   [ -f "$N/Mesa-3.4.2/lib/libGL.so" ] || { tail -20 "$N/mesa.log"; return 1; }
@@ -278,7 +289,7 @@ build_pcie() {
   for o in $(awk "/^GLQUAKE_OBJS=/,/^\$/" "$QSRC/Makefile.linuxi386" | grep -oE "[a-zA-Z0-9_]+\.o" | sed "s/\.o\$/.c/" | sort -u); do
     [ -f "$QSRC/$o" ] && SRCS="$SRCS $o"
   done
-  (cd "$QSRC" && $CC32 -std=gnu89 -fcommon -fno-strict-aliasing -w -O2 -DGLQUAKE \
+  (cd "$QSRC" && $CC32 -std=gnu89 -fcommon -fno-strict-aliasing -w -O2 $HOSTOPT -DGLQUAKE \
      -I"$HERE/stubs" -I. -I"$N/Mesa-3.4.2/include" -I"$G/include" \
      $SRCS gl_vidlinux.c _fpcw_stub.c -o "$N/glquake-pcie" \
      -L"$N/Mesa-3.4.2/lib" -lGL -lGLU -L"$G/lib" -lglide2x -lX11 -lXext -lm -ldl -lpthread)

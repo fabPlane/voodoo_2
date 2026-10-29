@@ -48,7 +48,8 @@ if [ ! -f "$D/baseq2/pak0.pak" ]; then
   mkdir -p "$D/baseq2"; mv "$D/dl/Install/Data/baseq2/pak0.pak" "$D/baseq2/"
 fi
 
-CFLAGS="-std=gnu89 -fcommon -fno-strict-aliasing -w -O2 -ffast-math -DC_ONLY -Dstricmp=strcasecmp"
+HOSTOPT="${HOSTOPT--march=native -mfpmath=sse}"
+CFLAGS="-std=gnu89 -fcommon -fno-strict-aliasing -w -O2 -ffast-math $HOSTOPT -DC_ONLY -Dstricmp=strcasecmp"
 B="$WORK/bin"; mkdir -p "$B"
 cd "$S"
 
