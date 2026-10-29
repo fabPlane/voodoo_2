@@ -2822,10 +2822,31 @@ index 8f83262..87ed1bd 100644
  
      }
 diff --git a/src/voodoo/core/CoreCpuFrontdoor.scala b/src/voodoo/core/CoreCpuFrontdoor.scala
-index f8d33d6..a6111b8 100644
+index f8d33d6..d68ce78 100644
 --- a/src/voodoo/core/CoreCpuFrontdoor.scala
 +++ b/src/voodoo/core/CoreCpuFrontdoor.scala
-@@ -33,7 +33,9 @@ case class CoreCpuFrontdoor(c: Config) extends Component {
+@@ -26,18 +26,33 @@ case class CoreCpuFrontdoor(c: Config) extends Component {
+   private val isTexWrite = isTex && cpuCmd.opcode(0)
+   private val isTexRead = isTex && !cpuCmd.opcode(0)
+ 
++  // In-flight commands (see the response side below).
++  private val inFlight = Reg(UInt(5 bits)) init (0)
++  // 0 register write, 4 register read, 1 LFB, 2 texture write, 3 texture read.
++  // Only writes to registers / texture memory stream: the PCI FIFO answers
++  // a register write a fixed cycle after taking it, a read when the register
++  // bank has answered.
++  private val inFlightTarget = Reg(UInt(3 bits)) init (0)
++  private val cmdTarget = UInt(3 bits)
++  cmdTarget := Mux(isReg, Mux(cpuCmd.opcode(0), U(0, 3 bits), U(4, 3 bits)),
++    Mux(isLfb, U(1, 3 bits), Mux(isTexWrite, U(2, 3 bits), U(3, 3 bits))))
++  private val streams = cmdTarget === 0 || cmdTarget === 2
++  private val mayIssue = inFlight === 0 || (streams && inFlightTarget === cmdTarget && !inFlight.msb)
++
+   private def routeCmd(bus: Bmb, select: Bool, address: UInt): Unit =
+-    BmbRouting.driveCmdFrom(bus, io.cpuBus, cpuCmd.valid && select, address)
++    BmbRouting.driveCmdFrom(bus, io.cpuBus, cpuCmd.valid && select && mayIssue, address)
+ 
+   private def routeRsp(selected: Bool, bus: Bmb): Unit =
      BmbRouting.routeRspTo(selected, bus, io.cpuBus)
  
    private val regAddress =
@@ -2836,6 +2857,71 @@ index f8d33d6..a6111b8 100644
    routeCmd(io.regBus, isReg, regAddress)
    routeCmd(io.lfbBus, isLfb, cpuCmd.address.resize(22 bits))
  
+-  io.texWrite.valid := cpuCmd.valid && isTexWrite
++  io.texWrite.valid := cpuCmd.valid && isTexWrite && mayIssue
+   io.texWrite.pciAddr := cpuCmd.address(22 downto 0)
+   io.texWrite.data := cpuCmd.data
+   io.texWrite.mask := cpuCmd.mask
+@@ -47,25 +62,27 @@ case class CoreCpuFrontdoor(c: Config) extends Component {
+   private val texReadSramAddr = ((texReadBaseAddr << 3) +^ texReadPciOffset).resize(26 bits)
+   routeCmd(io.texReadBus, isTexRead, texReadSramAddr)
+ 
+-  private val texWriteRspPending = RegInit(False)
+-  private val texWriteRspSource = Reg(cpuCmd.source)
++  // Several commands may be in flight (posted host writes, Gowin): their
++  // responses must come back in order and none may be dropped. The register
++  // bank answers a fixed two cycles after each command and ignores rsp.ready,
++  // and texture writes are answered here a cycle after they are taken, so a
++  // command for another target than those in flight waits until they are
++  // all answered; LFB and texture reads go one at a time. Texture write
++  // responses are counted (a flag lost one when writes came back to back).
+   private val texWriteAccepted = cpuCmd.fire && isTexWrite
+-
+-  when(texWriteAccepted) {
+-    texWriteRspPending := True
+-    texWriteRspSource := cpuCmd.source
+-  }
+-  when(texWriteRspPending) {
+-    texWriteRspPending := False
+-  }
++  private val texWriteRspCount = Reg(UInt(4 bits)) init (0)
++  private val texWriteRspSource = Reg(cpuCmd.source)
++  when(texWriteAccepted) { texWriteRspSource := cpuCmd.source }
++  private val texWriteRsp = texWriteRspCount =/= 0
+ 
+   io.invalidate := texWriteAccepted
+ 
+-  cpuCmd.ready :=
++
++  cpuCmd.ready := mayIssue && (
+     (isReg && io.regBus.cmd.ready) ||
+       (isLfb && io.lfbBus.cmd.ready) ||
+       (isTexWrite && io.texWrite.ready) ||
+-      (isTexRead && io.texReadBus.cmd.ready)
++      (isTexRead && io.texReadBus.cmd.ready))
+ 
+   cpuRsp.valid := False
+   cpuRsp.data := 0
+@@ -77,7 +94,7 @@ case class CoreCpuFrontdoor(c: Config) extends Component {
+   io.lfbBus.rsp.ready := False
+   io.texReadBus.rsp.ready := False
+ 
+-  when(texWriteRspPending) {
++  when(texWriteRsp) {
+     cpuRsp.valid := True
+     cpuRsp.source := texWriteRspSource.resize(cpuRsp.p.access.sourceWidth bits)
+   } elsewhen (io.regBus.rsp.valid) {
+@@ -89,4 +106,10 @@ case class CoreCpuFrontdoor(c: Config) extends Component {
+   } otherwise {
+     // No downstream response is currently pending.
+   }
++
++  // A texture write is answered the cycle after it is taken (or later, while
++  // the response side is busy).
++  texWriteRspCount := texWriteRspCount + U(texWriteAccepted) - U(texWriteRsp && cpuRsp.ready)
++  when(cpuCmd.fire) { inFlightTarget := cmdTarget }
++  inFlight := inFlight + U(cpuCmd.fire) - U(cpuRsp.fire)
+ }
 diff --git a/src/voodoo/core/CoreTypes.scala b/src/voodoo/core/CoreTypes.scala
 index 2f55df7..58c106f 100644
 --- a/src/voodoo/core/CoreTypes.scala
@@ -11377,6 +11463,108 @@ index 465ea78..cb38ad7 100644
 +  io.perf(1) := counter((if (sys.env.contains("SV_TMU_DBG")) bankRetry else backMiss).asUInt)
 +  io.perf(2) := counter((s1Valid && (waitFill || reread || backMiss)).asUInt)
 +  io.perf(3) := counter(io.sampleFetch.fire.asUInt)
++}
+diff --git a/test/CoreCpuFrontdoorTest.scala b/test/CoreCpuFrontdoorTest.scala
+new file mode 100644
+index 0000000..1128feb
+--- /dev/null
++++ b/test/CoreCpuFrontdoorTest.scala
+@@ -0,0 +1,96 @@
++//> using target.scope test
++
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import voodoo.core.CoreCpuFrontdoor
++
++import scala.collection.mutable
++
++/** CoreCpuFrontdoor with several host commands in flight (a posted-write
++  * bridge in front): every command gets exactly one response, in order, with
++  * register writes and reads, texture writes and LFB writes back to back. The
++  * register slave answers a fixed two cycles after each command and ignores
++  * rsp.ready, like BmbBusInterface. */
++class CoreCpuFrontdoorTest extends AnyFunSuite {
++  test("frontdoor answers every command once, in order, with commands back to back") {
++    SimConfig.withIVerilog.compile(CoreCpuFrontdoor(Config.voodoo1())).doSim(seed = 5) { dut =>
++      dut.clockDomain.forkStimulus(10)
++      val rnd = new scala.util.Random(3)
++      val c = dut.io.cpuBus.cmd
++      c.valid #= false
++      dut.io.cpuBus.rsp.ready #= true
++      dut.io.texBaseAddr #= 0
++      dut.io.regBus.cmd.ready #= true
++      dut.io.regBus.rsp.valid #= false
++      dut.io.lfbBus.cmd.ready #= false
++      dut.io.lfbBus.rsp.valid #= false
++      dut.io.texReadBus.cmd.ready #= false
++      dut.io.texReadBus.rsp.valid #= false
++      dut.io.texWrite.ready #= true
++
++      // register slave: response 2 cycles after each accepted command, no backpressure
++      val regDue = mutable.Queue[(Long, Long)]() // (cycle, data)
++      // LFB slave: in order, random latency, honours rsp.ready
++      val lfbQ = mutable.Queue[Long]()
++      var cycle = 0L
++      fork {
++        while (true) {
++          dut.io.lfbBus.cmd.ready #= rnd.nextInt(3) != 0
++          dut.io.texWrite.ready #= rnd.nextInt(4) != 0
++          val regNow = regDue.nonEmpty && regDue.head._1 == cycle
++          dut.io.regBus.rsp.valid #= regNow
++          if (regNow) dut.io.regBus.rsp.data #= regDue.head._2
++          val lfbNow = lfbQ.nonEmpty && lfbQ.head <= cycle
++          dut.io.lfbBus.rsp.valid #= lfbNow
++          dut.clockDomain.waitSampling()
++          if (regNow) regDue.dequeue()
++          if (lfbNow && dut.io.lfbBus.rsp.ready.toBoolean) lfbQ.dequeue()
++          cycle += 1
++          if (dut.io.regBus.cmd.valid.toBoolean && dut.io.regBus.cmd.ready.toBoolean)
++            regDue.enqueue((cycle + 1, dut.io.regBus.cmd.address.toLong))
++          if (dut.io.lfbBus.cmd.valid.toBoolean && dut.io.lfbBus.cmd.ready.toBoolean)
++            lfbQ.enqueue(cycle + 1 + rnd.nextInt(6))
++        }
++      }
++
++      var issued = 0
++      var answered = 0
++      fork {
++        while (true) {
++          dut.clockDomain.waitSampling()
++          if (dut.io.cpuBus.rsp.valid.toBoolean && dut.io.cpuBus.rsp.ready.toBoolean) {
++            answered += 1
++            assert(answered <= issued, s"response $answered for $issued commands")
++          }
++        }
++      }
++
++      for (k <- 0 until 2000) {
++        val kind = rnd.nextInt(10)
++        val (addr, write) =
++          if (kind < 5) ((rnd.nextInt(0x100) * 4).toLong, true)                 // register write
++          else if (kind < 6) ((rnd.nextInt(0x100) * 4).toLong, false)           // register read
++          else if (kind < 9) (0x800000L + rnd.nextInt(0x1000) * 4, true)        // texture write
++          else (0x400000L + rnd.nextInt(0x1000) * 4, true)                      // LFB write
++        c.address #= addr
++        c.opcode #= (if (write) 1 else 0)
++        c.data #= k
++        c.mask #= 0xf
++        c.length #= 3
++        c.last #= true
++        c.source #= 0
++        c.valid #= true
++        var w = 0
++        while ({ dut.clockDomain.waitSampling(); !c.ready.toBoolean }) { w += 1; assert(w < 500, s"command $k never accepted ($issued issued, $answered answered)") }
++        issued += 1
++        c.valid #= false
++      }
++      dut.clockDomain.waitSampling(200) // no hang if a response is lost
++      assert(answered == issued, s"$answered responses for $issued commands")
++      println(s"[frontdoor] $issued commands, $answered responses, $cycle cycles")
++    }
++  }
 +}
 diff --git a/test/DitherArithTest.scala b/test/DitherArithTest.scala
 new file mode 100644

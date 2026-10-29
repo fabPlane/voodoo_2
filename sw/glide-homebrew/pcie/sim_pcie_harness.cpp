@@ -392,6 +392,7 @@ void waitForRoom() {
     while (g_budget == 0) {
       g_budgetPolls++;
       g_budget = budgetFrom(timedRead(0));
+      if (g_budget == 0 && (g_budgetPolls & 0xfff) == 0 && !checkBridge("flow control")) { g_flow = false; g_budget = 1; break; }
       if (g_busySample && g_budget == 0) {
         uint32_t b = timedRead(0x240);
         if (b != 0xffffffffu) {
@@ -406,6 +407,8 @@ void waitForRoom() {
     g_budgetPolls++;
     // Leave a little slack for anything in flight between BAR and core.
     g_budget = budgetFrom(timedRead(0));
+    // A wedged bridge reads status 0: stop instead of spinning forever.
+    if (g_budget == 0 && (g_budgetPolls & 0xfff) == 0 && !checkBridge("flow control")) { g_flow = false; g_budget = 1; break; }
   }
   g_budget--;
 }
