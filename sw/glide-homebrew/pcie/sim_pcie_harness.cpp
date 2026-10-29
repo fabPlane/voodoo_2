@@ -180,6 +180,38 @@ void sortWrite(uint32_t addr, uint32_t data) {
   g_sbuf[g_sn++] = SOp{addr, data};
 }
 
+// Redundant parameter writes (default on; VOODOO_PCI_NOFILTER=1 off): a
+// write to 0x008-0x0fc (vertex / start / gradient registers, fixed and float
+// forms) is skipped when every chip it addresses already holds that value
+// from an earlier write (Quake II: ~20 of ~32 writes per triangle repeat).
+// Values are kept per chip (FBI, TMU0, TMU1; chip field 0 = all); writing one
+// form of a register (fixed 0x008-0x07c / float +0x80) forgets the other.
+// Nothing else changes these registers, and the card starts unknown.
+bool g_filter = false;
+uint64_t g_filtered = 0;
+uint32_t g_shadow[3][64];
+bool g_shadowOk[3][64];
+// Glide's nopCMD on texture enable transitions (a Voodoo 1 workaround) drains
+// the whole pipeline here, where fbzColorPath travels with each triangle:
+// dropped by default (data 0 only; VOODOO_PCI_KEEPNOP=1 keeps them).
+bool g_dropNop = false;
+uint64_t g_nopsDropped = 0;
+bool filterWrite(uint32_t addr, uint32_t data) {
+  if (addr >= 0x4000u) return false; // register space only (chip bits 13:10)
+  uint32_t reg = addr & 0x3fcu;
+  if (g_dropNop && reg == 0x120 && data == 0) { g_nopsDropped++; return true; }
+  if (!g_filter || reg < 0x008 || reg >= 0x100 || reg == 0x080) return false;
+  uint32_t chip = (addr >> 10) & 0xf, targets = chip ? (chip & 7) : 7;
+  uint32_t r = reg >> 2, twin = r ^ (0x80 >> 2); // fixed <-> float form
+  bool same = targets != 0;
+  for (int t = 0; t < 3; t++)
+    if ((targets >> t) & 1) same = same && g_shadowOk[t][r] && g_shadow[t][r] == data;
+  if (same) { g_filtered++; return true; }
+  for (int t = 0; t < 3; t++)
+    if ((targets >> t) & 1) { g_shadow[t][r] = data; g_shadowOk[t][r] = true; g_shadowOk[t][twin] = false; }
+  return false;
+}
+
 uint32_t timedRead(uint32_t addr) {
   sortFlush();
   uint64_t t0 = nowNs();
@@ -326,6 +358,8 @@ extern "C" int sim_init(void) {
   // On by default since the posted BAR bridge (b205: Q2 48 -> 52, GLQuake
   // 54.2 -> 55.1); VOODOO_PCI_NOSORT=1 turns it off.
   g_sort = getenv("VOODOO_PCI_NOSORT") == nullptr;
+  g_filter = getenv("VOODOO_PCI_NOFILTER") == nullptr;
+  g_dropNop = getenv("VOODOO_PCI_KEEPNOP") == nullptr;
   if (const char *cap = getenv("VOODOO_PCI_BUDGET_CAP")) g_budgetCap = (uint32_t)atoi(cap);
   g_busySample = g_profile && getenv("VOODOO_BUSY_SAMPLE") != nullptr;
   g_perf = g_profile && getenv("VOODOO_PERF") != nullptr;
@@ -371,6 +405,8 @@ extern "C" void sim_shutdown(void) {
   if (!g_open) return;
   if (g_threaded) stopWriter(2000);
   sortFlush();  // the writer flushed its own before going idle
+  fprintf(stderr, "[pcie] filtered %llu redundant writes, dropped %llu nopCMD, %llu writes sent\n",
+          (unsigned long long)g_filtered, (unsigned long long)g_nopsDropped, (unsigned long long)g_writes);
   if (getenv("VOODOO_PCI_STATS"))
     fprintf(stderr, "[pcie] %llu writes, %llu reads, %llu idle polls; bridge %s\n",
             (unsigned long long)g_writes, (unsigned long long)g_reads,
@@ -491,12 +527,12 @@ static void doWrite32(uint32_t addr, uint32_t data) {
   if (g_profile) {
     countWrite(addr);
     uint64_t t0 = nowNs();
-    if (!g_dry) sortWrite(addr & 0xfffffcu, data);
+    if (!g_dry && !filterWrite(addr & 0xfffffcu, data)) sortWrite(addr & 0xfffffcu, data);
     g_frame.writeNs += nowNs() - t0;
     if (addr < 0x400000 && (addr & 0x3fc) == 0x128) reportFrame();
     return;
   }
-  if (!g_dry) sortWrite(addr & 0xfffffcu, data);
+  if (!g_dry && !filterWrite(addr & 0xfffffcu, data)) sortWrite(addr & 0xfffffcu, data);
 }
 
 static void doWrite16(uint32_t addr, uint16_t data) {
