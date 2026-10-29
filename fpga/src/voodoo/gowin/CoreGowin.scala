@@ -95,11 +95,22 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
   // FIFO for seconds. Keep a watchdog for real lockups, but do not treat
   // normal framebuffer draining as a wedged host bus. Proven on the Console
   // DDR bring-up (console-ddr-297-calib).
-  val barBridge = AxiLite4ToBmbBridge(
-    CoreGowin.barAddressWidth,
-    Core.cpuBmbParams,
-    timeoutLog2 = 30
-  )
+  // Posted writes (GOWIN_POSTED_BAR writes in flight, default 8; 1 = the
+  // one-outstanding bridge): one at a time capped the host at ~7.5 M
+  // register writes/s.
+  private val postedBar = sys.env.get("GOWIN_POSTED_BAR").map(_.toInt).getOrElse(8)
+  private val barAxi = AxiLite4(AxiLite4ToBmbBridge.axiConfig(CoreGowin.barAddressWidth))
+  private val barCpuBus = Bmb(Core.cpuBmbParams)
+  private val barWedged = Bool()
+  if (postedBar > 1) {
+    val b = AxiLite4ToBmbPostedBridge(CoreGowin.barAddressWidth, Core.cpuBmbParams, timeoutLog2 = 30,
+      maxWrites = postedBar).setName("barBridge")
+    b.io.axi <> barAxi; barCpuBus <> b.io.cpuBus; barWedged := b.io.wedged
+  } else {
+    val b = AxiLite4ToBmbBridge(CoreGowin.barAddressWidth, Core.cpuBmbParams, timeoutLog2 = 30)
+      .setName("barBridge")
+    b.io.axi <> barAxi; barCpuBus <> b.io.cpuBus; barWedged := b.io.wedged
+  }
 
   // Two levels: the colour-read port (colour fills and LFB reads; the HDMI
   // scanout too unless Config.separateScanoutMem) goes before the three
@@ -144,11 +155,11 @@ case class CoreGowin(c: Config, axiBurstLog2: Int = CoreGowin.axiBurstLog2) exte
     GowinAddressMap.texMemBase
   )
 
-  io.bar <> barBridge.io.axi
+  io.bar <> barAxi
   // Host register writes went bridge -> PCI FIFO ingress -> register bank in
   // one ~30 ns chain; register the CPU bus in between.
-  core.io.cpuBus <> barBridge.io.cpuBus.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
-  io.hostWedged := barBridge.io.wedged
+  core.io.cpuBus <> barCpuBus.pipelined(cmdValid = true, cmdReady = true, rspValid = true)
+  io.hostWedged := barWedged
 
   // Register every BMB hop (cmd valid + ready, rsp valid). Without these the
   // core's internal arbiters, this 5-way arbiter and the AXI aligner formed

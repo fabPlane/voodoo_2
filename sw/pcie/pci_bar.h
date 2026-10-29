@@ -18,6 +18,9 @@ constexpr uint32_t kDefaultDevice = 0x0007;
 constexpr uint32_t kSipeedVendor = 0x22c2;
 constexpr uint32_t kSipeedDevice = 0x1100;
 constexpr uint32_t kBarBytes = 1u << 20;
+// With a write-combined map, the uncached map covers only this much (the
+// register page with its chip-select aliases: status, perf, bridge regs).
+constexpr uint32_t kUcBytes = 0x4000;
 constexpr uint32_t kWindowReg = 0x250;
 constexpr uint32_t kStatusReg = 0x254;
 constexpr uint32_t kWindowMask = kBarBytes - 1u;
@@ -136,13 +139,43 @@ public:
   // merge into one TLP. Order is kept by an sfence before any store that is
   // not above the previous one in the same line, around command registers
   // (triangle / fastfill / swap / nop) and before every uncached access.
+  //
+  // Linux PAT keeps one memory type per physical range: a write-combined map
+  // overlapping the uncached resource0 map silently came out uncached too
+  // (2026-10-30: one TLP per dword, ~160 ns per write). So the uncached map
+  // shrinks to the first kUcBytes (status, perf and bridge registers, the
+  // window register) and only [kUcBytes, 1 MiB) is mapped write-combined;
+  // accesses there go through it (reads after an sfence). Register writes
+  // use the alias kUcBytes up (the register decode ignores address bits
+  // 14-20). Needs voodoo_dma.ko with offset support.
   bool openWc() {
     wcFd_ = ::open("/dev/voodoo_bar0", O_RDWR);
     if (wcFd_ < 0) { perror("/dev/voodoo_bar0"); return false; }
-    void *raw = mmap(nullptr, kBarBytes, PROT_READ | PROT_WRITE, MAP_SHARED, wcFd_, 0);
-    if (raw == MAP_FAILED) { perror("mmap voodoo_bar0"); ::close(wcFd_); wcFd_ = -1; return false; }
-    wc_ = static_cast<volatile uint8_t *>(raw);
+    // Drop the full uncached map first: while its PAT reservation exists a
+    // write-combined map of any part of the BAR is downgraded to uncached.
+    munmap(const_cast<uint8_t *>(reinterpret_cast<volatile uint8_t *>(base_)), kBarBytes);
+    base_ = nullptr;
+    void *raw = mmap(nullptr, kBarBytes - kUcBytes, PROT_READ | PROT_WRITE, MAP_SHARED, wcFd_, kUcBytes);
+    if (raw == MAP_FAILED) {
+      perror("mmap voodoo_bar0 (needs offset support)");
+      ::close(wcFd_); wcFd_ = -1;
+      void *full = mmap(nullptr, kBarBytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+      if (full != MAP_FAILED) base_ = static_cast<volatile uint8_t *>(full);
+      return false;
+    }
+    void *uc = mmap(nullptr, kUcBytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+    if (uc == MAP_FAILED) { perror("mmap resource0 (uncached part)"); base_ = nullptr; return false; }
+    base_ = static_cast<volatile uint8_t *>(uc);
+    ucBytes_ = kUcBytes;
+    wcMap_ = static_cast<volatile uint8_t *>(raw);
+    wc_ = wcMap_ - kUcBytes; // indexed by BAR offset; valid from kUcBytes up
     return true;
+  }
+  // Where an uncached-style access at `offset` goes once the BAR is split.
+  volatile uint8_t *at(uint32_t offset) const { return offset < ucBytes_ ? base_ + offset : wc_ + offset; }
+  void afterStore(uint32_t offset) const {
+    if (offset >= ucBytes_) __asm__ __volatile__("sfence" ::: "memory");
+    else __sync_synchronize();
   }
 
   void fenceWc() const {
@@ -151,15 +184,17 @@ public:
 
   void close() {
     fenceWc();
-    if (wc_) {
-      munmap(const_cast<uint8_t *>(reinterpret_cast<volatile uint8_t *>(wc_)), kBarBytes);
+    if (wcMap_) {
+      munmap(const_cast<uint8_t *>(reinterpret_cast<volatile uint8_t *>(wcMap_)), kBarBytes - kUcBytes);
+      wcMap_ = nullptr;
       wc_ = nullptr;
     }
     if (wcFd_ >= 0) { ::close(wcFd_); wcFd_ = -1; }
     if (base_) {
-      munmap(const_cast<uint8_t *>(reinterpret_cast<volatile uint8_t *>(base_)), kBarBytes);
+      munmap(const_cast<uint8_t *>(reinterpret_cast<volatile uint8_t *>(base_)), ucBytes_);
       base_ = nullptr;
     }
+    ucBytes_ = kBarBytes;
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
@@ -171,24 +206,26 @@ public:
 
   uint32_t readLocal32(uint32_t offset) const {
     fenceWc();
-    return *reinterpret_cast<volatile uint32_t *>(base_ + offset);
+    if (offset >= ucBytes_) __asm__ __volatile__("sfence" ::: "memory");
+    return *reinterpret_cast<volatile uint32_t *>(at(offset));
   }
 
   void writeLocal32(uint32_t offset, uint32_t value) {
     fenceWc();
-    *reinterpret_cast<volatile uint32_t *>(base_ + offset) = value;
-    __sync_synchronize();
+    *reinterpret_cast<volatile uint32_t *>(at(offset)) = value;
+    afterStore(offset);
   }
 
   uint16_t readLocal16(uint32_t offset) const {
     fenceWc();
-    return *reinterpret_cast<volatile uint16_t *>(base_ + offset);
+    if (offset >= ucBytes_) __asm__ __volatile__("sfence" ::: "memory");
+    return *reinterpret_cast<volatile uint16_t *>(at(offset));
   }
 
   void writeLocal16(uint32_t offset, uint16_t value) {
     fenceWc();
-    *reinterpret_cast<volatile uint16_t *>(base_ + offset) = value;
-    __sync_synchronize();
+    *reinterpret_cast<volatile uint16_t *>(at(offset)) = value;
+    afterStore(offset);
   }
 
   void selectWindow(uint32_t index) {
@@ -237,6 +274,11 @@ public:
       return;
     }
     uint32_t off = windowOffset(voodooAddr);
+    if (off < ucBytes_) {
+      // Register space: write the alias in the write-combined part.
+      if (voodooAddr < 0x400000u) off |= kUcBytes;
+      else { writeLocal32(off, value); return; }
+    }
     uint32_t reg = voodooAddr & 0x3fcu;
     bool cmd = voodooAddr < 0x400000u &&
                (reg == 0x080 || reg == 0x100 || reg == 0x120 || reg == 0x124 || reg == 0x128);
@@ -283,6 +325,8 @@ private:
   volatile uint8_t *base_ = nullptr;
   int wcFd_ = -1;
   volatile uint8_t *wc_ = nullptr;
+  volatile uint8_t *wcMap_ = nullptr; // the write-combined mapping itself
+  uint32_t ucBytes_ = kBarBytes;        // uncached part of BAR0
   mutable bool wcDirty_ = false;
   mutable uint32_t wcLast_ = 0xffffffffu;
   uint32_t window_ = 0xffffffffu;

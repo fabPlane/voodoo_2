@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..49d1451 100644
+index 1b34fa2..63a2f05 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..49d1451 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,110 @@ case class Config(
+@@ -31,6 +34,113 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1114,6 +1114,9 @@ index 1b34fa2..49d1451 100644
 +    // Second-level texture cache (TexL2Cache) in front of texture memory:
 +    // 64-byte lines shared by both TMUs (0 = none).
 +    texL2Lines: Int = 0,
++    // Status bits 12-27 (memory FIFO free) report the PCI FIFO's real free
++    // count; the 6-bit field saturates at 63 of a 2048-entry FIFO.
++    statusRealFifoFree: Boolean = false,
 +    // Rasterizer span queue (spans between the walker, which issues the
 +    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
 +    spanQueueDepth: Int = 4,
@@ -4613,7 +4616,7 @@ index aeba713..0c8673a 100644
  
    // State transitions on active output fire
 diff --git a/src/voodoo/frontend/RegisterBank.scala b/src/voodoo/frontend/RegisterBank.scala
-index c5a4cd8..cb8476e 100644
+index c5a4cd8..8fd0f09 100644
 --- a/src/voodoo/frontend/RegisterBank.scala
 +++ b/src/voodoo/frontend/RegisterBank.scala
 @@ -51,7 +51,7 @@ case class RegisterBank(config: Config) extends Component {
@@ -4794,7 +4797,19 @@ index c5a4cd8..cb8476e 100644
  
      val vRetrace = reg.fieldAt(6, Bool(), AccessType.RO, 0, "Vertical retrace")
      vRetrace := io.statusInputs.vRetrace
-@@ -476,45 +489,26 @@ case class RegisterBank(config: Config) extends Component {
+@@ -222,7 +235,10 @@ case class RegisterBank(config: Config) extends Component {
+     displayedBuffer := io.swapDisplayedBuffer
+ 
+     val memFifoFree = reg.fieldAt(12, UInt(16 bits), AccessType.RO, 0xffff, "Memory FIFO freespace")
+-    memFifoFree := io.statusInputs.memFifoFree
++    // statusRealFifoFree: the PCI FIFO's real free count instead (the host
++    // shim takes its flow-control budget from it and shows Glide 0xffff).
++    if (config.statusRealFifoFree) memFifoFree := RegNext(io.pciFifoFree.resize(16 bits)) init (0)
++    else memFifoFree := io.statusInputs.memFifoFree
+ 
+     val swapsPending = reg.fieldAt(28, UInt(3 bits), AccessType.RO, 0, "Swap buffers pending")
+     swapsPending := io.swapsPending
+@@ -476,45 +492,26 @@ case class RegisterBank(config: Config) extends Component {
      grads
    }
  
@@ -4853,7 +4868,7 @@ index c5a4cd8..cb8476e 100644
      hi
    }
  
-@@ -528,26 +522,11 @@ case class RegisterBank(config: Config) extends Component {
+@@ -528,26 +525,11 @@ case class RegisterBank(config: Config) extends Component {
          (g.startG.asBits, g.dGdX.asBits, g.dGdY.asBits),
          (g.startB.asBits, g.dBdX.asBits, g.dBdY.asBits),
          (g.startZ.asBits, g.dZdX.asBits, g.dZdY.asBits),
@@ -4885,7 +4900,7 @@ index c5a4cd8..cb8476e 100644
        )
      )
    }
-@@ -559,6 +538,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -559,6 +541,7 @@ case class RegisterBank(config: Config) extends Component {
      cfg.fbzColorPath := renderConfig.fbzColorPathBundle
      cfg.fogMode := renderConfig.fogModeBundle
      cfg.alphaMode := renderConfig.alphaModeBundle
@@ -4893,7 +4908,7 @@ index c5a4cd8..cb8476e 100644
      cfg.enableClipping := renderConfig.fbzMode.enableClipping
      cfg.clipLeft := renderConfig.clipLeftX
      cfg.clipRight := renderConfig.clipRightX
-@@ -575,9 +555,20 @@ case class RegisterBank(config: Config) extends Component {
+@@ -575,9 +558,20 @@ case class RegisterBank(config: Config) extends Component {
      cfg.tmudTdX.raw := g.dTdX.asBits
      cfg.tmudSdY.raw := g.dSdY.asBits
      cfg.tmudTdY.raw := g.dTdY.asBits
@@ -4917,7 +4932,7 @@ index c5a4cd8..cb8476e 100644
      }
  
      cfg
-@@ -601,10 +592,22 @@ case class RegisterBank(config: Config) extends Component {
+@@ -601,10 +595,22 @@ case class RegisterBank(config: Config) extends Component {
        captureTriangleHiTexCoords(useFloatShadow),
        triangleConfigReg,
        triangleDrawTraceId,
@@ -4941,7 +4956,7 @@ index c5a4cd8..cb8476e 100644
    private def fifoRegBits(addr: Int, name: String, category: RegisterCategory, doc: String): Bits =
      busif
        .newRegAtWithCategory(addr, name, category)
-@@ -649,28 +652,27 @@ case class RegisterBank(config: Config) extends Component {
+@@ -649,28 +655,27 @@ case class RegisterBank(config: Config) extends Component {
    // Command registers with Stream outputs - FIFO queueing and backpressure handled by BusIf
    // ========================================================================
    val commands = new Area {
@@ -4983,7 +4998,7 @@ index c5a4cd8..cb8476e 100644
      val (nopCmdReg, nopCmdStream) =
        busif.newCommandRegWithPayload(
          0x120,
-@@ -679,7 +681,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -679,7 +684,7 @@ case class RegisterBank(config: Config) extends Component {
          HardType(Bits(32 bits))
        ) { (_, payload) =>
          Component.current.addPrePopTask { () =>
@@ -4992,7 +5007,7 @@ index c5a4cd8..cb8476e 100644
          }
        }
      val (fastfillCmdReg, fastfillCmdStream) =
-@@ -691,7 +693,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -691,7 +696,7 @@ case class RegisterBank(config: Config) extends Component {
          when(swapbufferCmdStream.fire) {
            triangleDrawTraceId := triangleDrawTraceId + 1
          }
@@ -5001,7 +5016,7 @@ index c5a4cd8..cb8476e 100644
            trianglePrimitiveTraceId := trianglePrimitiveTraceId + 1
          }
        }
-@@ -1042,6 +1044,9 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1042,6 +1047,9 @@ case class RegisterBank(config: Config) extends Component {
  
      // fbiInit2 (0x218) - Buffer config and swap algorithm
      val fbiInit2Reg = busif.newRegAtWithCategory(0x218, "fbiInit2", RegisterCategory.bypassFifo)
@@ -5011,7 +5026,7 @@ index c5a4cd8..cb8476e 100644
      val fbiInit2_swapAlgorithm = fbiInit2Reg
        .fieldAt(
          9,
-@@ -1095,13 +1100,36 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1095,13 +1103,36 @@ case class RegisterBank(config: Config) extends Component {
        .field(Bits(32 bits), AccessType.WO, 0, "Max RGB difference for video filtering")
        .asOutput()
  
@@ -5049,7 +5064,7 @@ index c5a4cd8..cb8476e 100644
  
      // fbiInit5 (0x244) - Multi-chip config
      val fbiInit5Reg = busif.newRegAtWithCategory(0x244, "fbiInit5", RegisterCategory.bypassFifo)
-@@ -1120,7 +1148,7 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1120,7 +1151,7 @@ case class RegisterBank(config: Config) extends Component {
      val fbiInit7_cmdFifoEnable =
        fbiInit7Reg.fieldAt(8, Bool(), AccessType.RW, 0, "Enable command FIFO mode [V2+]").asOutput()
  
@@ -5058,7 +5073,7 @@ index c5a4cd8..cb8476e 100644
        // writePathDebug (0x250) - Write-side pipeline and arbiter handshake debug
        val writePathDebugReg = busif
          .newRegAt(0x250, "writePathDebug")
-@@ -1132,6 +1160,8 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1132,6 +1163,8 @@ case class RegisterBank(config: Config) extends Component {
          )
        writePathDebugReg := io.debug.writePath.bitsValue
      }
@@ -5067,7 +5082,7 @@ index c5a4cd8..cb8476e 100644
    }
  
    // ========================================================================
-@@ -1190,21 +1220,64 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1190,21 +1223,64 @@ case class RegisterBank(config: Config) extends Component {
      val trexInit1 = trexInit1Reg.field(Bits(32 bits), AccessType.WO, 0, "TMU init 1").asOutput()
    }
  
@@ -5147,7 +5162,7 @@ index c5a4cd8..cb8476e 100644
  
    // ========================================================================
    // NCC Table Registers (0x324-0x380)
-@@ -1250,6 +1323,25 @@ case class RegisterBank(config: Config) extends Component {
+@@ -1250,6 +1326,25 @@ case class RegisterBank(config: Config) extends Component {
  }
  
  object RegisterBank {

@@ -68,9 +68,13 @@ static struct miscdevice vd_misc = {
 static int vb_mmap(struct file *f, struct vm_area_struct *vma)
 {
 	size_t len = vma->vm_end - vma->vm_start;
-	resource_size_t start = pci_resource_start(vdev, 0);
+	resource_size_t off = (resource_size_t)vma->vm_pgoff << PAGE_SHIFT;
+	resource_size_t start = pci_resource_start(vdev, 0) + off;
 
-	if (vma->vm_pgoff || len > pci_resource_len(vdev, 0))
+	/* A sub-range (offset): Linux PAT gives one memory type per physical
+	 * range, so a write-combined map must not overlap the uncached sysfs
+	 * resource0 map, or it silently becomes uncached as well. */
+	if (off + len > pci_resource_len(vdev, 0))
 		return -EINVAL;
 	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 	return io_remap_pfn_range(vma, vma->vm_start, start >> PAGE_SHIFT, len,

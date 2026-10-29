@@ -125,6 +125,10 @@ object GowinGenSupport {
       texValidEpochBits = sys.env.get("GOWIN_TEX_EPOCH").map(_.toInt).getOrElse(0),
       // GOWIN_TEX_L2=2048: 128 KB second-level texture cache (~66 BSRAM).
       texL2Lines = sys.env.get("GOWIN_TEX_L2").map(_.toInt).getOrElse(0),
+      // Real PCI FIFO free count in status bits 12-27 (host flow control:
+      // one status read per ~1000 writes instead of 59). GOWIN_NO_REAL_FREE
+      // turns it off.
+      statusRealFifoFree = !sys.env.contains("GOWIN_NO_REAL_FREE"),
       // Prefetch lead: the TMU let 15 samples into flight, ~9 of them in its
       // own pipe, so line-fill hints ran only a few samples ahead of a ~40
       // cycle fill. 47 in flight (48-entry request FIFO): Quake II cut-frame

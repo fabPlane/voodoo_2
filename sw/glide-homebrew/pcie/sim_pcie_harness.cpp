@@ -116,6 +116,20 @@ void logOp(const char *fmt, ...) {
 // SST-1 status register (Voodoo address 0x000).
 constexpr uint32_t kSstBusy = 1u << 9;
 constexpr uint32_t kPciFifoFreeMask = 0x3fu;
+// Flow-control budget from a status word. Bitstreams with
+// Config.statusRealFifoFree report the PCI FIFO's real free count in the
+// memory-FIFO field (bits 12-27, hard-wired 0xffff otherwise): one status
+// read then covers up to ~1000 writes instead of 59.
+constexpr uint32_t kMemFifoShift = 12, kMemFifoMask = 0xffffu << kMemFifoShift;
+inline uint32_t budgetFrom(uint32_t status) {
+  uint32_t mem = (status & kMemFifoMask) >> kMemFifoShift;
+  uint32_t freeEntries = (mem != 0xffffu) ? (mem > 1024 ? 1024 : mem) : (status & kPciFifoFreeMask);
+  return freeEntries > 4 ? freeEntries - 4 : 0;
+}
+// What Glide sees: the memory-FIFO field as it expects it (no memory FIFO).
+inline uint32_t statusForGlide(uint32_t status) {
+  return status == 0xffffffffu ? status : (status | kMemFifoMask);
+}
 
 uint64_t nowNs() {
   timespec t;
@@ -377,8 +391,7 @@ void waitForRoom() {
     uint64_t t0 = nowNs();
     while (g_budget == 0) {
       g_budgetPolls++;
-      g_budget = timedRead(0) & kPciFifoFreeMask;
-      g_budget = g_budget > 4 ? g_budget - 4 : 0;
+      g_budget = budgetFrom(timedRead(0));
       if (g_busySample && g_budget == 0) {
         uint32_t b = timedRead(0x240);
         if (b != 0xffffffffu) {
@@ -391,9 +404,8 @@ void waitForRoom() {
   }
   while (g_budget == 0) {
     g_budgetPolls++;
-    g_budget = timedRead(0) & kPciFifoFreeMask;
     // Leave a little slack for anything in flight between BAR and core.
-    g_budget = g_budget > 4 ? g_budget - 4 : 0;
+    g_budget = budgetFrom(timedRead(0));
   }
   g_budget--;
 }
@@ -408,7 +420,7 @@ void idleBeforeRead(uint32_t addr) {
   for (int i = 0;; i++) {
     uint32_t s = timedRead(0);
     if (!(s & kSstBusy) && (s & kPciFifoFreeMask) == kPciFifoFreeMask) {
-      g_budget = kPciFifoFreeMask - 4;
+      g_budget = budgetFrom(s);
       return;
     }
     if (i > 200000) return;  // give up after a while: the read is still bounded by the BAR timeout
@@ -515,7 +527,7 @@ extern "C" uint32_t sim_read(uint32_t addr) {
     uint32_t inRing = g_swapsQueued.load(std::memory_order_relaxed) - g_swapsWritten.load(std::memory_order_acquire);
     uint32_t pending = ((st >> 28) & 7) + inRing;
     if (pending > 7) pending = 7;
-    return (st & ~(7u << 28) & ~kPciFifoFreeMask) | (pending << 28) | kSstBusy | (3u << 7) | 0x3fu;
+    return statusForGlide((st & ~(7u << 28) & ~kPciFifoFreeMask) | (pending << 28) | kSstBusy | (3u << 7) | 0x3fu);
   }
   drainWrites();
   g_reads++;
@@ -525,7 +537,10 @@ extern "C" uint32_t sim_read(uint32_t addr) {
   uint64_t t0 = nowNs();
   uint32_t v = timedRead(addr & 0xfffffcu);
   if (g_profile) g_frame.readNs += nowNs() - t0;
-  if ((addr & 0xfffffcu) == 0) g_budget = (v & kPciFifoFreeMask) > 4 ? (v & kPciFifoFreeMask) - 4 : 0;
+  if ((addr & 0xfffffcu) == 0) {
+    g_budget = budgetFrom(v);
+    v = statusForGlide(v);
+  }
   if (g_logAll) logOp("  = %08x\n", v);
   return v;
 }
@@ -542,12 +557,12 @@ extern "C" uint32_t sim_idle_wait(void) {
   for (;;) {
     g_idle_polls++;
     uint32_t s = g_dry ? kPciFifoFreeMask : timedRead(0);
-    if (!(s & kSstBusy) && (s & kPciFifoFreeMask) == kPciFifoFreeMask) return s;
+    if (!(s & kSstBusy) && (s & kPciFifoFreeMask) == kPciFifoFreeMask) return statusForGlide(s);
     if ((g_idle_polls & 0x3ff) == 0) {
-      if (!checkBridge("idle_wait")) return s;
+      if (!checkBridge("idle_wait")) return statusForGlide(s);
       if (std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
         fprintf(stderr, "[pcie] idle_wait: still busy after 5 s (status 0x%08x)\n", s);
-        return s;
+        return statusForGlide(s);
       }
     }
   }
