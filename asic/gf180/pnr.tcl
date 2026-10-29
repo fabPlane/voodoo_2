@@ -11,8 +11,8 @@ set_thread_count $threads
 read_lef $D/dl/lef/tech_5LM_1TM_9K.lef
 foreach f [glob $D/dl/lef/gf180mcu_fd_sc_mcu7t5v0__*.lef] { read_lef $f }
 read_liberty $D/gf180_7t_tt5v.lib
-# env SRAM=1: the netlist has 512x8 SRAM macros (sram.v), placed in rows
-# from the bottom-left corner of the core with routing channels between.
+# env SRAM=1: the netlist has 512x8 SRAM macros (sram.v), placed in two
+# columns along the core's left and right edges.
 set sram [expr {[info exists ::env(SRAM)] && $::env(SRAM)}]
 set sramCell gf180mcu_fd_ip_sram__sram512x8m8wm1
 if {$sram} {
@@ -42,18 +42,31 @@ if {$sram} {
   set macros {}
   foreach inst [$block getInsts] { if {[[$inst getMaster] getName] == $sramCell} { lappend macros $inst } }
   set macros [lsort -command {apply {{a b} {string compare [$a getName] [$b getName]}}} $macros]
-  # 431.86 x 484.88 um each; 6 per row, 65 um channels.
+  # 431.86 x 484.88 um each, pins on the bottom edge: two columns of 8
+  # along the left and right core edges, turned so the pins face the logic
+  # in the middle (left R270, right R90); I/O pins on the top / bottom edges.
+  set n [llength $macros]
+  set perCol [expr {($n + 1) / 2}]
+  set gap 30
+  set y0 [expr {442 + (4238 - $perCol * 431.86 - ($perCol - 1) * $gap) / 2}]
   set i 0
   foreach inst $macros {
-    set x [expr {442 + 65 + ($i % 6) * (431.86 + 65)}]
-    set y [expr {442 + 20 + ($i / 6) * (484.88 + 40)}]
-    $inst setOrigin [expr {round($x * $dbu)}] [expr {round($y * $dbu)}]
+    set col [expr {$i / $perCol}]
+    set row [expr {$i % $perCol}]
+    $inst setOrient [expr {$col ? "R90" : "R270"}]
+    set x [expr {$col ? 3490 - 10 - 484.88 : 442 + 10}]
+    set y [expr {$y0 + $row * (431.86 + $gap)}]
+    $inst setLocation [expr {round($x * $dbu)}] [expr {round($y * $dbu)}]
     $inst setPlacementStatus FIRM
     incr i
   }
   puts "placed $i SRAM macros"
 }
-place_pins -hor_layers Metal3 -ver_layers Metal2
+if {$sram} {
+  place_pins -hor_layers Metal3 -ver_layers Metal2 -exclude left:* -exclude right:*
+} else {
+  place_pins -hor_layers Metal3 -ver_layers Metal2
+}
 tapcell -distance 50 -halo_width_x 10 -halo_width_y 10 -tapcell_master gf180mcu_fd_sc_mcu7t5v0__filltie -endcap_master gf180mcu_fd_sc_mcu7t5v0__endcap
 
 add_global_connection -net VDD -pin_pattern {^VDD$} -power
@@ -77,12 +90,14 @@ stage "floorplan"
 set util [expr {[rsz::design_area] * 1e12 / (3048.0 * 4238.0)}]
 set margin [expr {[info exists ::env(MARGIN)] ? $::env(MARGIN) : 0.08}]
 set dens [expr {min(0.97, $util + $margin)}]
+# (with macros the utilization above counts them; env DENSITY sets it directly)
+if {[info exists ::env(DENSITY)]} { set dens $::env(DENSITY) }
 if {[info exists ::env(PAD)]} { set_placement_padding -global -right $::env(PAD) }
 puts "utilization (cells / core) [format %.3f $util], placement density $dens"
 global_placement -density $dens -routability_driven
 estimate_parasitics -placement
 repair_design
-detailed_placement
+detailed_placement -max_displacement {600 200}
 stage "placed"
 write_db $W/placed.odb
 
@@ -97,7 +112,7 @@ clock_tree_synthesis -clk_nets [join $ctsNets " "] -root_buf gf180mcu_fd_sc_mcu7
 set_propagated_clock [all_clocks]
 estimate_parasitics -placement
 repair_timing -setup
-detailed_placement
+detailed_placement -max_displacement {600 200}
 check_placement
 stage "cts + repair_timing"
 write_db $W/cts.odb
