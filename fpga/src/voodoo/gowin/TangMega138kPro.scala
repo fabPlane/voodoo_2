@@ -63,6 +63,12 @@ case class TangMega138kPro(c: Config, gowinAdc: Boolean = true) extends Componen
     val ledCalib = out Bool ()
     val ledWedge = out Bool ()
     val ledHeartbeat = out Bool ()
+
+    // gowinAdc = false: the same three words from the port's own monitor
+    // (Kintex: XADC), in AdcMonitor's format; quasi-static, any clock.
+    val adcNow = if (gowinAdc) null else in Bits (32 bits)
+    val adcExtremes = if (gowinAdc) null else in Bits (32 bits)
+    val adcSamples = if (gowinAdc) null else in Bits (32 bits)
   }
 
   val coreCd = ClockDomain(
@@ -191,7 +197,7 @@ case class TangMega138kPro(c: Config, gowinAdc: Boolean = true) extends Componen
   }
 
   // gowinAdc = false (other vendors' ports reuse this fabric): no Gowin ADC
-  // primitives, the supply / temperature registers read 0.
+  // primitives; the registers carry io.adcNow / adcExtremes / adcSamples.
   class AdcArea extends ClockingArea(coreCd) {
     val adc = AdcMonitor()
     val now = RegNext(adc.io.temp.asBits ## adc.io.vcc.asBits)
@@ -199,9 +205,9 @@ case class TangMega138kPro(c: Config, gowinAdc: Boolean = true) extends Componen
     val samples = RegNext(adc.io.samples.asBits)
   }
   val adcMon: AdcArea = if (gowinAdc) new AdcArea else null
-  pcie.adcNowIn := (if (gowinAdc) adcMon.now else B(0, 32 bits))
-  pcie.adcExtremesIn := (if (gowinAdc) adcMon.extremes else B(0, 32 bits))
-  pcie.adcSamplesIn := (if (gowinAdc) adcMon.samples else B(0, 32 bits))
+  pcie.adcNowIn := (if (gowinAdc) adcMon.now else io.adcNow)
+  pcie.adcExtremesIn := (if (gowinAdc) adcMon.extremes else io.adcExtremes)
+  pcie.adcSamplesIn := (if (gowinAdc) adcMon.samples else io.adcSamples)
 
   // HDMI scanout -> RGB565 words -> TLP clock (see FrameDma).
   val hdmiCd = ClockDomain(

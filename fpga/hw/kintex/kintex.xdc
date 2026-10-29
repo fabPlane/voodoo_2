@@ -18,6 +18,10 @@ set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks -of_objects [get_pins mig/ui_clk]] \
     -group [get_clocks -include_generated_clocks {pcie_refclk txoutclk_x0y0}]
 
+# JTAG diagnostics (jtag_diag_xilinx): pages are other domains' counters
+# sampled as-is on TCK; BSCANE2's TCK is not a timed clock.
+set_false_path -to [get_cells -hier -filter {NAME =~ diag/sr_reg*}]
+
 set_false_path -from [get_ports sys_rst_n]
 set_false_path -from [get_ports pcie_perst_n]
 
@@ -50,6 +54,12 @@ set_property PACKAGE_PIN V26 [get_ports {tmds_d_n[1]}]
 set_property PACKAGE_PIN V23 [get_ports {tmds_d_p[2]}]
 set_property PACKAGE_PIN V24 [get_ports {tmds_d_n[2]}]
 set_property IOSTANDARD TMDS_33 [get_ports {tmds_clk_p tmds_clk_n tmds_d_p[*] tmds_d_n[*]}]
+
+# MicroBlaze V UART (USE_MCS), 3.3 V.
+set_property PACKAGE_PIN AB26 [get_ports uart_txd]
+set_property PACKAGE_PIN AC26 [get_ports uart_rxd]
+set_property IOSTANDARD LVCMOS33 [get_ports {uart_txd uart_rxd}]
+set_property PULLUP true [get_ports uart_rxd]
 
 set_property PACKAGE_PIN AA25 [get_ports {led[0]}]
 set_property PACKAGE_PIN AB25 [get_ports {led[1]}]

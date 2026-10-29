@@ -18,8 +18,10 @@ import voodoo.gowin.{GowinDdrNative, GowinGenSupport, TangMega138kPro}
   *     (MIG ORDERING = STRICT). MIG app_addr counts 32-bit DQ words, the
   *     Gowin address counts 32-byte words: app_addr = ddrAddr << 3, done
   *     in board_top.v.
-  *   - No Gowin ADC (supply / temperature registers read 0) and no own
-  *     DDR3 controller debug port (reads 0).
+  *   - Supply / temperature: board_top's XADC monitor (xadc_monitor.v)
+  *     in the Gowin AdcMonitor format (BAR 0x68-0x70, DMA status 0-2).
+  *   - No own DDR3 controller debug port (0x9C reads 0): MIG calibrates
+  *     itself and has no gate maps to tune.
   *
   * Implicit clock domain: MIG ui_clk / ui_clk_sync_rst (DDR adapter).
   */
@@ -64,6 +66,11 @@ case class Kintex7Voodoo(c: Config) extends Component {
     val ledCalib = out Bool ()
     val ledWedge = out Bool ()
     val ledHeartbeat = out Bool ()
+
+    // xadc_monitor.v (DDR UI clock domain; the fabric resynchronises).
+    val adcNow = in Bits (32 bits)
+    val adcExtremes = in Bits (32 bits)
+    val adcSamples = in Bits (32 bits)
   }
 
   val fabric = TangMega138kPro(c, gowinAdc = false)
@@ -117,6 +124,9 @@ case class Kintex7Voodoo(c: Config) extends Component {
 
   io.ddr <> fabric.io.ddr
   fabric.io.ddrDbgRdata := 0
+  fabric.io.adcNow := io.adcNow
+  fabric.io.adcExtremes := io.adcExtremes
+  fabric.io.adcSamples := io.adcSamples
 
   io.hdmiR := fabric.io.hdmiR
   io.hdmiG := fabric.io.hdmiG

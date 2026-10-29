@@ -1,9 +1,11 @@
 # Kintex-7 PCIe card (XC7K160T / XC7K325T, FFG676) — prototype
 
-Status: **prototype, not built in Vivado yet, no board chosen.** RTL
-generates (`make rtl-kintex`), the PCIe shim passes its SpinalSim test, and
-yosys `synth_xilinx` gives the area estimate below. Everything that needs
-Vivado (IP generation, port-name check, P&R, timing) is still to do.
+Status: **prototype, builds to a bitstream in Vivado 2025.2.1, no board
+chosen** (pins are a representative FFG676 pinout). Every dock feature is
+ported: the full Voodoo configuration (KINTEX_FULL), PCIe, DDR3, HDMI,
+supply / temperature monitor, JTAG diagnostics and the soft-CPU counterpart
+of the AE350. Not tested on hardware; the PCIe shim and the board_top
+helpers pass their simulations (SpinalSim, `sim/run.sh`).
 
 ## Vivado out-of-context P&R (2026-10-29)
 
@@ -93,6 +95,12 @@ constraint: core +0.087 ns, pcie +0.662, MIG ui +0.582, hold >= +0.038;
 82.7% slices. So adding pcie_7x and MIG costs no core Fmax against the
 135 MHz OOC result.
 
+With every dock feature ported (XADC monitor, JTAG diagnostics,
+MicroBlaze V with `MCS=1`; 2026-10-30, `CORE_DIV=8.375`): 53.5k LUT /
+60.7k FF / 82.0% slices / 122.5 BRAM / 89 DSP; all constraints met, core
++0.080 ns, pcie +1.109, MIG ui +1.585, hold >= +0.035. The MCS costs
+~1.1k LUT / 8 BRAM, the XADC monitor and JTAG pages ~200 LUT.
+
 The PCIe user clocks derive from the GT's TXOUTCLK (`txoutclk_x0y0` in the
 IP's XDC), not from the refclk pin: the asynchronous clock group has to
 name it, or the core <-> PCIe async FIFOs (barCc) time as synchronous
@@ -125,8 +133,13 @@ unchanged (`gowinAdc = false`): TLP BAR target, posted writes, frame DMA,
 raw DDR windows, DDR adapter with fill engine, the Voodoo core and its
 config (`GOWIN_TMU_COUNT` etc. apply). The host software and BAR map are
 the same: BAR0 1 MiB, window register at 0x250, window 31 local registers.
-Not available: supply / temperature (0x68-0x70 read 0) and the own DDR3
-controller debug port (0x9C reads 0).
+Supply / temperature come from the XADC (`src/xadc_monitor.v`) in the
+dock's format. Not available: the own DDR3 controller debug port (0x9C
+reads 0; MIG calibrates itself and has no gate maps to tune).
+
+The card enumerates as 10ee:0007, the default the host library
+(`sw/pcie/pci_bar.h`) already looks for; `voodoo_dma` and `play-web.sh`
+accept it next to the dock's 22c2:1100.
 
 Vendor edges:
 
@@ -136,7 +149,9 @@ Vendor edges:
 | Own DDR3 controller / Gowin DDR3 native UI | MIG 7-series native UI (same cmd codes, 256-bit word, mask polarity); `app_addr = ddr_addr << 3` in `board_top.v` |
 | DVI_TX_Top IP | `src/dvi_tx.v` (TMDS encoder + OSERDESE2 10:1) |
 | GowinMemStylePhase (small RAMs to FFs: no LUT-RAM) | XilinxMemStylePhase (small RAMs to distributed RAM) |
-| Gowin ADC | none |
+| Gowin ADC (`AdcMonitor`) | XADC (`src/xadc_monitor.v`, same register words; also feeds MIG's temperature input, mig.prj XADC_En Disabled) |
+| GW_JTAG diagnostics (`jtag_diag.v`, `board_diag.py`) | BSCANE2 USER1 (`src/jtag_diag_xilinx.v`, `board_diag.py` here; same 8 pages, 64-bit DR without the padding bit) |
+| AE350 hard RISC-V add-on (`USE_AE350`) | MicroBlaze V MCS (`MCS=1`, `mcs/`): RV32IC, 32 KB LMB, UART, mailbox on JTAG page 5 |
 
 ## pcie_7x_0
 
@@ -177,6 +192,19 @@ Generate once in the MIG GUI and save the project file as `ip/mig.prj`:
 - Pins from the board vendor's XDC / UCF.
 - MIG instantiates the XADC for temperature tracking; a future supply /
   temperature monitor has to share it (MIG option for external temp input).
+
+## Diagnostics and add-ons
+
+- `board_diag.py`: OpenOCD (xilinx-xc7 target, `--interface` = the board's
+  adapter script) reads status (LTSSM, link, calibration, MMCM lock,
+  resets, wedge), per-domain clock counters, TLP counts, HDMI frames.
+  Status [23:16] is pcie_7x `pl_ltssm_state` (0x16 = L0).
+- `MCS=1`: `mcs/build.sh` (clang + ld.lld, RV32IC) builds `mcs_fw.elf`;
+  build.tcl associates it with the MCS so it is in the bitstream. IO module
+  at 0x80000000 (UART TX +0x04, status +0x08, GPO1 +0x10, GPI1 +0x20); UART
+  on `uart_txd` / `uart_rxd`, 115200 8N1.
+- `sim/run.sh`: xsim tests of `jtag_diag_xilinx` (BSCANE2 model) and
+  `xadc_monitor` (XADC model with a temperature / supply stimulus file).
 
 ## Clocks
 

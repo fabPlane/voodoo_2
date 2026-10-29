@@ -15,7 +15,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 P="$HERE/../pcie"
 PORT="${PORT:-8090}" INPUT_PORT="${INPUT_PORT:-27961}"
-DEV="${DEV:-$(lspci -D -d 22c2: | cut -d" " -f1 | head -1)}"
+# The dock (22c2:1100) or the Kintex-7 card (10ee:0007).
+DEV="${DEV:-$( { lspci -D -d 22c2:1100; lspci -D -d 10ee:0007; } | cut -d" " -f1 | head -1)}"
 
 [ -d /sys/module/voodoo_dma ] || insmod "$P/voodoo_dma/voodoo_dma.ko"
 setpci -s "$DEV" COMMAND=0006   # memory + bus master for the frame DMA

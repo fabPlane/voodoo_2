@@ -9,11 +9,15 @@
 //                   ORDERING = STRICT.
 //   MMCM            core clock and HDMI pixel / serial clocks from the
 //                   200 MHz board oscillator.
+//   xadc_monitor    die temperature / VCCINT (the dock's AdcMonitor
+//                   registers); also MIG's temperature input.
+//   jtag_diag_xilinx  the dock's JTAG diagnostic pages (board_diag.py).
+//   mcs_riscv       optional (`USE_MCS, build.tcl MCS=1): MicroBlaze V MCS,
+//                   the counterpart of the dock's AE350 add-on.
 //
-// The pcie_7x_0 port list matches the instantiation template Vivado 2025.2.1
-// generates with build.tcl's settings (checked with pcie_ip_check.tcl). MIG
-// ports follow UG586; check them against mig_7series_0.veo once mig.prj exists. Pin locations are in kintex.xdc and are
-// board specific.
+// The pcie_7x_0 and mig_7series_0 port lists match the instantiation
+// templates Vivado 2025.2.1 generates with build.tcl's settings / ip/mig.prj.
+// Pin locations are in kintex.xdc and are board specific.
 
 module board_top #(
     // MIG app_addr width: rank (1 bit even for one rank) + bank + row +
@@ -58,7 +62,11 @@ module board_top #(
     output wire [2:0]  tmds_d_p,
     output wire [2:0]  tmds_d_n,
 
-    output wire [3:0]  led
+    output wire [3:0]  led,
+
+    // MicroBlaze V UART (idle high without USE_MCS)
+    output wire        uart_txd,
+    input  wire        uart_rxd
 );
 
     // ---------------------------------------------------------- clocks
@@ -112,6 +120,7 @@ module board_top #(
     wire [7:0]  cfg_bus_number;
     wire [4:0]  cfg_device_number;
     wire [2:0]  cfg_function_number;
+    wire [5:0]  pl_ltssm_state;
 
     pcie_7x_0 pcie (
         .pci_exp_txp(pci_exp_txp), .pci_exp_txn(pci_exp_txn),
@@ -181,7 +190,7 @@ module board_top #(
         .pl_directed_link_change(2'b0), .pl_directed_link_width(2'b0),
         .pl_directed_link_speed(1'b0), .pl_directed_link_auton(1'b0),
         .pl_upstream_prefer_deemph(1'b1), .pl_sel_lnk_rate(), .pl_sel_lnk_width(),
-        .pl_ltssm_state(), .pl_lane_reversal_mode(), .pl_phy_lnk_up(), .pl_tx_pm_state(),
+        .pl_ltssm_state(pl_ltssm_state), .pl_lane_reversal_mode(), .pl_phy_lnk_up(), .pl_tx_pm_state(),
         .pl_rx_pm_state(), .pl_link_upcfg_cap(), .pl_link_gen2_cap(),
         .pl_link_partner_gen2_supported(), .pl_initial_link_width(),
         .pl_directed_change_done(), .pl_received_hot_rst(), .pl_transmit_hot_rst(1'b0),
@@ -192,6 +201,7 @@ module board_top #(
 
     // ---------------------------------------------------------- DDR3
     wire         ui_clk, ui_rst, init_calib_complete;
+    wire [11:0]  xadc_temp;    // xadc_monitor -> MIG temperature tracking
     wire         app_rdy, app_wdf_rdy, app_rd_data_valid, app_rd_data_end;
     wire [255:0] app_rd_data;
     wire [2:0]   ddr_cmd;
@@ -223,7 +233,14 @@ module board_top #(
         .app_sr_active(), .app_ref_ack(), .app_zq_ack(),
         .ui_clk(ui_clk), .ui_clk_sync_rst(ui_rst),
         .init_calib_complete(init_calib_complete),
-        .device_temp()
+        .device_temp_i(xadc_temp)
+    );
+
+    // ---------------------------------------------------------- XADC
+    wire [31:0] adc_now, adc_extremes, adc_samples;
+    xadc_monitor xadc (
+        .clk(ui_clk), .rst(ui_rst), .temp_code(xadc_temp),
+        .now(adc_now), .extremes(adc_extremes), .samples(adc_samples)
     );
 
     // ---------------------------------------------------------- Voodoo
@@ -253,7 +270,9 @@ module board_top #(
         .hdmiHs(hdmi_hs), .hdmiVs(hdmi_vs), .hdmiDe(hdmi_de),
 
         .ledLink(led_link), .ledCalib(led_calib), .ledWedge(led_wedge),
-        .ledHeartbeat(led_heartbeat)
+        .ledHeartbeat(led_heartbeat),
+
+        .adcNow(adc_now), .adcExtremes(adc_extremes), .adcSamples(adc_samples)
     );
 
     dvi_tx dvi (
@@ -264,4 +283,71 @@ module board_top #(
 
     // Active-low like the dock: heartbeat, PCIe link, DDR calibration, host bridge wedged.
     assign led = {led_wedge, led_calib, led_link, led_heartbeat};
+
+    // ---------------------------------------------------------- MicroBlaze V
+`ifdef USE_MCS
+    // On the DDR UI clock (100 MHz, the IP's FREQ); firmware in mcs/.
+    // Mailbox (GPO1) on JTAG diag page 5 as the AE350's, GPI1 = clock count.
+    wire [31:0] mcs_mbox;
+    reg  [31:0] mcs_cnt = 32'd0;
+    always @(posedge ui_clk) mcs_cnt <= mcs_cnt + 1'b1;
+    mcs_riscv mcs (
+        .Clk(ui_clk), .Reset(ui_rst),
+        .UART_rxd(uart_rxd), .UART_txd(uart_txd),
+        .GPIO1_tri_i(mcs_cnt), .GPIO1_tri_o(mcs_mbox)
+    );
+`else
+    wire [31:0] mcs_mbox = 32'd0;
+    assign uart_txd = 1'b1;
+`endif
+
+    // ---------------------------------------------------------- JTAG diagnostics
+    // Same pages as the dock's board_top (fpga/hw/kintex/board_diag.py).
+    reg [31:0] cnt_core = 0, cnt_ddr = 0, cnt_tlp = 0, cnt_pix = 0;
+    reg [31:0] rx_tlps = 0, tx_tlps = 0, hdmi_frames = 0;
+    reg        hdmi_vs_d = 1'b0, rx_in_tlp = 1'b0, tx_in_tlp = 1'b0;
+    always @(posedge core_clk) cnt_core <= cnt_core + 1'b1;
+    always @(posedge ui_clk)   cnt_ddr  <= cnt_ddr + 1'b1;
+    always @(posedge pix_clk) begin
+        cnt_pix <= cnt_pix + 1'b1;
+        hdmi_vs_d <= hdmi_vs;
+        if (hdmi_vs && !hdmi_vs_d) hdmi_frames <= hdmi_frames + 1'b1;
+    end
+    // TLP starts: the first accepted beat after a tlast.
+    always @(posedge user_clk) begin
+        cnt_tlp <= cnt_tlp + 1'b1;
+        if (rx_tvalid && rx_tready) begin
+            if (!rx_in_tlp) rx_tlps <= rx_tlps + 1'b1;
+            rx_in_tlp <= !rx_tlast;
+        end
+        if (tx_tvalid && tx_tready) begin
+            if (!tx_in_tlp) tx_tlps <= tx_tlps + 1'b1;
+            tx_in_tlp <= !tx_tlast;
+        end
+    end
+
+    wire [31:0] diag_status = {
+        8'hD1,                    // [31:24] magic
+        2'b0, pl_ltssm_state,     // [23:16] 7-series LTSSM (0x16 = L0)
+        cfg_bus_number,           // [15:8]  PCI bus number
+        pcie_perst_n_c,           // [7]
+        user_lnk_up,              // [6]
+        init_calib_complete,      // [5]
+        ui_rst,                   // [4]
+        mmcm_locked,              // [3]
+        mmcm_locked,              // [2]  (one MMCM makes core and HDMI clocks)
+        core_rst,                 // [1]
+        ~led_wedge                // [0]  host bridge wedged
+    };
+
+    jtag_diag_xilinx diag (
+        .page0(diag_status),
+        .page1(cnt_core),
+        .page2(cnt_ddr),
+        .page3(cnt_tlp),
+        .page4(cnt_pix),
+        .page5(rx_tlps ^ mcs_mbox),
+        .page6(tx_tlps),
+        .page7(hdmi_frames)
+    );
 endmodule

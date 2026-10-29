@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * DMA buffer for the Tang Mega 138K Pro dock's frame DMA (FrameDmaWriter):
- * binds to the dock (22c2:1100), allocates a coherent buffer below 4 GiB
+ * binds to the dock (22c2:1100) or the Kintex-7 card (10ee:0007), allocates
+ * a coherent buffer below 4 GiB
  * (the writer uses 3-DW MWr headers) and exposes it as /dev/voodoo_dma.
  * read() returns struct voodoo_dma_info (bus address, size); mmap() maps
  * the buffer. BAR0 is left alone so sysfs resource0 mmap keeps working.
@@ -141,7 +142,8 @@ static void vd_remove(struct pci_dev *pdev)
 }
 
 static const struct pci_device_id vd_ids[] = {
-	{ PCI_DEVICE(0x22c2, 0x1100) },
+	{ PCI_DEVICE(0x22c2, 0x1100) },	/* Tang Mega 138K Pro dock */
+	{ PCI_DEVICE(0x10ee, 0x0007) },	/* Kintex-7 card (fpga/hw/kintex) */
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, vd_ids);
