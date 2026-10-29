@@ -360,3 +360,10 @@ flat-placed model.
 
 So the 64-line split die (2 dies: 42 fps at 40 MHz on frame 1923) fits the
 1x1 slot with the texture cache data in SRAM macros.
+
+Split die pads (1x1_max_all ring: 168 I/O): down link 32 + valid / ready
+34, up link 8 + 2 = 10, video RGB565 + valid / ready 18, straps 5, fb SRAM
+59 (address 20, CE# / OE# / WE#, BE# 4, DQ 32 bidirectional), texture
+HyperRAM x16 20 (2 x x8: DQ 16, RWDS 2, CS#, CK), flush 1, clock, reset =
+149 (the netlist's 235 port bits count each bidirectional pin as out / oe /
+in and the HyperRAM DQ at both clock edges). 19 spare.
