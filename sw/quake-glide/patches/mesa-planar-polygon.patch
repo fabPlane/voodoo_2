@@ -1,0 +1,202 @@
+--- a/src/dd.h
++++ b/src/dd.h
+@@ -822,6 +822,11 @@
+    points_func   PointsFunc;
+    line_func     LineFunc;
+    triangle_func TriangleFunc;
++   /* Optional: draw a whole unclipped GL_POLYGON (vertices start..count-1)
++    * at once; cullmask is NULL for the raw path. Returns GL_TRUE if drawn.
++    * Called only while ctx->TriangleFunc is the driver's TriangleFunc. */
++   GLboolean (*PlanarPolygonFunc)( GLcontext *ctx, GLuint start, GLuint count,
++                                   const GLubyte *cullmask );
+    quad_func     QuadFunc;
+    rect_func     RectFunc;    
+    
+--- a/src/vbrender.c
++++ b/src/vbrender.c
+@@ -521,7 +521,12 @@
+ #define TAG(x) x##_cull
+ #define INIT(x)  if (x == GL_POLYGON) FLUSH_POLY(x); else FLUSH_PRIM(x)
+ #define RESET_STIPPLE *stipplecounter = 0
++#define RENDER_POLY_PLANAR(s, c)					\
++   (ctx->Driver.PlanarPolygonFunc &&					\
++    ctx->TriangleFunc == ctx->Driver.TriangleFunc &&			\
++    ctx->Driver.PlanarPolygonFunc( ctx, s, c, cullmask ))
+ #include "render_tmp.h"
++#undef RENDER_POLY_PLANAR
+ 
+ 
+ 
+@@ -559,7 +564,12 @@
+ 
+ #define INIT(x)  if (x == GL_POLYGON) FLUSH_POLY(x); else FLUSH_PRIM(x)
+ #define RESET_STIPPLE *stipplecounter = 0
++#define RENDER_POLY_PLANAR(s, c)					\
++   (ctx->Driver.PlanarPolygonFunc &&					\
++    ctx->TriangleFunc == ctx->Driver.TriangleFunc &&			\
++    ctx->Driver.PlanarPolygonFunc( ctx, s, c, NULL ))
+ #include "render_tmp.h"
++#undef RENDER_POLY_PLANAR
+ 
+ 
+ 
+--- a/src/render_tmp.h
++++ b/src/render_tmp.h
+@@ -216,6 +216,10 @@
+       }
+    }
+    else {
++#ifdef RENDER_POLY_PLANAR
++      /* The driver may draw the whole polygon at once (returns 1). */
++      if (!RENDER_POLY_PLANAR( start, count ))
++#endif
+       for (j=start+2;j<count;j++) {
+ 	 RENDER_TRI( start, j-1, j, start, 0 );
+       }
+--- a/src/FX/fxdd.c
++++ b/src/FX/fxdd.c
+@@ -1077,9 +1077,11 @@
+     ctx->Driver.PointsFunc=fxMesa->PointsFunc;
+     ctx->Driver.LineFunc=fxMesa->LineFunc;
+     ctx->Driver.TriangleFunc=fxMesa->TriangleFunc;
++    ctx->Driver.PlanarPolygonFunc=fxDDPlanarPolygon;
+     ctx->Driver.QuadFunc=fxMesa->QuadFunc;
+   } else {
+      fxMesa->render_index = FX_FALLBACK;
++     ctx->Driver.PlanarPolygonFunc=NULL;
+   }
+ }
+ 
+--- a/src/FX/fxdrv.h
++++ b/src/FX/fxdrv.h
+@@ -683,4 +683,7 @@
+ 				GLint where);
+ extern void fxInitPixelTables(fxMesaContext fxMesa, GLboolean bgrOrder);
+ 
++extern GLboolean fxDDPlanarPolygon(GLcontext *ctx, GLuint start, GLuint count,
++                                   const GLubyte *cullmask);
++
+ #endif
+--- a/src/FX/fxrender.c
++++ b/src/FX/fxrender.c
+@@ -204,6 +204,83 @@
+ 
+ 
+ 
++
++/* Planar polygons (FX_PLANAR=1): a GL_POLYGON drawn with Glide's
++ * grDrawPlanarPolygonVertexList loads the parameter gradients once for the
++ * whole polygon (they are the same over a planar polygon) instead of once per
++ * fan triangle: ~16 register writes per extra triangle instead of ~34. Only
++ * polygons of 4+ vertices with one colour (flat, or all vertices equal), so
++ * Gouraud-shaded polygons keep their per-triangle colour planes. `cull`
++ * (clip/cull path): only when no triangle is clipped and all share one cull
++ * state. Returns 1 when the polygon was handled. */
++static int fxPlanarEnabled = -1;
++static int fxPlanarPoly(fxVertex *gWin, const GLubyte *cullmask, GLuint start, GLuint count, int smooth,
++                        GLubyte *flatColor)
++{
++   GrVertex v[64];
++   GLuint n = count - start, j, k, rot = 0;
++   if (fxPlanarEnabled < 0) fxPlanarEnabled = getenv("FX_PLANAR") != NULL;
++   if (!fxPlanarEnabled || n < 4 || n > 64) return 0;
++   if (cullmask) {
++      GLubyte f0 = cullmask[start+2];
++      for (j = start+2; j < count; j++) {
++         if (cullmask[j] & PRIM_ANY_CLIP) return 0;
++         if ((cullmask[j] & PRIM_NOT_CULLED) != (f0 & PRIM_NOT_CULLED)) return 0;
++      }
++      if (!(f0 & PRIM_NOT_CULLED)) return 1;   /* all culled */
++   }
++   if (smooth && !flatColor) {
++      const GLfloat *c0 = gWin[start].f;
++      for (j = start+1; j < count; j++) {
++         const GLfloat *c = gWin[j].f;
++         /* GrVertex: x y z r g b ooz a oow ... */
++         if (c[3] != c0[3] || c[4] != c0[4] || c[5] != c0[5] || c[7] != c0[7]) return 0;
++      }
++   }
++   /* Glide takes the gradients from the first fan triangle. Polygons with
++    * extra collinear vertices (T-junction fixes) can start with a sliver
++    * whose gradients are wildly off across the polygon (black patches on
++    * Quake II crates), so start the fan at the consecutive vertex triple of
++    * largest area, and give up when even that is tiny. */
++   {
++      GLuint best = 0;
++      GLfloat bestArea = 0.0f;
++      for (j = 0; j < n; j++) {
++         const GLfloat *a0 = gWin[start + j].f;
++         const GLfloat *a1 = gWin[start + (j + 1) % n].f;
++         const GLfloat *a2 = gWin[start + (j + 2) % n].f;
++         GLfloat ar = (a1[0] - a0[0]) * (a2[1] - a0[1]) - (a2[0] - a0[0]) * (a1[1] - a0[1]);
++         if (ar < 0) ar = -ar;
++         if (ar > bestArea) { bestArea = ar; best = j; }
++      }
++      if (bestArea < 8.0f) return 0;   /* 2x area: < 4 px^2 */
++      rot = best;
++   }
++   for (j = 0; j < n; j++) {
++      for (k = 0; k < 15; k++) ((GLfloat *)&v[j])[k] = gWin[start + (j + rot) % n].f[k];
++      if (flatColor) { /* GrVertex colours are 0..255 floats */
++         v[j].r = (GLfloat)flatColor[0]; v[j].g = (GLfloat)flatColor[1];
++         v[j].b = (GLfloat)flatColor[2]; v[j].a = (GLfloat)flatColor[3];
++      }
++   }
++   BEGIN_CLIP_LOOP();
++   grDrawPlanarPolygonVertexList(n, v);
++   END_CLIP_LOOP();
++   return 1;
++}
++
++/* ctx->Driver.PlanarPolygonFunc: Mesa's generic VB renderer (used with flat
++ * shading, render_index FX_FLAT) offers each unclipped GL_POLYGON here. */
++GLboolean fxDDPlanarPolygon(GLcontext *ctx, GLuint start, GLuint count, const GLubyte *cullmask)
++{
++   fxMesaContext fxMesa = (fxMesaContext)ctx->DriverCtx;
++   struct vertex_buffer *VB = ctx->VB;
++   int flat = (fxMesa->render_index & FX_FLAT) != 0;
++   if (fxMesa->render_index & ~FX_FLAT) return GL_FALSE; /* twoside, offset, fallback... */
++   return fxPlanarPoly(FX_DRIVER_DATA(VB)->verts, cullmask, start, count, 1,
++                       flat ? VB->Color[0]->data[start] : NULL) ? GL_TRUE : GL_FALSE;
++}
++
+ /************************************************************************/
+ /************************ RenderVB functions ****************************/
+ /************************************************************************/
+@@ -262,14 +339,18 @@
+ #undef  RVB_COLOR
+ #define RVB_COLOR(pv)  FX_VB_COLOR(fxMesa, VB->ColorPtr->data[pv])
+ #define PRESERVE_VB_DEFS
++#define RENDER_POLY_PLANAR(s, c) ({ RVB_COLOR(s); fxPlanarPoly(gWin, NULL, s, c, 0, NULL); })
+ 
+ #include "render_tmp.h"
+ 
+ #define TAG(x) x##_fx_smooth_raw
+ #undef  RVB_COLOR
+ #define RVB_COLOR(x)
++#undef  RENDER_POLY_PLANAR
++#define RENDER_POLY_PLANAR(s, c) fxPlanarPoly(gWin, NULL, s, c, 1, NULL)
+ 
+ #include "render_tmp.h"
++#undef  RENDER_POLY_PLANAR
+ 
+ 
+ 
+@@ -358,13 +439,17 @@
+ #undef  RVB_COLOR
+ #define RVB_COLOR(x)
+ #define PRESERVE_VB_DEFS
++#define RENDER_POLY_PLANAR(s, c) fxPlanarPoly(gWin, cullmask, s, c, 1, NULL)
+ #include "render_tmp.h"
+ 
+ #define TAG(x) x##_fx_flat_culled
+ #undef  RVB_COLOR
+ #define RVB_COLOR(pv)  FX_VB_COLOR(fxMesa, VB->ColorPtr->data[pv])
++#undef  RENDER_POLY_PLANAR
++#define RENDER_POLY_PLANAR(s, c) ({ RVB_COLOR(s); fxPlanarPoly(gWin, cullmask, s, c, 0, NULL); })
+ 
+ #include "render_tmp.h"
++#undef  RENDER_POLY_PLANAR
+ 
+ 
+ 

@@ -261,6 +261,11 @@ build_pcie() {
   if ! grep -q "Quake II enables it" "$N/Mesa-3.4.2/src/FX/fxddtex.c"; then
     patch -d "$N/Mesa-3.4.2" -p1 <"$HERE/patches/mesa-global-palette.patch" >/dev/null
   fi
+  # FX_PLANAR=1: GL_POLYGONs through grDrawPlanarPolygonVertexList (gradients
+  # once per polygon: ~16 register writes per extra triangle instead of ~34).
+  if ! grep -q RENDER_POLY_PLANAR "$N/Mesa-3.4.2/src/render_tmp.h"; then
+    patch -d "$N/Mesa-3.4.2" -p1 <"$HERE/patches/mesa-planar-polygon.patch" >/dev/null
+  fi
   # libGL + libGLU (the widgets-sgi Motif target failing afterwards is fine).
   make -C "$N/Mesa-3.4.2" -j"$(nproc)" linux-glide >"$N/mesa.log" 2>&1 || true
   [ -f "$N/Mesa-3.4.2/lib/libGL.so" ] || { tail -20 "$N/mesa.log"; return 1; }
