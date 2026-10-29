@@ -146,7 +146,7 @@ void logOp(const char *fmt, ...);
 std::atomic<uint32_t> g_lastStatus{0};
 std::atomic<uint32_t> g_swapsQueued{0}, g_swapsWritten{0};
 
-// VOODOO_PCI_SORT=1: triangle parameter writes (0x008-0x07c and the float
+// Sort buffer (default on; VOODOO_PCI_NOSORT=1 off): triangle parameter writes (0x008-0x07c and the float
 // aliases 0x088-0x0fc, any chip) are held until the next other access and
 // then written in ascending address order, so write-combining merges them
 // into a few TLPs (Glide writes start / dX / dY per parameter, which broke
@@ -323,7 +323,9 @@ extern "C" int sim_init(void) {
   g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
-  g_sort = getenv("VOODOO_PCI_SORT") != nullptr;
+  // On by default since the posted BAR bridge (b205: Q2 48 -> 52, GLQuake
+  // 54.2 -> 55.1); VOODOO_PCI_NOSORT=1 turns it off.
+  g_sort = getenv("VOODOO_PCI_NOSORT") == nullptr;
   if (const char *cap = getenv("VOODOO_PCI_BUDGET_CAP")) g_budgetCap = (uint32_t)atoi(cap);
   g_busySample = g_profile && getenv("VOODOO_BUSY_SAMPLE") != nullptr;
   g_perf = g_profile && getenv("VOODOO_PERF") != nullptr;
