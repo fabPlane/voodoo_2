@@ -1,3 +1,4 @@
+#include <algorithm>
 /*
  * sim_pcie_harness.cpp - sim_harness.h backend that drives the real board.
  *
@@ -130,7 +131,42 @@ void logOp(const char *fmt, ...);
 std::atomic<uint32_t> g_lastStatus{0};
 std::atomic<uint32_t> g_swapsQueued{0}, g_swapsWritten{0};
 
+// VOODOO_PCI_SORT=1: triangle parameter writes (0x008-0x07c and the float
+// aliases 0x088-0x0fc, any chip) are held until the next other access and
+// then written in ascending address order, so write-combining merges them
+// into a few TLPs (Glide writes start / dX / dY per parameter, which broke
+// the ascending run and fenced on almost every write). A register already
+// held under another chip address flushes first (broadcast vs. per-TMU
+// writes keep their order); the same address twice keeps the later value.
+bool g_sort = false;
+struct SOp { uint32_t addr, data; };
+SOp g_sbuf[64];
+int g_sn = 0;
+uint64_t g_sortFlushes = 0, g_sortOps = 0;
+bool sortable(uint32_t a) {
+  uint32_t reg = a & 0x3fcu;
+  return a < 0x4000u && ((reg >= 0x008 && reg < 0x080) || (reg >= 0x088 && reg < 0x100));
+}
+void sortFlush() {
+  if (!g_sn) return;
+  std::stable_sort(g_sbuf, g_sbuf + g_sn, [](const SOp &x, const SOp &y) { return x.addr < y.addr; });
+  for (int i = 0; i < g_sn; i++) g_bar.write32(g_sbuf[i].addr, g_sbuf[i].data);
+  g_sortFlushes++;
+  g_sortOps += g_sn;
+  g_sn = 0;
+}
+void sortWrite(uint32_t addr, uint32_t data) {
+  if (!g_sort || !sortable(addr)) { sortFlush(); g_bar.write32(addr, data); return; }
+  for (int i = 0; i < g_sn; i++) {
+    if (g_sbuf[i].addr == addr) { g_sbuf[i].data = data; return; }
+    if ((g_sbuf[i].addr & 0x3fcu) == (addr & 0x3fcu)) { sortFlush(); break; }
+  }
+  if (g_sn == 64) sortFlush();
+  g_sbuf[g_sn++] = SOp{addr, data};
+}
+
 uint32_t timedRead(uint32_t addr) {
+  sortFlush();
   uint64_t t0 = nowNs();
   uint32_t v = g_bar.read32(addr);
   if (addr == 0 && v != 0xffffffffu) g_lastStatus.store(v, std::memory_order_relaxed);
@@ -151,6 +187,7 @@ bool checkBridge(const char *where) {
   if (g_dry) return true;
   // All-ones = read timed out while the core was busy; Bar::wedged() retries.
   if (g_bar.wedged()) {
+    sortFlush();
     uint32_t s = g_bar.status();
     fprintf(stderr, "[pcie] %s: host bridge wedged or gone (%s)\n", where, pci_bar::statusText(s));
     return false;
@@ -172,8 +209,15 @@ namespace {
 struct QOp { uint32_t addr, data; uint32_t wide; };
 constexpr uint32_t kQSize = 1u << 20;
 QOp *g_q = nullptr;
-std::atomic<uint32_t> g_qHead{0}, g_qTail{0}; // head: next write; tail: next read
-std::atomic<bool> g_qBusy{false}, g_qStop{false}, g_writerDone{false};
+// head: next write; tail: next read. Each on its own cache line, and each
+// side keeps a copy of the other's index, reloaded only when the ring looks
+// full / empty: with head, tail and busy on one line it moved between the
+// two cores on every write (about the cost of the MMIO write itself).
+alignas(64) std::atomic<uint32_t> g_qHead{0};
+alignas(64) std::atomic<uint32_t> g_qTail{0};
+alignas(64) std::atomic<bool> g_qBusy{false};
+alignas(64) std::atomic<bool> g_qStop{false}, g_writerDone{false};
+uint32_t g_tailSeen = 0; // producer's copy of g_qTail
 // Heap-held and never destroyed: a joinable std::thread destroyed at exit
 // terminates the process (seen when GLQuake quits on SIGTERM).
 std::thread *g_writer = nullptr;
@@ -184,10 +228,13 @@ void writerLoop() {
   g_writerId = std::this_thread::get_id();
   struct Done { ~Done() { g_writerDone.store(true, std::memory_order_release); } } done;
   uint32_t spins = 0;
+  uint32_t headSeen = 0;
   for (;;) {
     uint32_t t = g_qTail.load(std::memory_order_relaxed);
-    if (t == g_qHead.load(std::memory_order_acquire)) {
+    if (t == headSeen) headSeen = g_qHead.load(std::memory_order_acquire);
+    if (t == headSeen) {
       if (g_qBusy.load(std::memory_order_relaxed)) {
+        sortFlush();
         g_bar.fenceWc();  // flush this core's write-combining buffers
         g_qBusy.store(false, std::memory_order_release);
       }
@@ -231,10 +278,13 @@ void stopWriter(int ms) {
 
 void enqueue(uint32_t addr, uint32_t data, bool wide) {
   uint32_t h = g_qHead.load(std::memory_order_relaxed);
-  while (h - g_qTail.load(std::memory_order_acquire) >= kQSize) sched_yield();
+  while (h - g_tailSeen >= kQSize) {
+    g_tailSeen = g_qTail.load(std::memory_order_acquire);
+    if (h - g_tailSeen >= kQSize) sched_yield();
+  }
   g_q[h & (kQSize - 1)] = QOp{addr, data, wide ? 1u : 0u};
   if (wide && addr < 0x400000 && (addr & 0x3fc) == 0x128) g_swapsQueued.fetch_add(1, std::memory_order_relaxed);
-  uint32_t depth = h - g_qTail.load(std::memory_order_relaxed);
+  uint32_t depth = h - g_tailSeen; // upper bound (stale tail copy)
   if (depth > g_qMax) g_qMax = depth;
   if (wide && addr < 0x400000 && (addr & 0x3fc) == 0x128 && ++g_qSwaps % 100 == 0) {
     fprintf(stderr, "[pcie] thread: 100 swaps, %llu drains, %.1f ms waiting, max depth %llu\n",
@@ -243,7 +293,8 @@ void enqueue(uint32_t addr, uint32_t data, bool wide) {
     memset(g_rdCnt, 0, sizeof g_rdCnt);
     g_drainCalls = 0; g_drainNs = 0; g_qMax = 0;
   }
-  g_qBusy.store(true, std::memory_order_relaxed);
+  // (No busy store here: drainWrites sees the op through head != tail, and
+  // the writer sets busy itself while it writes.)
   g_qHead.store(h + 1, std::memory_order_release);
 }
 }  // namespace
@@ -257,6 +308,7 @@ extern "C" int sim_init(void) {
   g_logAll = getenv("VOODOO_PCI_LOG_ALL") != nullptr;
   g_logSync = getenv("VOODOO_PCI_LOG_SYNC") != nullptr;
   g_profile = getenv("VOODOO_PCI_PROFILE") != nullptr;
+  g_sort = getenv("VOODOO_PCI_SORT") != nullptr;
   g_busySample = g_profile && getenv("VOODOO_BUSY_SAMPLE") != nullptr;
   g_perf = g_profile && getenv("VOODOO_PERF") != nullptr;
   if (const char *g = getenv("VOODOO_PCI_WRITE_GAP_NS")) g_writeGapNs = strtoull(g, nullptr, 0);
@@ -300,6 +352,7 @@ extern "C" int sim_init(void) {
 extern "C" void sim_shutdown(void) {
   if (!g_open) return;
   if (g_threaded) stopWriter(2000);
+  sortFlush();  // the writer flushed its own before going idle
   if (getenv("VOODOO_PCI_STATS"))
     fprintf(stderr, "[pcie] %llu writes, %llu reads, %llu idle polls; bridge %s\n",
             (unsigned long long)g_writes, (unsigned long long)g_reads,
@@ -419,12 +472,12 @@ static void doWrite32(uint32_t addr, uint32_t data) {
   if (g_profile) {
     countWrite(addr);
     uint64_t t0 = nowNs();
-    if (!g_dry) g_bar.write32(addr & 0xfffffcu, data);
+    if (!g_dry) sortWrite(addr & 0xfffffcu, data);
     g_frame.writeNs += nowNs() - t0;
     if (addr < 0x400000 && (addr & 0x3fc) == 0x128) reportFrame();
     return;
   }
-  if (!g_dry) g_bar.write32(addr & 0xfffffcu, data);
+  if (!g_dry) sortWrite(addr & 0xfffffcu, data);
 }
 
 static void doWrite16(uint32_t addr, uint16_t data) {
@@ -432,6 +485,7 @@ static void doWrite16(uint32_t addr, uint16_t data) {
   g_writes++;
   if (g_profile) countWrite(addr);
   if (g_logAll) logOp("w16 %06x %04x\n", addr, data);
+  sortFlush();
   if (!g_dry) g_bar.write16(addr & 0xfffffeu, data);
 }
 
@@ -478,6 +532,7 @@ extern "C" uint32_t sim_read(uint32_t addr) {
 
 extern "C" uint32_t sim_idle_wait(void) {
   drainWrites();
+  sortFlush();
   // Wait for the core to drain: SST busy clear and the PCI FIFO empty.
   struct Timer {
     uint64_t t0 = nowNs();

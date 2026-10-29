@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..08d2885 100644
+index 1b34fa2..49d1451 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..08d2885 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,107 @@ case class Config(
+@@ -31,6 +34,110 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1111,6 +1111,9 @@ index 1b34fa2..08d2885 100644
 +    // mux (0 = flops). A texture write starts a new generation; wraparound
 +    // and reset sweep every tag (one line a cycle, lookups paused).
 +    texValidEpochBits: Int = 0,
++    // Second-level texture cache (TexL2Cache) in front of texture memory:
++    // 64-byte lines shared by both TMUs (0 = none).
++    texL2Lines: Int = 0,
 +    // Rasterizer span queue (spans between the walker, which issues the
 +    // framebuffer prefetch, and the span rasterizer): the prefetch's lead.
 +    spanQueueDepth: Int = 4,
@@ -1177,7 +1180,7 @@ index 1b34fa2..08d2885 100644
      trace: TraceConfig = TraceConfig()
  )
 diff --git a/src/voodoo/Core.scala b/src/voodoo/Core.scala
-index 100f1c6..2a686f0 100644
+index 100f1c6..3554128 100644
 --- a/src/voodoo/Core.scala
 +++ b/src/voodoo/Core.scala
 @@ -1,5 +1,7 @@
@@ -1188,6 +1191,15 @@ index 100f1c6..2a686f0 100644
  import spinal.core._
  import spinal.lib._
  import spinal.lib.bus.bmb._
+@@ -11,7 +13,7 @@ import voodoo.core.{
+   TextureMemSubsystem
+ }
+ import voodoo.hdmi.{HdmiCdcFramebufferScanout, HdmiScanoutPort}
+-import voodoo.texture.TextureMem
++import voodoo.texture.{TexL2Cache, TextureMem}
+ 
+ object Core {
+   val cpuBmbParams = BmbParameter(
 @@ -36,6 +38,27 @@ object Core {
      alignment = BmbParameter.BurstAlignement.BYTE
    )
@@ -1390,15 +1402,21 @@ index 100f1c6..2a686f0 100644
    framebufferMem.io.fbColorWriteMem <> io.fbColorWriteMem
    framebufferMem.io.fbAuxWriteMem <> io.fbAuxWriteMem
    framebufferMem.io.fbColorReadMem <> io.fbColorReadMem
-@@ -190,6 +277,7 @@ case class Core(c: Config) extends Component {
+@@ -190,7 +277,12 @@ case class Core(c: Config) extends Component {
  
    textureMem.io.cpuTexDrain << pciFifo.io.texDrain
    textureMem.io.tmuTexRead <> pixelPipeline.io.texRead
+-  textureMem.io.texMem <> io.texMem
 +  if (c.tmuCount > 1) textureMem.io.tmu1TexRead <> pixelPipeline.io.texRead1
-   textureMem.io.texMem <> io.texMem
++  val texL2 = if (c.texL2Lines > 0) TexL2Cache(Core.texMemBmbParams(c), c.texL2Lines) else null
++  if (texL2 != null) {
++    texL2.io.input <> textureMem.io.texMem
++    texL2.io.output <> io.texMem
++  } else textureMem.io.texMem <> io.texMem
  
    io.hdmi.video := hdmiScanout.io.video
-@@ -199,10 +287,61 @@ case class Core(c: Config) extends Component {
+   io.hdmi.status := hdmiScanout.io.status
+@@ -199,10 +291,61 @@ case class Core(c: Config) extends Component {
    hdmiScanout.io.hdmiClock := io.hdmi.clock
    hdmiScanout.io.hdmiReset := io.hdmi.reset
  
@@ -1595,7 +1613,7 @@ index 9effb48..35bee62 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..8ddcf58 100644
+index 6051025..2edf0bf 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1643,7 +1661,7 @@ index 6051025..8ddcf58 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,31 @@ object CoreSimGen extends App {
+@@ -37,7 +49,32 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1664,6 +1682,7 @@ index 6051025..8ddcf58 100644
 +      texHintValidCheck = !args.contains("--no-tex-hint-valid"),
 +      tmu1SmallCacheLines = argIntValue("--tmu1-cache-lines").getOrElse(0),
 +      texValidEpochBits = argIntValue("--tex-valid-epoch").getOrElse(0),
++      texL2Lines = argIntValue("--tex-l2-lines").getOrElse(0),
 +      triangleSnapshot = !args.contains("--no-triangle-snapshot") || args.contains("--triangle-snapshot"),
 +      pixelConfigSlots = args.contains("--pixel-config-slots") && !args.contains("--no-pixel-config-slots"),
 +      tmuForkAsync = args.contains("--tmu-fork-async"),
@@ -1676,7 +1695,7 @@ index 6051025..8ddcf58 100644
      )
  
    val memTiming = SimMemoryTiming(
-@@ -45,9 +81,10 @@ object CoreSimGen extends App {
+@@ -45,9 +82,10 @@ object CoreSimGen extends App {
      fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
      burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
      burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
@@ -6972,7 +6991,7 @@ index 1a3a34c..76f1906 100644
        when(wFogFactorRaw < 0) {
          wFogFactor := 0
 diff --git a/src/voodoo/pixel/FramebufferAccess.scala b/src/voodoo/pixel/FramebufferAccess.scala
-index c6b2ec5..7437fb0 100644
+index c6b2ec5..43373e0 100644
 --- a/src/voodoo/pixel/FramebufferAccess.scala
 +++ b/src/voodoo/pixel/FramebufferAccess.scala
 @@ -26,9 +26,16 @@ case class FramebufferAccess(c: Config) extends Component {
@@ -6992,7 +7011,14 @@ index c6b2ec5..7437fb0 100644
      val zFuncFail = out Bool ()
      val debug = out Bits (32 bits)
    }
-@@ -47,26 +54,18 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -43,30 +50,24 @@ case class FramebufferAccess(c: Config) extends Component {
+   io.fbReadAuxReq.ready.simPublic()
+   io.fbReadAuxReq.address.simPublic()
+ 
+-  val inFlightCount = Reg(UInt(5 bits)) init 0
++  // Up to ~66 pixels between the input and the fetched queue (m2sPipe, passMeta
++  // and fetched queues of 32, response buffers): 5 bits wrapped to "idle".
++  val inFlightCount = Reg(UInt(7 bits)) init 0
    inFlightCount.simPublic()
  
    val payload = io.input.payload
@@ -7025,7 +7051,7 @@ index c6b2ec5..7437fb0 100644
  
    // Select base depth: Z or W buffer
    val baseDepth = fbzMode.wBufferSelect ? payload.wDepth | zDepth
-@@ -75,7 +74,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -75,7 +76,7 @@ case class FramebufferAccess(c: Config) extends Component {
    val compDepthPreBias = fbzMode.depthSourceSelect ? zaDepth | baseDepth
  
    // Depth bias: signed add of zaColor[15:0]
@@ -7034,7 +7060,7 @@ index c6b2ec5..7437fb0 100644
    val biasedDepthRaw = (compDepthPreBias.resize(17 bits).asSInt + zaColorSigned.resize(17 bits))
    val biasedDepth = UInt(16 bits)
    when(biasedDepthRaw < 0) {
-@@ -97,17 +96,14 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -97,17 +98,14 @@ case class FramebufferAccess(c: Config) extends Component {
      val color = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
      val alpha = UInt(8 bits)
      val colorBeforeFog = Color(UInt(8 bits), UInt(8 bits), UInt(8 bits))
@@ -7056,7 +7082,7 @@ index c6b2ec5..7437fb0 100644
  
    // Create internal stream with computed address and passthrough data
    case class Internal() extends Bundle {
-@@ -123,31 +119,34 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -123,31 +121,34 @@ case class FramebufferAccess(c: Config) extends Component {
    val pixelY = payload.coords(1).asUInt
    val colorPlaneAddress =
      FramebufferAddressMath.planeAddress(
@@ -7099,7 +7125,7 @@ index c6b2ec5..7437fb0 100644
    if (c.trace.enabled) {
      request.passthrough.trace := payload.trace
    }
-@@ -165,7 +164,8 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -165,7 +166,8 @@ case class FramebufferAccess(c: Config) extends Component {
      val dstScale = Color.u8()
    }
  
@@ -7109,7 +7135,7 @@ index c6b2ec5..7437fb0 100644
    requestStream.valid.simPublic()
    requestStream.ready.simPublic()
  
-@@ -199,45 +199,23 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -199,45 +201,23 @@ case class FramebufferAccess(c: Config) extends Component {
    val colorRspBuf = io.fbReadColorRsp.queue(4)
    val auxRspBuf = io.fbReadAuxRsp.queue(4)
  
@@ -7171,7 +7197,7 @@ index c6b2ec5..7437fb0 100644
  
    val fetchedRaw = StreamJoin(StreamJoin(colorRsp, auxRsp), passMeta).translateWith {
      val out = FetchResult()
-@@ -266,7 +244,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -266,7 +246,7 @@ case class FramebufferAccess(c: Config) extends Component {
    val pdata = fetched.payload.passthrough
    val oldDepth = auxData.asUInt
  
@@ -7180,7 +7206,7 @@ index c6b2ec5..7437fb0 100644
      U(0) -> False,
      U(1) -> (pdata.newDepth < oldDepth),
      U(2) -> (pdata.newDepth === oldDepth),
-@@ -277,10 +255,13 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -277,10 +257,13 @@ case class FramebufferAccess(c: Config) extends Component {
      U(7) -> True
    )
  
@@ -7195,7 +7221,7 @@ index c6b2ec5..7437fb0 100644
  
    // ========================================================================
    // Step 4: Alpha blend
-@@ -291,28 +272,18 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -291,28 +274,18 @@ case class FramebufferAccess(c: Config) extends Component {
  
    val oldColor565 = afterColorData.asUInt
    val destColor = expandRgb565(oldColor565)
@@ -7233,7 +7259,7 @@ index c6b2ec5..7437fb0 100644
    val destA = U(0xff, 8 bits)
  
    val srcColor = afterPdata.color
-@@ -395,6 +366,7 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -395,6 +368,7 @@ case class FramebufferAccess(c: Config) extends Component {
      }
      .m2sPipe()
  
@@ -7241,7 +7267,7 @@ index c6b2ec5..7437fb0 100644
    io.debug := 0
    io.debug(0) := io.input.valid
    io.debug(1) := io.input.ready
-@@ -417,10 +389,10 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -417,13 +391,13 @@ case class FramebufferAccess(c: Config) extends Component {
    io.debug(18) := auxCtlBase.ready
    io.debug(19) := passMeta.valid
    io.debug(20) := passMeta.ready
@@ -7255,8 +7281,12 @@ index c6b2ec5..7437fb0 100644
 +  io.debug(24) := auxRspBuf.valid
    io.debug(25) := fetched.valid
    io.debug(26) := fetched.ready
-   io.debug(31 downto 27) := inFlightCount.asBits
-@@ -454,14 +426,15 @@ case class FramebufferAccess(c: Config) extends Component {
+-  io.debug(31 downto 27) := inFlightCount.asBits
++  io.debug(31 downto 27) := inFlightCount.asBits.resized
+ 
+   val blendPdata = blendPrep.payload.passthrough
+   val srcFactor = applyBlendScale(blendPdata.color, blendPrep.payload.srcScale)
+@@ -454,14 +428,15 @@ case class FramebufferAccess(c: Config) extends Component {
      out.colorBeforeFog := pd.colorBeforeFog
      out.newDepth := pd.newDepth
      out.alphaMode := pd.alphaMode
@@ -7280,7 +7310,7 @@ index c6b2ec5..7437fb0 100644
      if (c.trace.enabled) {
        out.trace := pd.trace
      }
-@@ -469,6 +442,15 @@ case class FramebufferAccess(c: Config) extends Component {
+@@ -469,6 +444,15 @@ case class FramebufferAccess(c: Config) extends Component {
  }
  
  object FramebufferAccess {
@@ -9193,6 +9223,204 @@ index fb95365..a2b712e 100644
      val trace = if (c.trace.enabled) Trace.PrimitiveKey() else null
    }
  }
+diff --git a/src/voodoo/texture/TexL2Cache.scala b/src/voodoo/texture/TexL2Cache.scala
+new file mode 100644
+index 0000000..87ca189
+--- /dev/null
++++ b/src/voodoo/texture/TexL2Cache.scala
+@@ -0,0 +1,192 @@
++package voodoo.texture
++
++import spinal.core._
++import spinal.lib._
++import spinal.lib.bus.bmb._
++import voodoo._
++
++/** Second-level texture cache between the texture memory arbiter
++  * (TextureMemSubsystem) and texture memory: `lines` direct-mapped lines of
++  * 64 bytes in block RAM, one copy shared by both TMUs (the TMU caches keep
++  * up to four copies of a line, one per bilinear tap).
++  *
++  * Only whole aligned 64-byte reads (the TMU caches' line fills) are cached;
++  * other reads and every write pass through. A write invalidates its line.
++  *
++  * Responses leave strictly in command order (a job FIFO), so the TMUs'
++  * in-order fill bookkeeping holds; misses and pass-throughs go downstream
++  * with one source and are answered in order, several in flight. A miss
++  * writes its line's tag when it is issued: a later read of that line queues
++  * behind the fill and finds the data there, and a read of the line's old
++  * contents looked up earlier is answered before the fill overwrites it.
++  * A write invalidates the tag at once; a fill already in flight for that
++  * index still lands but stays invalid (a read ordered before the write may
++  * be answered from it, as it should).
++  *
++  * Lookups take two cycles (tag read, compare), writes one.
++  */
++case class TexL2Cache(p: BmbParameter, lines: Int, jobDepth: Int = 16) extends Component {
++  require(isPow2(lines) && lines >= 16)
++  val lineBytes = 64
++  val beats = lineBytes / 4
++  val offBits = log2Up(lineBytes)
++  val idxBits = log2Up(lines)
++  val aw = p.access.addressWidth
++  val tagBits = aw - idxBits - offBits
++  require(p.access.dataWidth == 32)
++
++  val io = new Bundle {
++    val input = slave(Bmb(p))
++    val output = master(Bmb(p))
++    val hits = out UInt (32 bits)
++    val misses = out UInt (32 bits)
++  }
++
++  def idxOf(a: UInt): UInt = a(offBits + idxBits - 1 downto offBits)
++  def tagOf(a: UInt): UInt = a(aw - 1 downto offBits + idxBits)
++
++  // valid ## tag
++  val tagMem = Mem(Bits(tagBits + 1 bits), lines)
++  val dataMem = Mem(Bits(32 bits), lines * beats)
++
++  object Kind extends SpinalEnum { val HIT, MISS, PASS = newElement() }
++  case class Job() extends Bundle {
++    val kind = Kind()
++    val idx = UInt(idxBits bits)
++    val source = UInt(p.access.sourceWidth bits)
++  }
++  val jobs = StreamFifo(Job(), jobDepth)
++  val dsCmd = StreamFifo(Fragment(BmbCmd(p)), 4)
++
++  // ---------------------------------------------------------------- lookup
++  // Reset sweep: the tag RAM powers up with garbage.
++  val clearing = RegInit(True)
++  val clearIdx = Reg(UInt(idxBits bits)) init (0)
++  when(clearing) {
++    clearIdx := clearIdx + 1
++    when(clearIdx.andR) { clearing := False }
++  }
++
++  val inCmd = io.input.cmd
++  val isWrite = inCmd.opcode === Bmb.Cmd.Opcode.WRITE
++  val room = jobs.io.availability >= 1 && dsCmd.io.availability >= 1
++  val stageB = RegInit(False)
++  val b = Reg(Fragment(BmbCmd(p)))
++  // State A takes a command when nothing waits in state B: writes complete
++  // here, reads read their tag and move to B.
++  inCmd.ready := !clearing && !stageB && room
++  val aFire = inCmd.fire
++  val tagRd = tagMem.readSync(idxOf(inCmd.address), enable = aFire && !isWrite)
++  when(aFire && !isWrite) {
++    stageB := True
++    b := inCmd.payload
++  }
++  val bTag = tagRd(tagBits - 1 downto 0).asUInt
++  val bCacheable = b.length === lineBytes - 1 && b.address(offBits - 1 downto 0) === 0
++  val bHit = bCacheable && tagRd(tagBits) && bTag === tagOf(b.address)
++
++  jobs.io.push.valid := False
++  jobs.io.push.payload.assignDontCare()
++  dsCmd.io.push.valid := False
++  dsCmd.io.push.payload.allowOverride()
++  dsCmd.io.push.payload := inCmd.payload
++  dsCmd.io.push.payload.fragment.source := 0
++
++  val tagWrEn = Bool()
++  val tagWrAddr = UInt(idxBits bits)
++  val tagWrData = Bits(tagBits + 1 bits)
++  tagWrEn := clearing
++  tagWrAddr := clearIdx
++  tagWrData := 0
++
++  when(aFire && isWrite) {
++    jobs.io.push.valid := True
++    jobs.io.push.kind := Kind.PASS
++    jobs.io.push.idx := idxOf(inCmd.address)
++    jobs.io.push.source := inCmd.source
++    dsCmd.io.push.valid := True
++    tagWrEn := True
++    tagWrAddr := idxOf(inCmd.address)
++    tagWrData := 0
++  }
++  // State B: room was checked when the command was taken in A and nothing
++  // else pushes meanwhile.
++  when(stageB) {
++    stageB := False
++    jobs.io.push.valid := True
++    jobs.io.push.idx := idxOf(b.address)
++    jobs.io.push.source := b.source
++    when(bHit) {
++      jobs.io.push.kind := Kind.HIT
++    } otherwise {
++      jobs.io.push.kind := Mux(bCacheable, Kind.MISS, Kind.PASS)
++      dsCmd.io.push.valid := True
++      dsCmd.io.push.payload := b
++      dsCmd.io.push.payload.fragment.source := 0
++      when(bCacheable) {
++        tagWrEn := True
++        tagWrAddr := idxOf(b.address)
++        tagWrData := True ## tagOf(b.address).asBits
++      }
++    }
++  }
++  tagMem.write(tagWrAddr, tagWrData, enable = tagWrEn)
++  io.output.cmd << dsCmd.io.pop
++
++  // -------------------------------------------------------------- response
++  val outQ = StreamFifo(Fragment(BmbRsp(p)), 4)
++  io.input.rsp << outQ.io.pop
++  outQ.io.push.valid := False
++  outQ.io.push.payload.allowOverride()
++  outQ.io.push.payload.assignDontCare()
++
++  val job = jobs.io.pop.payload
++  jobs.io.pop.ready := False
++  val beat = Reg(UInt(log2Up(beats) bits)) init (0)
++
++  // Hits: one data RAM read per cycle while the output queue has room for
++  // what is already in flight.
++  val hitRd = jobs.io.pop.valid && job.kind === Kind.HIT && outQ.io.availability >= 2
++  val rdLast = beat === beats - 1
++  val hitData = dataMem.readSync((job.idx ## beat).asUInt, enable = hitRd)
++  val hitValid = RegNext(hitRd) init (False)
++  val hitLast = RegNext(rdLast)
++  val hitSource = RegNext(job.source)
++  when(hitRd) {
++    beat := beat + 1
++    when(rdLast) { jobs.io.pop.ready := True }
++  }
++  // Downstream responses belong to the head job when it is a miss or pass
++  // (a hit's last read pops it the cycle before its data is pushed, so a
++  // following job's first response waits one cycle for the queue).
++  val dsRsp = io.output.rsp
++  val dsTurn = jobs.io.pop.valid && job.kind =/= Kind.HIT && !hitValid
++  dsRsp.ready := dsTurn && outQ.io.push.ready
++  when(hitValid) {
++    outQ.io.push.valid := True
++    outQ.io.push.last := hitLast
++    outQ.io.push.fragment.opcode := Bmb.Rsp.Opcode.SUCCESS
++    outQ.io.push.fragment.data := hitData
++    outQ.io.push.fragment.source := hitSource
++    if (p.access.contextWidth > 0) outQ.io.push.fragment.context := 0
++  } elsewhen (dsTurn && dsRsp.valid) {
++    outQ.io.push.valid := True
++    outQ.io.push.payload := dsRsp.payload
++    outQ.io.push.fragment.source := job.source
++  }
++  val fillWr = dsRsp.fire && job.kind === Kind.MISS
++  dataMem.write((job.idx ## beat).asUInt, dsRsp.fragment.data, enable = fillWr)
++  when(fillWr) { beat := beat + 1 }
++  when(dsRsp.fire && dsRsp.last) {
++    jobs.io.pop.ready := True
++    beat := 0
++  }
++
++  private def counter(cond: Bool): UInt = {
++    val r = Reg(UInt(32 bits)) init (0)
++    when(cond) { r := r + 1 }
++    r
++  }
++  io.hits := counter(stageB && bHit)
++  io.misses := counter(stageB && bCacheable && !bHit)
++}
 diff --git a/src/voodoo/texture/TexLayoutTables.scala b/src/voodoo/texture/TexLayoutTables.scala
 index fbf774f..6f372f1 100644
 --- a/src/voodoo/texture/TexLayoutTables.scala
@@ -12650,6 +12878,161 @@ index 0000000..79c430a
 +    val two = run(2, timing, 0x10000L, hdmiHalf = 6, cmdBusy = false, latency = _ => 30)
 +    assert(!one.forall(identity), s"one line ahead was expected to underflow: $one")
 +    assert(two.forall(identity), s"two lines ahead underflowed: $two")
++  }
++}
+diff --git a/test/TexL2CacheTest.scala b/test/TexL2CacheTest.scala
+new file mode 100644
+index 0000000..6bb4fb5
+--- /dev/null
++++ b/test/TexL2CacheTest.scala
+@@ -0,0 +1,149 @@
++//> using target.scope test
++
++package voodoo
++
++import org.scalatest.funsuite.AnyFunSuite
++import spinal.core._
++import spinal.core.sim._
++import voodoo.texture.TexL2Cache
++
++import scala.collection.mutable
++
++/** TexL2Cache against an in-order memory model: random 64-byte line reads
++  * (cached), odd reads (passed through) and masked single-word writes from
++  * several sources, a small cache (16 lines over 4 KiB) so lines conflict.
++  * Every response must arrive in command order, carry its command's source
++  * and return memory as of the command's place in that order.
++  */
++class TexL2CacheTest extends AnyFunSuite {
++  test("texture L2 returns in-order, current data for line reads, odd reads and writes") {
++    val p = Core.texMemBmbParams(Config.voodoo1())
++    SimConfig.withIVerilog.compile(TexL2Cache(p, 16)).doSim(seed = 7) { dut =>
++      dut.clockDomain.forkStimulus(10)
++      val rnd = new scala.util.Random(11)
++      val words = 1024 // 4 KiB
++      val mem = Array.fill(words)(rnd.nextLong() & 0xffffffffL) // downstream contents
++      val ref = mem.clone() // contents in command order (what reads must see)
++
++      dut.io.input.cmd.valid #= false
++      dut.io.input.rsp.ready #= true
++      dut.io.output.cmd.ready #= false
++      dut.io.output.rsp.valid #= false
++
++      // Downstream: in order, applies writes on accept, answers reads
++      // (16 or 1+ beats) after a random latency; random cmd backpressure.
++      case class Pending(beats: Seq[Long], source: Int, at: Long)
++      val dsQ = mutable.Queue[Pending]()
++      var cycle = 0L
++      var dsReads = 0
++      fork {
++        while (true) {
++          dut.io.output.cmd.ready #= rnd.nextInt(4) != 0 && dsQ.size < 6
++          dut.clockDomain.waitSampling()
++          cycle += 1
++          val c = dut.io.output.cmd
++          if (c.valid.toBoolean && c.ready.toBoolean) {
++            val a = c.address.toLong
++            val src = c.source.toInt
++            if (c.opcode.toInt == 1) { // write
++              val w = (a / 4).toInt % words
++              val m = c.mask.toInt
++              var v = mem(w)
++              for (b <- 0 until 4 if ((m >> b) & 1) != 0)
++                v = (v & ~(0xffL << (8 * b))) | (c.data.toLong & (0xffL << (8 * b)))
++              mem(w) = v
++              dsQ.enqueue(Pending(Seq(0L), src, cycle + 2 + rnd.nextInt(6)))
++            } else {
++              dsReads += 1
++              val n = (c.length.toInt + 1 + 3) / 4
++              dsQ.enqueue(Pending((0 until n).map(i => mem((a / 4 + i).toInt % words)), src, cycle + 6 + rnd.nextInt(20)))
++            }
++          }
++        }
++      }
++      fork {
++        while (true) {
++          if (dsQ.nonEmpty && dsQ.head.at <= cycle) {
++            val r = dsQ.dequeue()
++            for ((d, i) <- r.beats.zipWithIndex) {
++              dut.io.output.rsp.valid #= true
++              dut.io.output.rsp.data #= d
++              dut.io.output.rsp.last #= i == r.beats.size - 1
++              dut.io.output.rsp.source #= r.source
++              dut.io.output.rsp.opcode #= 0
++              dut.clockDomain.waitSamplingWhere(dut.io.output.rsp.ready.toBoolean)
++            }
++            dut.io.output.rsp.valid #= false
++          } else dut.clockDomain.waitSampling()
++        }
++      }
++
++      // Expected responses in command order: (source, beats).
++      val expected = mutable.Queue[(Int, Seq[Long])]()
++      var checked = 0
++      var beatIdx = 0
++      fork {
++        while (true) {
++          dut.io.input.rsp.ready #= rnd.nextInt(5) != 0
++          dut.clockDomain.waitSampling()
++          val r = dut.io.input.rsp
++          if (r.valid.toBoolean && r.ready.toBoolean) {
++            assert(expected.nonEmpty, "response without a command")
++            val (src, data) = expected.head
++            assert(r.source.toInt == src, s"rsp $checked: source ${r.source.toInt} exp $src")
++            assert(r.data.toLong == data(beatIdx),
++              s"rsp $checked beat $beatIdx: got ${r.data.toLong.toHexString} exp ${data(beatIdx).toHexString}")
++            assert(r.last.toBoolean == (beatIdx == data.size - 1), s"rsp $checked: last at beat $beatIdx")
++            beatIdx += 1
++            if (beatIdx == data.size) { expected.dequeue(); beatIdx = 0; checked += 1 }
++          }
++        }
++      }
++
++      val n = 3000
++      for (k <- 0 until n) {
++        val src = rnd.nextInt(16)
++        val kind = rnd.nextInt(10)
++        val c = dut.io.input.cmd
++        c.source #= src
++        c.last #= true
++        c.mask #= 0
++        c.data #= 0
++        if (kind < 7) { // line read (hot set of 32 lines over 64: hits and conflicts)
++          val line = rnd.nextInt(if (rnd.nextBoolean()) 32 else 64)
++          c.opcode #= 0
++          c.address #= line * 64
++          c.length #= 63
++          expected.enqueue((src, (0 until 16).map(i => ref(line * 16 + i))))
++        } else if (kind < 9) { // masked write
++          val w = rnd.nextInt(words / 4) // land in the hot range often
++          val d = rnd.nextLong() & 0xffffffffL
++          val m = 1 + rnd.nextInt(15)
++          c.opcode #= 1
++          c.address #= w * 4
++          c.length #= 3
++          c.data #= d
++          c.mask #= m
++          var v = ref(w)
++          for (b <- 0 until 4 if ((m >> b) & 1) != 0) v = (v & ~(0xffL << (8 * b))) | (d & (0xffL << (8 * b)))
++          ref(w) = v
++          expected.enqueue((src, Seq(0L)))
++        } else { // odd read: one word (passed through)
++          val w = rnd.nextInt(words)
++          c.opcode #= 0
++          c.address #= w * 4
++          c.length #= 3
++          expected.enqueue((src, Seq(ref(w))))
++        }
++        c.valid #= true
++        dut.clockDomain.waitSamplingWhere(c.ready.toBoolean)
++        c.valid #= false
++        if (rnd.nextInt(8) == 0) dut.clockDomain.waitSampling(rnd.nextInt(30))
++      }
++      dut.clockDomain.waitSamplingWhere(checked == n)
++      val hits = dut.io.hits.toLong; val misses = dut.io.misses.toLong
++      println(s"[tex L2] $n commands, hits $hits misses $misses, downstream reads $dsReads, $cycle cycles")
++      assert(hits > 200 && misses > 200, "test should exercise both hits and misses")
++    }
 +  }
 +}
 diff --git a/test/TmuSmallTextureCacheTest.scala b/test/TmuSmallTextureCacheTest.scala
