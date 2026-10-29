@@ -11,6 +11,14 @@ set_thread_count $threads
 read_lef $D/dl/lef/tech_5LM_1TM_9K.lef
 foreach f [glob $D/dl/lef/gf180mcu_fd_sc_mcu7t5v0__*.lef] { read_lef $f }
 read_liberty $D/gf180_7t_tt5v.lib
+# env SRAM=1: the netlist has 512x8 SRAM macros (sram.v), placed in rows
+# from the bottom-left corner of the core with routing channels between.
+set sram [expr {[info exists ::env(SRAM)] && $::env(SRAM)}]
+set sramCell gf180mcu_fd_ip_sram__sram512x8m8wm1
+if {$sram} {
+  read_lef $D/dl/sram/$sramCell.lef
+  read_liberty $D/dl/$sramCell\__tt_025C_5v00.lib
+}
 read_verilog $W/die.v
 link_design [expr {[info exists ::env(TOP)] ? $::env(TOP) : "voodoo_split_die"}]
 read_sdc $D/split/split.sdc
@@ -28,8 +36,25 @@ proc stage {tag} {
 
 initialize_floorplan -die_area {0 0 3932 5122} -core_area {442 442 3490 4680} -site GF018hv5v_mcu_sc7
 make_tracks
+if {$sram} {
+  set block [ord::get_db_block]
+  set dbu [[ord::get_db_tech] getDbUnitsPerMicron]
+  set macros {}
+  foreach inst [$block getInsts] { if {[[$inst getMaster] getName] == $sramCell} { lappend macros $inst } }
+  set macros [lsort -command {apply {{a b} {string compare [$a getName] [$b getName]}}} $macros]
+  # 431.86 x 484.88 um each; 6 per row, 65 um channels.
+  set i 0
+  foreach inst $macros {
+    set x [expr {442 + 65 + ($i % 6) * (431.86 + 65)}]
+    set y [expr {442 + 20 + ($i / 6) * (484.88 + 40)}]
+    $inst setOrigin [expr {round($x * $dbu)}] [expr {round($y * $dbu)}]
+    $inst setPlacementStatus FIRM
+    incr i
+  }
+  puts "placed $i SRAM macros"
+}
 place_pins -hor_layers Metal3 -ver_layers Metal2
-tapcell -distance 50 -tapcell_master gf180mcu_fd_sc_mcu7t5v0__filltie -endcap_master gf180mcu_fd_sc_mcu7t5v0__endcap
+tapcell -distance 50 -halo_width_x 10 -halo_width_y 10 -tapcell_master gf180mcu_fd_sc_mcu7t5v0__filltie -endcap_master gf180mcu_fd_sc_mcu7t5v0__endcap
 
 add_global_connection -net VDD -pin_pattern {^VDD$} -power
 add_global_connection -net VSS -pin_pattern {^VSS$} -ground
@@ -40,12 +65,19 @@ add_pdn_stripe -grid core -layer Metal4 -width 5 -pitch 75 -spacing 1 -offset 37
 add_pdn_stripe -grid core -layer Metal5 -width 5 -pitch 75 -spacing 1 -offset 37
 add_pdn_connect -grid core -layers {Metal1 Metal4}
 add_pdn_connect -grid core -layers {Metal4 Metal5}
+if {$sram} {
+  define_pdn_grid -name sram -macro -cells $sramCell -halo {10 10 10 10} -grid_over_boundary
+  add_pdn_connect -grid sram -layers {Metal3 Metal4}
+}
 pdngen
 stage "floorplan"
 
-# Placement density: utilization plus some room.
+# Placement density: utilization plus some room (env MARGIN, default 0.08);
+# env PAD: sites of padding right of every cell (spreads routing hot spots).
 set util [expr {[rsz::design_area] * 1e12 / (3048.0 * 4238.0)}]
-set dens [expr {min(0.97, $util + 0.08)}]
+set margin [expr {[info exists ::env(MARGIN)] ? $::env(MARGIN) : 0.08}]
+set dens [expr {min(0.97, $util + $margin)}]
+if {[info exists ::env(PAD)]} { set_placement_padding -global -right $::env(PAD) }
 puts "utilization (cells / core) [format %.3f $util], placement density $dens"
 global_placement -density $dens -routability_driven
 estimate_parasitics -placement

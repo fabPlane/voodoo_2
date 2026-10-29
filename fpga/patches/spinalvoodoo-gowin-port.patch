@@ -1105,7 +1105,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..ee09bd9 100644
+index 1b34fa2..fee8c59 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1118,7 +1118,7 @@ index 1b34fa2..ee09bd9 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,124 @@ case class Config(
+@@ -31,6 +34,128 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1150,6 +1150,10 @@ index 1b34fa2..ee09bd9 100644
 +    // horizontal neighbours), each split into even-word and odd-word banks,
 +    // instead of one copy per tap: half the data BSRAM for the same lines.
 +    texCachePairedBanks: Boolean = false,
++    // Small texture cache data banks never read and write in one cycle (a
++    // fill beat blocks the lookup read, which is read again next cycle):
++    // single-port SRAM macros on an ASIC.
++    texCacheSinglePort: Boolean = false,
 +    // Texture units: 1 (Voodoo 1) or 2 (two TREX: TMU1 feeds TMU0's texture
 +    // combine, the multitexture path of 2-TMU boards and the Voodoo 2).
 +    tmuCount: Int = 1,
@@ -1834,7 +1838,7 @@ index 9effb48..1cdcd40 100644
  
  object CoreSim {
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..2f67ddf 100644
+index 6051025..c0dae49 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1882,7 +1886,7 @@ index 6051025..2f67ddf 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,37 @@ object CoreSimGen extends App {
+@@ -37,7 +49,38 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1907,6 +1911,7 @@ index 6051025..2f67ddf 100644
 +      tmuForkAsync = args.contains("--tmu-fork-async"),
 +      tmuOutputQueue = argIntValue("--tmu-output-queue").getOrElse(0),
 +      texCachePairedBanks = args.contains("--tex-cache-paired"),
++      texCacheSinglePort = args.contains("--tex-cache-1rw"),
 +      fbzModePerTriangle = args.contains("--fbz-per-triangle"),
 +      skipRedundantFbzSync = args.contains("--skip-redundant-fbz-sync"),
 +      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64),
@@ -1921,7 +1926,7 @@ index 6051025..2f67ddf 100644
      )
  
    val memTiming = SimMemoryTiming(
-@@ -45,9 +87,22 @@ object CoreSimGen extends App {
+@@ -45,9 +88,22 @@ object CoreSimGen extends App {
      fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
      burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
      burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
@@ -2199,10 +2204,10 @@ index 0000000..3478c00
 +}
 diff --git a/src/voodoo/asic/AsicChip.scala b/src/voodoo/asic/AsicChip.scala
 new file mode 100644
-index 0000000..9663376
+index 0000000..4897730
 --- /dev/null
 +++ b/src/voodoo/asic/AsicChip.scala
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,312 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -2236,7 +2241,9 @@ index 0000000..9663376
 +    texSram: Boolean = false,
 +    useStraps: Boolean = false,
 +    // false: memories only (split chip: voodoo.split.CoreBack has its own link)
-+    hostLink: Boolean = true
++    hostLink: Boolean = true,
++    // SRAM pins straight from flip-flops (reads a cycle longer)
++    sramRegPins: Boolean = false
 +) extends Component {
 +  val texSramAddrWidth = 21 // 8 MB of 32-bit words
 +  val fbSramAddrWidth = 20 // 4 MB of 32-bit words
@@ -2298,7 +2305,7 @@ index 0000000..9663376
 +    io.fbHb <> ctrl.io.hb
 +  } else null
 +  val fbSramCtrl = if (fbSram) new Area {
-+    val ctrl = SramController(fbShared, fbSramAddrWidth)
++    val ctrl = SramController(fbShared, fbSramAddrWidth, regPins = sramRegPins)
 +    ctrl.io.bus <> fbArbiter.io.output
 +    io.fbSramBus <> ctrl.io.sram
 +  } else null
@@ -2309,7 +2316,7 @@ index 0000000..9663376
 +    io.texHb <> texCtrl.io.hb
 +  } else null
 +  val texSramCtrl = if (texSram) new Area {
-+    val ctrl = SramController(Core.texMemBmbParams(c), texSramAddrWidth)
++    val ctrl = SramController(Core.texMemBmbParams(c), texSramAddrWidth, regPins = sramRegPins)
 +    ctrl.io.bus <> io.texMem
 +    io.texSramBus <> ctrl.io.sram
 +  } else null
@@ -2451,6 +2458,7 @@ index 0000000..9663376
 +      triangleSnapshot = false,
 +      pixelConfigSlots = true,
 +      texCachePairedBanks = true,
++      texCacheSinglePort = args.contains("--tex-cache-1rw"),
 +      skipRedundantFbzSync = true,
 +      pciFifoDepth = argIntValue("--pci-fifo-depth").getOrElse(64), // Voodoo software expects 64 (32 starves the host)
 +      paletteSingleRam = true,
@@ -3549,10 +3557,10 @@ index 0000000..83133c5
 +}
 diff --git a/src/voodoo/asic/SramBus.scala b/src/voodoo/asic/SramBus.scala
 new file mode 100644
-index 0000000..9aa4819
+index 0000000..d17f2bb
 --- /dev/null
 +++ b/src/voodoo/asic/SramBus.scala
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,178 @@
 +package voodoo.asic
 +
 +import spinal.core._
@@ -3586,9 +3594,12 @@ index 0000000..9aa4819
 +  * the next command starts while earlier read data is still coming back. An
 +  * order queue keeps the responses in command order (a write's single
 +  * response waits behind earlier reads' data). Switching between reading and
-+  * writing costs a cycle (bus turnaround).
++  * writing costs a cycle (bus turnaround). `regPins`: every output goes
++  * through a flip-flop (a full cycle for the pads and the SRAM's address
++  * setup on the die; reads come back a cycle later).
 +  */
-+case class SramController(p: BmbParameter, addrWidth: Int, readLatency: Int = 1, rspDepth: Int = 8, orderDepth: Int = 4) extends Component {
++case class SramController(p: BmbParameter, addrWidth: Int, readLatency: Int = 1, rspDepth: Int = 8, orderDepth: Int = 4,
++                          regPins: Boolean = false) extends Component {
 +  require(p.access.dataWidth == 32)
 +  val io = new Bundle {
 +    val bus = slave(Bmb(p))
@@ -3619,24 +3630,35 @@ index 0000000..9aa4819
 +  val cmdWordAddr = io.bus.cmd.address(addrWidth + 1 downto 2)
 +  val cmdWords = ((io.bus.cmd.length.resize(countWidth bits) + 1) >> 2).resize(countWidth bits)
 +
-+  io.sram.addr := rdAddr
-+  io.sram.ceN := True
-+  io.sram.oeN := True
-+  io.sram.weN := True
-+  io.sram.beN := B"1111"
-+  io.sram.dqOut := io.bus.cmd.data
-+  io.sram.dqOe := False
++  val pin = SramIo(addrWidth)
++  pin.dqIn := io.sram.dqIn
++  if (!regPins) {
++    io.sram.addr := pin.addr; io.sram.ceN := pin.ceN; io.sram.oeN := pin.oeN; io.sram.weN := pin.weN
++    io.sram.beN := pin.beN; io.sram.dqOut := pin.dqOut; io.sram.dqOe := pin.dqOe
++  } else {
++    io.sram.addr := RegNext(pin.addr); io.sram.ceN := RegNext(pin.ceN) init (True)
++    io.sram.oeN := RegNext(pin.oeN) init (True); io.sram.weN := RegNext(pin.weN) init (True)
++    io.sram.beN := RegNext(pin.beN); io.sram.dqOut := RegNext(pin.dqOut); io.sram.dqOe := RegNext(pin.dqOe) init (False)
++  }
++
++  pin.addr := rdAddr
++  pin.ceN := True
++  pin.oeN := True
++  pin.weN := True
++  pin.beN := B"1111"
++  pin.dqOut := io.bus.cmd.data
++  pin.dqOe := False
 +  io.bus.cmd.ready := False
 +
 +  // Read issue: one word per cycle while the data FIFO can take it.
 +  val issue = rdLeft =/= 0 && !lastWasWrite && (inflight + rspFifo.io.occupancy) < rspDepth
 +  when(issue) {
-+    io.sram.ceN := False
-+    io.sram.oeN := False
++    pin.ceN := False
++    pin.oeN := False
 +    rdAddr := rdAddr + 1
 +    rdLeft := rdLeft - 1
 +  }
-+  val captured = Delay(issue, readLatency, init = False)
++  val captured = Delay(issue, readLatency + (if (regPins) 1 else 0), init = False)
 +  rspFifo.io.push.valid := captured
 +  rspFifo.io.push.payload := io.sram.dqIn
 +  inflight := inflight + U(issue) - U(captured)
@@ -3659,11 +3681,11 @@ index 0000000..9aa4819
 +    (writeBeat =/= 0 || order.io.availability > 0) && !(io.bus.cmd.last && !order.io.push.ready)
 +  when(writeGo) {
 +    io.bus.cmd.ready := True
-+    io.sram.addr := (cmdWordAddr + writeBeat.resize(addrWidth bits)).resized
-+    io.sram.ceN := False
-+    io.sram.weN := False
-+    io.sram.beN := ~io.bus.cmd.mask
-+    io.sram.dqOe := True
++    pin.addr := (cmdWordAddr + writeBeat.resize(addrWidth bits)).resized
++    pin.ceN := False
++    pin.weN := False
++    pin.beN := ~io.bus.cmd.mask
++    pin.dqOe := True
 +    writeBeat := writeBeat + 1
 +    when(io.bus.cmd.last) {
 +      writeBeat := 0
@@ -11141,7 +11163,7 @@ index fb95365..b153f14 100644
  }
 diff --git a/src/voodoo/split/SplitChip.scala b/src/voodoo/split/SplitChip.scala
 new file mode 100644
-index 0000000..fd78890
+index 0000000..6b5a085
 --- /dev/null
 +++ b/src/voodoo/split/SplitChip.scala
 @@ -0,0 +1,703 @@
@@ -11802,7 +11824,7 @@ index 0000000..fd78890
 +
 +/** Die with its memory controllers (AsicUncore without the host link). */
 +case class SplitDie(c: Config, linkBits: Int, hbLatency: Int = 3, fbSram: Boolean = true, texDevices: Int = 2,
-+    texSram: Boolean = false, hbReadChunk: Int = 32) extends Component {
++    texSram: Boolean = false, hbReadChunk: Int = 32, sramRegPins: Boolean = true) extends Component {
 +  val io = new Bundle {
 +    val down = slave Stream (Bits(linkBits bits))
 +    val up = master Stream (Bits(8 bits))
@@ -11816,7 +11838,7 @@ index 0000000..fd78890
 +  }
 +  val core = CoreBack(c, linkBits)
 +  val uncore = voodoo.asic.AsicUncore(c, hbLatency, hbReadChunk = hbReadChunk, fbSram = fbSram, texDevices = texDevices,
-+    texSram = texSram, hostLink = false)
++    texSram = texSram, hostLink = false, sramRegPins = sramRegPins)
 +  core.io.down << io.down
 +  io.up << core.io.up
 +  io.video << core.io.video
@@ -13244,7 +13266,7 @@ index d5f1a9b..9a157d0 100644
          result.trace := pass.trace
        }
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..b666895 100644
+index 465ea78..bf515ec 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -13333,7 +13355,7 @@ index 465ea78..b666895 100644
  
    GenerationFlags.formal {
      when(io.texRead.cmd.valid) {
-@@ -994,3 +1010,404 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
+@@ -994,3 +1010,410 @@ case class TmuNoTextureCache(override val c: voodoo.Config) extends TmuTexturePa
      }
    }
  }
@@ -13530,6 +13552,11 @@ index 465ea78..b666895 100644
 +    s1 := reqLookup
 +  }
 +  val rdEnable = advance || reread
++  // Single-port data banks: a fill beat takes the banks; the lookup read of
++  // that cycle is lost and done again (reread) the next.
++  val dataBlocked = if (c.texCacheSinglePort) io.texRead.rsp.valid else False
++  val dataRdEnable = rdEnable && !dataBlocked
++  val rdLost = RegNext(rdEnable && dataBlocked) init (False)
 +  val tagRd = Vec(UInt(tagBits bits), lanes)
 +  val dataRd = Vec(Bits(32 bits), lanes)
 +  val rdConflict = Bits(lanes bits)
@@ -13559,7 +13586,7 @@ index 465ea78..b666895 100644
 +    bankAddr(2 * p + par) := (wordIdx(src) >> 1).resized
 +  } else { bankAddr.foreach(_ := 0); bankFor.foreach(_ := 0) }
 +  val bankRd = Vec((0 until 4).map(k =>
-+    if (paired) dataMem(k).readSync(bankAddr(k), enable = rdEnable) else B(0, 32 bits)))
++    if (paired) dataMem(k).readSync(bankAddr(k), enable = dataRdEnable) else B(0, 32 bits)))
 +  val bankForRd = Vec(bankFor.map(f => RegNextWhen(f, rdEnable)))
 +  val parityRd = Vec(laneParity.map(p => RegNextWhen(p, rdEnable)))
 +  val wordRd = Vec(rdAddrs.map(a => RegNextWhen(wordIdx(a), rdEnable)))
@@ -13575,7 +13602,7 @@ index 465ea78..b666895 100644
 +      val mine = bankF((i & 1))
 +      bankLost(i) := !mine && wordRd(other) =/= wordRd(i)
 +    } else {
-+      dataRd(i) := dataMem(i).readSync((lineIdx(rdAddr) ## wordOff(rdAddr)).asUInt, enable = rdEnable)
++      dataRd(i) := dataMem(i).readSync((lineIdx(rdAddr) ## wordOff(rdAddr)).asUInt, enable = dataRdEnable)
 +    }
 +    // A read of a line being filled in this lane may see it half written.
 +    rdConflict(i) := RegNextWhen(fillWriting && beatMask(i) && lineIdx(rdAddr) === doneIdx, rdEnable) init (False)
@@ -13594,9 +13621,9 @@ index 465ea78..b666895 100644
 +  val allHit = laneHit.andR
 +  // Paired: lanes served by this read keep their word; lanes that only lost
 +  // their bank to the partner are read again at once (no fill).
-+  val bankRetry = s1Valid && !waitFill && !reread && !allHit && (~laneHit & ~tagHitOnly & s1.active) === 0
++  val bankRetry = s1Valid && !waitFill && !reread && !rdLost && !allHit && (~laneHit & ~tagHitOnly & s1.active) === 0
 +  if (paired) {
-+    when(s1Valid && !waitFill && !reread) {
++    when(s1Valid && !waitFill && !reread && !rdLost) {
 +      for (i <- 0 until lanes) when(s1.active(i) && laneHit(i) && !s1Have(i)) {
 +        s1Have(i) := True
 +        s1Data(i) := dataRd(i)
@@ -13604,7 +13631,7 @@ index 465ea78..b666895 100644
 +    }
 +    when(advance) { s1Have := 0 }
 +  }
-+  val evaluate = s1Valid && !waitFill && !reread
++  val evaluate = s1Valid && !waitFill && !reread && !rdLost
 +  val lookupHit = evaluate && allHit
 +
 +  val out = Stream(NoData)
@@ -13618,6 +13645,7 @@ index 465ea78..b666895 100644
 +  val backAlloc = backMiss && !(missOh & lanePending).orR && !fill.full
 +  reread := False
 +  if (paired) when(bankRetry) { reread := True }
++  when(rdLost && s1Valid && !waitFill) { reread := True }
 +  when(backMiss) {
 +    when(fillDone) { reread := True } otherwise { waitFill := True }
 +  }
