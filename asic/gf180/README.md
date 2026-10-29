@@ -333,3 +333,30 @@ The 64-line die needs either about 1.5 mm² less (no room for the second
 TMU's cache at 64 lines) or a larger slot. A hardened latch-RAM block
 (DFFRAM-style, placed by hand) would pack the RAM denser than this
 flat-placed model.
+
+### Registered SRAM pins, single-port texture cache, SRAM macros (2026-10-30)
+
+- `SramController(regPins)` (on by default in `SplitDie`): every SRAM pin
+  from a flip-flop, reads a cycle longer. The fb SRAM outputs now meet
+  timing (were -4.6 ns). Cost on GLQuake frame 1923 (2 dies): HyperRAM tex
+  cache 32 1,090,837 cycles (was 1,090,798), SRAM tex 985,823 (975,836).
+- `Config.texCacheSinglePort` (`--tex-cache-1rw`): a fill beat takes the
+  texture cache data banks, the lookup read of that cycle is lost and read
+  again the next (`rdLost` -> `reread`). Each bank then reads or writes,
+  never both, so it maps onto the foundry's single-port 512x8 SRAM macro
+  (`sram.v`; the `dataMem` reads are synchronous; the earlier "async" came
+  from a memory dump without `opt`). 2 dies, HyperRAM tex, cache 64, with
+  registered pins: 945,806 cycles (940,800 two-port), pixel-exact.
+- Cache 64 with macros: 16 x sram512x8 (3.35 mm²) + 7.07 mm² cells. P&R
+  (`SRAM=1 DENSITY=0.82`): macros in two columns of 8 along the left / right
+  core edges, turned so their pins (bottom edge in the LEF) face the logic,
+  I/O pins on the top / bottom edges (macros in rows from the bottom with
+  pins into narrow channels failed legalization after CTS).
+
+| die | utilization after CTS | global route | detailed route (30 iter) | timing @40 MHz |
+|---|---|---|---|---|
+| cache 32, latch RAM, registered pins | 79% | 0 overflow, 18% | (running) | met, worst +0.50 ns |
+| **cache 64, SRAM macros, registered pins** | **86% (incl. macros)** | 0 overflow, 15% | **26 DRC in one ~200 x 400 µm spot** | met, worst +1.08 ns |
+
+So the 64-line split die (2 dies: 42 fps at 40 MHz on frame 1923) fits the
+1x1 slot with the texture cache data in SRAM macros.
