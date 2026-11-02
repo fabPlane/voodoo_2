@@ -1055,7 +1055,7 @@ index d163ab7..01b6194 100644
          sim_cycles_final = sim_get_cycle();
          sim_read_ticks_final = sim_get_total_read_ticks();
 diff --git a/src/voodoo/Config.scala b/src/voodoo/Config.scala
-index 1b34fa2..63a2f05 100644
+index 1b34fa2..cc4a063 100644
 --- a/src/voodoo/Config.scala
 +++ b/src/voodoo/Config.scala
 @@ -22,6 +22,9 @@ case class Config(
@@ -1068,7 +1068,7 @@ index 1b34fa2..63a2f05 100644
      enableTmu: Boolean = true,
      enableFog: Boolean = true,
      enableDither: Boolean = true,
-@@ -31,6 +34,113 @@ case class Config(
+@@ -31,6 +34,116 @@ case class Config(
      texFillWayCount: Int = 2,
      texFillXorIndex: Boolean = false,
      texFillRequestWindow: Int = 16,
@@ -1114,6 +1114,9 @@ index 1b34fa2..63a2f05 100644
 +    // Second-level texture cache (TexL2Cache) in front of texture memory:
 +    // 64-byte lines shared by both TMUs (0 = none).
 +    texL2Lines: Int = 0,
++    // Small texture cache: minimum cycles a sample request spends in the
++    // request queue, so prefetch hints lead its lookup (0 = none).
++    texRequestMinDelay: Int = 0,
 +    // Status bits 12-27 (memory FIFO free) report the PCI FIFO's real free
 +    // count; the 6-bit field saturates at 63 of a 2048-entry FIFO.
 +    statusRealFifoFree: Boolean = false,
@@ -1616,7 +1619,7 @@ index 9effb48..35bee62 100644
    core.io.statusInputs.vRetrace := io.vRetrace
    core.io.statusInputs.memFifoFree := 0xffff
 diff --git a/src/voodoo/CoreSimGen.scala b/src/voodoo/CoreSimGen.scala
-index 6051025..2edf0bf 100644
+index 6051025..fb45fde 100644
 --- a/src/voodoo/CoreSimGen.scala
 +++ b/src/voodoo/CoreSimGen.scala
 @@ -5,26 +5,38 @@ import spinal.core._
@@ -1664,7 +1667,7 @@ index 6051025..2edf0bf 100644
      .copy(
        texFillLineWords =
          argIntValue("--tex-fill-line-words").getOrElse(Config.voodoo1().texFillLineWords),
-@@ -37,7 +49,32 @@ object CoreSimGen extends App {
+@@ -37,7 +49,33 @@ object CoreSimGen extends App {
          argIntValue("--tex-fill-way-count").getOrElse(Config.voodoo1().texFillWayCount),
        texFillXorIndex = args.contains("--tex-fill-xor-index"),
        texFillRequestWindow =
@@ -1686,6 +1689,7 @@ index 6051025..2edf0bf 100644
 +      tmu1SmallCacheLines = argIntValue("--tmu1-cache-lines").getOrElse(0),
 +      texValidEpochBits = argIntValue("--tex-valid-epoch").getOrElse(0),
 +      texL2Lines = argIntValue("--tex-l2-lines").getOrElse(0),
++      texRequestMinDelay = argIntValue("--tex-min-delay").getOrElse(0),
 +      triangleSnapshot = !args.contains("--no-triangle-snapshot") || args.contains("--triangle-snapshot"),
 +      pixelConfigSlots = args.contains("--pixel-config-slots") && !args.contains("--no-pixel-config-slots"),
 +      tmuForkAsync = args.contains("--tmu-fork-async"),
@@ -1698,7 +1702,7 @@ index 6051025..2edf0bf 100644
      )
  
    val memTiming = SimMemoryTiming(
-@@ -45,9 +82,10 @@ object CoreSimGen extends App {
+@@ -45,9 +83,10 @@ object CoreSimGen extends App {
      fixedReadLatency = argIntValue("--sim-mem-read-latency").getOrElse(0),
      burstSetupLatency = argIntValue("--sim-mem-burst-setup-latency").getOrElse(12),
      burstBeatLatency = argIntValue("--sim-mem-burst-beat-latency").getOrElse(1),
@@ -9889,7 +9893,7 @@ index f164007..31832d2 100644
              cmd.mask := prep.mask
              cmd
 diff --git a/src/voodoo/texture/Tmu.scala b/src/voodoo/texture/Tmu.scala
-index 8b06179..091233f 100644
+index 8b06179..19c606e 100644
 --- a/src/voodoo/texture/Tmu.scala
 +++ b/src/voodoo/texture/Tmu.scala
 @@ -42,10 +42,17 @@ case class Tmu(c: voodoo.Config) extends Component {
@@ -10058,7 +10062,7 @@ index 8b06179..091233f 100644
 +    // Timing: the two 48x18 perspective multiplies get their own stage; stageA then
 +    // only does the rounding add and the normalizing shift.
 +    val stageMul = stageRecip
-       .translateWith {
++      .translateWith {
 +        val out = Tmu.FrontMul(c)
 +        val interpSigned = (False ## stageRecip.payload.interp).asSInt
 +        out.r := stageRecip.payload
@@ -10070,7 +10074,7 @@ index 8b06179..091233f 100644
 +      .s2mPipe() // timing: cut the long ready chain through the TMU stages
 +
 +    val stageA = stageMul
-+      .translateWith {
+       .translateWith {
 +        val r = stageMul.payload.r
          val texS = SInt(18 bits)
          val texT = SInt(18 bits)
@@ -10563,7 +10567,7 @@ index 8b06179..091233f 100644
    def packedStartupDecode4(
        lineBase: UInt,
        is16Bit: Bool,
-@@ -822,6 +976,53 @@ object Tmu {
+@@ -822,6 +976,96 @@ object Tmu {
      if (trace != null) dst.trace := trace
    }
  
@@ -10584,6 +10588,49 @@ index 8b06179..091233f 100644
 +
 +  /** Queue sample requests; without the fill cache only the slim fields are
 +    * stored and the others come out zero. */
++  case class TimedSlim(c: voodoo.Config) extends Bundle {
++    val r = SampleRequestSlim(c)
++    val ts = UInt(12 bits)
++  }
++
++  /** As below, but every request also stays at least `minDelay` cycles in the
++    * queue (a timestamp at entry), so the texture cache's prefetch hints,
++    * issued as requests enter, lead the lookup by that much even when the
++    * queue would otherwise run nearly empty. */
++  def queueSampleRequests(in: Stream[SampleRequest], depth: Int, c: voodoo.Config, minDelay: Int): Stream[SampleRequest] =
++    if (minDelay <= 0 || c.useTexFillCache) queueSampleRequests(in, depth, c)
++    else {
++      val now = Reg(UInt(12 bits)) init (0)
++      now := now + 1
++      val q = in.translateWith {
++        val t = TimedSlim(c)
++        t.r.pointAddr := in.payload.pointAddr
++        t.r.biAddr0 := in.payload.biAddr0
++        t.r.biAddr1 := in.payload.biAddr1
++        t.r.biAddr2 := in.payload.biAddr2
++        t.r.biAddr3 := in.payload.biAddr3
++        t.r.is16Bit := in.payload.is16Bit
++        t.r.bilinear := in.payload.bilinear
++        t.r.passthrough := in.payload.passthrough
++        t.ts := now
++        t
++      }.queue(depth)
++      val aged = q.haltWhen((now - q.payload.ts) < minDelay)
++      aged.translateWith {
++        val r = SampleRequest(c)
++        r.assignFromBits(B(0, widthOf(r) bits))
++        r.pointAddr.allowOverride := aged.payload.r.pointAddr
++        r.biAddr0.allowOverride := aged.payload.r.biAddr0
++        r.biAddr1.allowOverride := aged.payload.r.biAddr1
++        r.biAddr2.allowOverride := aged.payload.r.biAddr2
++        r.biAddr3.allowOverride := aged.payload.r.biAddr3
++        r.is16Bit.allowOverride := aged.payload.r.is16Bit
++        r.bilinear.allowOverride := aged.payload.r.bilinear
++        r.passthrough.allowOverride := aged.payload.r.passthrough
++        r
++      }
++    }
++
 +  def queueSampleRequests(in: Stream[SampleRequest], depth: Int, c: voodoo.Config): Stream[SampleRequest] =
 +    if (c.useTexFillCache) in.queue(depth)
 +    else {
@@ -10617,7 +10664,7 @@ index 8b06179..091233f 100644
    def copySampleRequest(dst: SampleRequest, src: SampleRequest, c: voodoo.Config): Unit = {
      dst.pointAddr := src.pointAddr
      dst.biAddr0 := src.biAddr0
-@@ -847,6 +1048,10 @@ object Tmu {
+@@ -847,6 +1091,10 @@ object Tmu {
      dst.passthrough.nccTableSelect := src.passthrough.nccTableSelect
      dst.passthrough.ds := src.passthrough.ds
      dst.passthrough.dt := src.passthrough.dt
@@ -10628,7 +10675,7 @@ index 8b06179..091233f 100644
      if (c.trace.enabled) dst.passthrough.trace := src.passthrough.trace
    }
  
-@@ -863,9 +1068,32 @@ object Tmu {
+@@ -863,9 +1111,32 @@ object Tmu {
      val nccTableSelect = Bool()
      val ds = UInt(4 bits)
      val dt = UInt(4 bits)
@@ -10661,7 +10708,7 @@ index 8b06179..091233f 100644
    case class FrontRecipPrep(c: voodoo.Config) extends Bundle {
      val s = AFix(c.texCoordsAccumFormat)
      val t = AFix(c.texCoordsAccumFormat)
-@@ -878,11 +1106,14 @@ object Tmu {
+@@ -878,11 +1149,14 @@ object Tmu {
      val validOow = Bool()
      val perspectiveEnable = Bool()
      val clampToZero = Bool()
@@ -10681,7 +10728,7 @@ index 8b06179..091233f 100644
    }
  
    case class FrontA(c: voodoo.Config) extends Bundle {
-@@ -891,11 +1122,8 @@ object Tmu {
+@@ -891,11 +1165,8 @@ object Tmu {
      val tLOD = Bits(27 bits)
      val perspLodAdjust = SInt(16 bits)
      val clampToZero = Bool()
@@ -10695,7 +10742,7 @@ index 8b06179..091233f 100644
    }
  
    case class FrontRecip(c: voodoo.Config) extends Bundle {
-@@ -907,11 +1135,8 @@ object Tmu {
+@@ -907,11 +1178,8 @@ object Tmu {
      val perspectiveEnable = Bool()
      val clampToZero = Bool()
      val perspLodAdjust = SInt(16 bits)
@@ -10709,7 +10756,7 @@ index 8b06179..091233f 100644
    }
  
    case class FrontB(c: voodoo.Config) extends Bundle {
-@@ -922,11 +1147,28 @@ object Tmu {
+@@ -922,11 +1190,28 @@ object Tmu {
      val finalDs = UInt(4 bits)
      val finalDt = UInt(4 bits)
      val lodLevel = UInt(4 bits)
@@ -10738,7 +10785,7 @@ index 8b06179..091233f 100644
    case class FrontLodPrep(c: voodoo.Config) extends Bundle {
      val texS = SInt(18 bits)
      val texT = SInt(18 bits)
-@@ -934,7 +1176,7 @@ object Tmu {
+@@ -934,7 +1219,7 @@ object Tmu {
      val clampToZero = Bool()
      val baseLod_8_8 = SInt(16 bits)
      val perspLodAdjust = SInt(16 bits)
@@ -10747,7 +10794,7 @@ index 8b06179..091233f 100644
    }
  
    case class FrontLod(c: voodoo.Config) extends Bundle {
-@@ -942,9 +1184,10 @@ object Tmu {
+@@ -942,9 +1227,10 @@ object Tmu {
      val texT = SInt(18 bits)
      val clampToZero = Bool()
      val lodLevel = UInt(4 bits)
@@ -10759,7 +10806,7 @@ index 8b06179..091233f 100644
    }
  
    case class FrontGrad(c: voodoo.Config) extends Bundle {
-@@ -954,11 +1197,13 @@ object Tmu {
+@@ -954,11 +1240,13 @@ object Tmu {
      val clampToZero = Bool()
      val tempLOD = UInt(64 bits)
      val perspLodAdjust = SInt(16 bits)
@@ -10776,7 +10823,7 @@ index 8b06179..091233f 100644
      val trace = if (c.trace.enabled) Trace.PixelKey() else null
    }
  
-@@ -979,6 +1224,12 @@ object Tmu {
+@@ -979,6 +1267,12 @@ object Tmu {
      val passthrough = TmuPassthrough(c)
    }
  
@@ -10789,7 +10836,7 @@ index 8b06179..091233f 100644
    case class SampleRequestPrep(c: voodoo.Config) extends Bundle {
      val pointAddr = UInt(c.addressWidth.value bits)
      val biAddr0 = UInt(c.addressWidth.value bits)
-@@ -1114,7 +1365,6 @@ object Tmu {
+@@ -1114,7 +1408,6 @@ object Tmu {
      val texBaseAddr38 = UInt(24 bits)
      val tLOD = Bits(27 bits)
      val textureEnable = Bool()
@@ -10797,7 +10844,7 @@ index 8b06179..091233f 100644
    }
  
    /** TMU input bundle */
-@@ -1125,15 +1375,12 @@ object Tmu {
+@@ -1125,15 +1418,12 @@ object Tmu {
      val cOther = Color.u8()
      val aOther = UInt(8 bits)
      val config = TmuConfig(c)
@@ -10815,7 +10862,7 @@ index 8b06179..091233f 100644
        val out = Input(c)
        out.s := in.grads.sGrad
        out.t := in.grads.tGrad
-@@ -1142,27 +1389,55 @@ object Tmu {
+@@ -1142,27 +1432,55 @@ object Tmu {
        out.cOther.g := 0
        out.cOther.b := 0
        out.aOther := 0
@@ -10903,7 +10950,7 @@ index d5f1a9b..51cc3c9 100644
          result.trace := pass.trace
        }
 diff --git a/src/voodoo/texture/TmuTextureCache.scala b/src/voodoo/texture/TmuTextureCache.scala
-index 465ea78..cb38ad7 100644
+index 465ea78..fab859a 100644
 --- a/src/voodoo/texture/TmuTextureCache.scala
 +++ b/src/voodoo/texture/TmuTextureCache.scala
 @@ -84,6 +84,9 @@ case class TmuTexturePathIo(c: voodoo.Config) extends Bundle {
@@ -11021,7 +11068,7 @@ index 465ea78..cb38ad7 100644
 +  def lineTag(a: UInt): UInt = a(aw - 1 downto offBits + idxBits)
 +  def wordOff(a: UInt): UInt = a(offBits - 1 downto 2)
 +
-+  val reqStream = Tmu.queueSampleRequests(io.sampleRequest, c.texFillRequestWindow, c)
++  val reqStream = Tmu.queueSampleRequests(io.sampleRequest, c.texFillRequestWindow, c, c.texRequestMinDelay)
 +
 +
 +  // One lane per bilinear tap, each with its own tag / data copy, so a sample

@@ -82,7 +82,8 @@ object GowinGenSupport {
       // 64-byte texture cache lines, 256 of them (same 16 KB): Quake II
       // cut-frame replay -3.1% (misses roughly halve; 32 KB would be -4.2%).
       texSmallCacheLines = sys.env.get("GOWIN_TEX_LINES").map(_.toInt).getOrElse(256),
-      texSmallLineWords = 16,
+      // GOWIN_TEX_LINE_WORDS=32: 128-byte lines (spatial prefetch: GLQuake replay misses halve, -4 to -6% cycles); pair with GOWIN_TEX_PENDING=32.
+      texSmallLineWords = sys.env.get("GOWIN_TEX_LINE_WORDS").map(_.toInt).getOrElse(16),
       // 8 queued prefetch hints (was 2, dropped when full): -1.3% in replay.
       texHintQueueDepth = 8,
       // Span queue between the walker (which issues the framebuffer prefetch)
